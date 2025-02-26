@@ -59,6 +59,7 @@ kotlin {
   cocoapods {
     noPodspec()
     ios.deploymentTarget = project.properties["iosDeploymentTarget"]!!.toString()
+    specRepos { url("https://cdn.cocoapods.org") }
     pod("MapLibre", libs.versions.maplibre.ios.get())
   }
 

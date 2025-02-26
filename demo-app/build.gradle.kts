@@ -60,6 +60,7 @@ kotlin {
       baseName = "DemoApp"
       version = "0.0.0" // not using real version here because it'll pollute the git diff
     }
+    specRepos { url("https://cdn.cocoapods.org") }
     pod("MapLibre", libs.versions.maplibre.ios.get())
   }
 
