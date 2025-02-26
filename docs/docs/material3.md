@@ -19,7 +19,7 @@ To get started, add the dependency to your project:
 
 ```toml title="libs.versions.toml"
 [libraries]
-maplibre-composeMaterial3 = { module = "dev.sargunv.maplibre-compose:maplibre-compose-material3", version = "{{ gradle.release_version }}" }
+maplibre-composeMaterial3 = { module = "com.dayanruben.maplibre-compose:maplibre-compose-material3", version = "{{ gradle.release_version }}" }
 ```
 
 ```kotlin title="build.gradle.kts"

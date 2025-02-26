@@ -7,8 +7,8 @@ Gradle where to find the Android SDK and CocoaPods:
 
 ```properties
 # Replace the paths with the actual paths on your machine
-sdk.dir=/Users/sargunv/Library/Android/sdk
-kotlin.apple.cocoapods.bin=/opt/homebrew/bin/pod
+sdk.dir=$(echo $ANDROID_HOME)
+kotlin.apple.cocoapods.bin=$(which pod)
 ```
 
 Follow

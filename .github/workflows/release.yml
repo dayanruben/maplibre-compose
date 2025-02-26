@@ -10,7 +10,7 @@ jobs:
     runs-on: "macos-latest"
     environment:
       name: "maven-central"
-      url: "https://central.sonatype.com/namespace/dev.sargunv.maplibre-compose"
+      url: "https://central.sonatype.com/namespace/com.dayanruben.maplibre-compose"
     steps:
       - uses: "actions/checkout@v4"
         with:

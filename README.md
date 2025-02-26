@@ -1,10 +1,16 @@
-[![Github Actions](https://github.com/sargunv/maplibre-compose/actions/workflows/ci.yml/badge.svg)](https://github.com/sargunv/maplibre-compose/actions/workflows/ci.yml?query=branch%3Amain)
-[![Maven Central Version](https://img.shields.io/maven-central/v/dev.sargunv.maplibre-compose/maplibre-compose)](https://central.sonatype.com/namespace/dev.sargunv.maplibre-compose)
-[![License](https://img.shields.io/github/license/sargunv/maplibre-compose)](https://github.com/sargunv/maplibre-compose/blob/main/LICENSE)
+[![Github Actions](https://github.com/dayanruben/maplibre-compose/actions/workflows/ci.yml/badge.svg)](https://github.com/dayanruben/maplibre-compose/actions/workflows/ci.yml?query=branch%3Amain)
+[![Maven Central Version](https://img.shields.io/maven-central/v/com.dayanruben.maplibre-compose/maplibre-compose)](https://central.sonatype.com/namespace/com.dayanruben.maplibre-compose)
+[![License](https://img.shields.io/github/license/dayanruben/maplibre-compose)](https://github.com/dayanruben/maplibre-compose/blob/main/LICENSE)
 [![Documentation](https://img.shields.io/badge/Documentation-blue?logo=MaterialForMkDocs&logoColor=white)](https://sargunv.github.io/maplibre-compose/)
 [![API Reference](https://img.shields.io/badge/API_Reference-blue?logo=Kotlin&logoColor=white)](https://sargunv.github.io/maplibre-compose/api/)
 
 # MapLibre for Compose Multiplatform
+
+> [!WARNING]
+> Special thanks to the original [author](https://github.com/sargunv) for laying the foundation of this [repository](https://github.com/sargunv/maplibre-compose), your work continues to inspire.
+> This library will continue to be actively maintained with updates and modifications specifically required by the projects that depend on it. Efforts will be made to keep it as up-to-date as possible with the original implementation.
+
+---
 
 ## Introduction
 

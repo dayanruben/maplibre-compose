@@ -14,13 +14,13 @@ plugins {
   id(libs.plugins.mavenPublish.get().pluginId)
 }
 
-android { namespace = "dev.sargunv.maplibrecompose.expressions" }
+android { namespace = "com.dayanruben.maplibrecompose.expressions" }
 
 mavenPublishing {
   pom {
     name = "MapLibre Compose Expressions"
     description = "MapLibre expressions DSL for MapLibre Compose."
-    url = "https://github.com/sargunv/maplibre-compose"
+    url = "https://github.com/dayanruben/maplibre-compose"
   }
 }
 

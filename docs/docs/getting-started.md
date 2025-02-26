@@ -15,7 +15,7 @@ This library is published via [Maven Central][maven], and snapshot builds of
 
     ```toml title="libs.versions.toml"
     [libraries]
-    maplibre-compose = { module = "dev.sargunv.maplibre-compose:maplibre-compose", version = "{{ gradle.release_version }}" }
+    maplibre-compose = { module = "com.dayanruben.maplibre-compose:maplibre-compose", version = "{{ gradle.release_version }}" }
     ```
 
 === "Snapshots (GitHub Packages)"
@@ -45,7 +45,7 @@ This library is published via [Maven Central][maven], and snapshot builds of
 
     ```toml title="libs.versions.toml"
     [libraries]
-    maplibre-compose = { module = "dev.sargunv.maplibre-compose:maplibre-compose", version = "{{ gradle.snapshot_version }}" }
+    maplibre-compose = { module = "com.dayanruben.maplibre-compose:maplibre-compose", version = "{{ gradle.snapshot_version }}" }
     ```
 
 In your Gradle build script, add:
@@ -169,12 +169,12 @@ to get a detailed map with all the features you'd expect, proceed to
 
 [compose-guide]:
   https://www.jetbrains.com/help/kotlin-multiplatform-dev/compose-multiplatform-create-first-app.html
-[maven]: https://central.sonatype.com/namespace/dev.sargunv.maplibre-compose
+[maven]: https://central.sonatype.com/namespace/com.dayanruben.maplibre-compose
 [gh-packages]:
   https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-gradle-registry
 [gh-packages-guide]:
   https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-gradle-registry#using-a-published-package
 [kotlin-cocoapods]: https://kotlinlang.org/docs/native-cocoapods.html
-[repo]: https://github.com/sargunv/maplibre-compose
+[repo]: https://github.com/dayanruben/maplibre-compose
 [demotiles]: https://demotiles.maplibre.org/
 [kcef]: https://github.com/DatL4g/KCEF

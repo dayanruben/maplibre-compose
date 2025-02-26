@@ -15,13 +15,13 @@ plugins {
   id(libs.plugins.mavenPublish.get().pluginId)
 }
 
-android { namespace = "dev.sargunv.maplibrecompose.material3" }
+android { namespace = "com.dayanruben.maplibrecompose.material3" }
 
 mavenPublishing {
   pom {
     name = "MapLibre Compose Material 3"
     description = "Material 3 extensions for MapLibre Compose."
-    url = "https://github.com/sargunv/maplibre-compose"
+    url = "https://github.com/dayanruben/maplibre-compose"
   }
 }
 
@@ -66,4 +66,4 @@ kotlin {
   }
 }
 
-compose.resources { packageOfResClass = "dev.sargunv.maplibrecompose.material3.generated" }
+compose.resources { packageOfResClass = "com.dayanruben.maplibrecompose.material3.generated" }

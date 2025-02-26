@@ -16,10 +16,10 @@ plugins {
 }
 
 android {
-  namespace = "dev.sargunv.maplibrecompose.demoapp"
+  namespace = "com.dayanruben.maplibrecompose.demoapp"
 
   defaultConfig {
-    applicationId = "dev.sargunv.maplibrecompose.demoapp"
+    applicationId = "com.dayanruben.maplibrecompose.demoapp"
     minSdk = project.properties["androidMinSdk"]!!.toString().toInt()
     compileSdk = project.properties["androidCompileSdk"]!!.toString().toInt()
     targetSdk = project.properties["androidTargetSdk"]!!.toString().toInt()
@@ -53,7 +53,7 @@ kotlin {
 
   cocoapods {
     summary = "MapLibre Compose demo app"
-    homepage = "https://github.com/sargunv/maplibre-compose"
+    homepage = "https://github.com/dayanruben/maplibre-compose"
     ios.deploymentTarget = "15.3" // TODO reduce this to same as library target?
     podfile = project.file("../iosApp/Podfile")
     framework {
@@ -123,17 +123,17 @@ kotlin {
   }
 }
 
-compose.resources { packageOfResClass = "dev.sargunv.maplibrecompose.demoapp.generated" }
+compose.resources { packageOfResClass = "com.dayanruben.maplibrecompose.demoapp.generated" }
 
 composeCompiler { reportsDestination = layout.buildDirectory.dir("compose/reports") }
 
 compose.desktop {
   application {
-    mainClass = "dev.sargunv.maplibrecompose.demoapp.MainKt"
+    mainClass = "com.dayanruben.maplibrecompose.demoapp.MainKt"
 
     nativeDistributions {
       targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-      packageName = "dev.sargunv.maplibrecompose.demoapp"
+      packageName = "com.dayanruben.maplibrecompose.demoapp"
       // https://youtrack.jetbrains.com/issue/CMP-2360
       // packageVersion = project.ext["base_tag"].toString().replace("v", "")
       packageVersion = "1.0.0"

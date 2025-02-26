@@ -6,7 +6,7 @@ plugins {
   id("maven-publish")
 }
 
-group = "dev.sargunv.maplibre-compose"
+group = "com.dayanruben.maplibre-compose"
 
 kotlin {
   explicitApi()
@@ -24,7 +24,7 @@ dokka {
     configureEach {
       includes.from("MODULE.md")
       sourceLink {
-        remoteUrl("https://github.com/sargunv/maplibre-compose/tree/${project.ext["base_tag"]}/")
+        remoteUrl("https://github.com/dayanruben/maplibre-compose/tree/${project.ext["base_tag"]}/")
         localDirectory.set(rootDir)
       }
       externalDocumentationLinks {
@@ -44,7 +44,7 @@ publishing {
   repositories {
     maven {
       name = "GitHubPackages"
-      setUrl("https://maven.pkg.github.com/sargunv/maplibre-compose")
+      setUrl("https://maven.pkg.github.com/dayanruben/maplibre-compose")
       credentials {
         username = project.properties["githubUser"]?.toString()
         password = project.properties["githubToken"]?.toString()

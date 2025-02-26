@@ -15,13 +15,13 @@ plugins {
   id(libs.plugins.mavenPublish.get().pluginId)
 }
 
-android { namespace = "dev.sargunv.maplibrecompose" }
+android { namespace = "com.dayanruben.maplibrecompose" }
 
 mavenPublishing {
   pom {
     name = "MapLibre Compose"
     description = "Add interactive vector tile maps to your Compose app"
-    url = "https://github.com/sargunv/maplibre-compose"
+    url = "https://github.com/dayanruben/maplibre-compose"
   }
 }
 
@@ -111,7 +111,7 @@ kotlin {
 }
 
 compose.resources {
-  packageOfResClass = "dev.sargunv.maplibrecompose.generated"
+  packageOfResClass = "com.dayanruben.maplibrecompose.generated"
 
   customDirectory(
     sourceSetName = "desktopMain",

@@ -2,7 +2,7 @@
 
 Material 3 extensions for MapLibre Compose.
 
-# Package dev.sargunv.maplibrecompose.material3.controls
+# Package com.dayanruben.maplibrecompose.material3.controls
 
 Material 3 based controls for the map as an alternative to the default map
 ornaments.
