@@ -5,7 +5,7 @@ import com.dayanruben.maplibrecompose.expressions.ast.FunctionCall
 import com.dayanruben.maplibrecompose.expressions.value.ColorValue
 import com.dayanruben.maplibrecompose.expressions.value.ExpressionValue
 import com.dayanruben.maplibrecompose.expressions.value.FloatValue
-import com.dayanruben.maplibrecompose.expressions.value.InterpolateableValue
+import com.dayanruben.maplibrecompose.expressions.value.InterpolatableValue
 import com.dayanruben.maplibrecompose.expressions.value.InterpolationValue
 
 /**
@@ -39,7 +39,7 @@ public fun <T : ExpressionValue> step(
     )
     .cast()
 
-private fun <T, V : InterpolateableValue<T>> interpolateImpl(
+private fun <T, V : InterpolatableValue<T>> interpolateImpl(
   name: String,
   type: Expression<InterpolationValue>,
   input: Expression<FloatValue>,
@@ -77,7 +77,7 @@ private fun <T, V : InterpolateableValue<T>> interpolateImpl(
  * zoom 24, it is 256. Applied to for example line width, this has the visual effect that the line
  * stays the same width in meters on the map (rather than on the viewport).
  */
-public fun <T, V : InterpolateableValue<T>> interpolate(
+public fun <T, V : InterpolatableValue<T>> interpolate(
   type: Expression<InterpolationValue>,
   input: Expression<FloatValue>,
   vararg stops: Pair<Number, Expression<V>>,
