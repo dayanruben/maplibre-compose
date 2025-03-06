@@ -24,7 +24,7 @@ internal fun rememberStyleComposition(
   val compositionContext = rememberCompositionContext()
 
   LaunchedEffect(maybeStyle, compositionContext) {
-    val style = maybeStyle ?: return@LaunchedEffect
+    val style = maybeStyle ?: Style.Null
     val rootNode = StyleNode(style, logger).also { nodeState.value = it }
     val composition = Composition(MapNodeApplier(rootNode), compositionContext)
 
