@@ -23,30 +23,19 @@ internal fun rememberStyleComposition(
   val nodeState = remember { mutableStateOf<StyleNode?>(null) }
   val compositionContext = rememberCompositionContext()
 
-  // Initialize root node immediately to allow content to be called
-  val rootNode = remember { StyleNode(Style.Null, logger) }
-  nodeState.value = rootNode
+  LaunchedEffect(maybeStyle, compositionContext) {
+    val style = maybeStyle ?: return@LaunchedEffect
+    val rootNode = StyleNode(style, logger).also { nodeState.value = it }
+    val composition = Composition(MapNodeApplier(rootNode), compositionContext)
 
-  // Set up composition for immediate content
-  val composition = remember(compositionContext) {
-    Composition(MapNodeApplier(rootNode), compositionContext)
-  }
-
-  // Always ensure content is composed
-  LaunchedEffect(compositionContext) {
     composition.setContent {
       CompositionLocalProvider(LocalStyleNode provides rootNode) { content() }
     }
-  }
 
-  // Handle style updates
-  LaunchedEffect(maybeStyle) {
-    if (maybeStyle != null) {
-      rootNode.style = maybeStyle
-    }
     try {
       awaitCancellation()
     } finally {
+      nodeState.value = null
       rootNode.style = Style.Null
       composition.dispose()
     }
