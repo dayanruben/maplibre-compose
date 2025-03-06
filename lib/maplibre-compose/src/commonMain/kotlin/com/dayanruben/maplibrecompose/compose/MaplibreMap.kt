@@ -42,6 +42,7 @@ import kotlinx.coroutines.launch
  *   event.
  * @param onMapLongClick Invoked when the map is long-clicked. See [onMapClick].
  * @param onFrame Invoked on every rendered frame.
+ * @param onMapReady Invoked when the map is ready to use after the style has been loaded.
  * @param isDebugEnabled Whether the map debug information is shown.
  * @param maximumFps The maximum frame rate at which the map view is rendered, but it can't exceed
  *   the ability of device hardware.
@@ -100,6 +101,7 @@ public fun MaplibreMap(
   onMapClick: MapClickHandler = { _, _ -> ClickResult.Pass },
   onMapLongClick: MapClickHandler = { _, _ -> ClickResult.Pass },
   onFrame: (framesPerSecond: Double) -> Unit = {},
+  onMapReady: () -> Unit = {},
   isDebugEnabled: Boolean = false,
   maximumFps: Int = PlatformUtils.getSystemRefreshRate().roundToInt(),
   logger: Logger? = remember { Logger.withTag("maplibre-compose") },
@@ -117,6 +119,9 @@ public fun MaplibreMap(
           rememberedStyle = style
           cameraState.metersPerDpAtTargetState.value =
             map.metersPerDpAtLatitude(map.getCameraPosition().target.latitude)
+          if (style != null) {
+            onMapReady()
+          }
         }
 
         override fun onCameraMoveStarted(map: MaplibreMap, reason: CameraMoveReason) {
