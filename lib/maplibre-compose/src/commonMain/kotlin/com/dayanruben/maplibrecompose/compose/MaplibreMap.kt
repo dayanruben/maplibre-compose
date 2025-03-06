@@ -108,22 +108,20 @@ public fun MaplibreMap(
   content: @Composable @MaplibreComposable () -> Unit = {},
 ) {
   var rememberedStyle by remember { mutableStateOf<Style?>(null) }
-  var isMapInitialized by remember { mutableStateOf(false) }
-  val styleComposition by rememberStyleComposition(if (isMapInitialized) Style.Null else null, logger, content)
+  val styleComposition by rememberStyleComposition(rememberedStyle, logger, content)
 
   val callbacks =
     remember(cameraState, styleState, styleComposition) {
       object : MaplibreMap.Callbacks {
         override fun onStyleChanged(map: MaplibreMap, style: Style?) {
           map as StandardMaplibreMap
-          if (!isMapInitialized) {
-            isMapInitialized = true
-            onMapReady()
-          }
           styleState.attach(style)
           rememberedStyle = style
           cameraState.metersPerDpAtTargetState.value =
             map.metersPerDpAtLatitude(map.getCameraPosition().target.latitude)
+          if (style != null) {
+            onMapReady()
+          }
         }
 
         override fun onCameraMoveStarted(map: MaplibreMap, reason: CameraMoveReason) {
