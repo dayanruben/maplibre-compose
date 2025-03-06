@@ -217,6 +217,7 @@ internal class IosMap(
     if (styleUri == lastStyleUri) return
     lastStyleUri = styleUri
     logger?.i { "Setting style URI" }
+    callbacks.onStyleChanged(this, null)
     mapView.setStyleURL(NSURL(string = styleUri))
   }
 
