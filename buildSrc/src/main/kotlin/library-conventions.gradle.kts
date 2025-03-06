@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.dayanruben.maplibre-compose"
-version = "0.6.2"
+version = "0.6.3"
 
 kotlin {
   explicitApi()
