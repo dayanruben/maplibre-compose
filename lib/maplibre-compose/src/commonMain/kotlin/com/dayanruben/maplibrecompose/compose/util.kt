@@ -42,11 +42,3 @@ public enum class ClickResult(internal val consumed: Boolean) {
 )
 public annotation class MaplibreComposable
 
-
-/**
- * Retrieves the current value of high-resolution time source, in nanoseconds.
- * This time source returns a constantly increasing value and is suitable for measuring time intervals.
- *
- * @return The current time in nanoseconds, accurate to the finest resolution available on the system.
- */
-internal expect fun nanoTime(): Long

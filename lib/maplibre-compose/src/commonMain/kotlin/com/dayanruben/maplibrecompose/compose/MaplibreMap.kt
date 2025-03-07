@@ -105,11 +105,10 @@ public fun MaplibreMap(
   isDebugEnabled: Boolean = false,
   maximumFps: Int = PlatformUtils.getSystemRefreshRate().roundToInt(),
   logger: Logger? = remember { Logger.withTag("maplibre-compose") },
-  forceContentReload: Boolean = false,
   content: @Composable @MaplibreComposable () -> Unit = {},
 ) {
   var rememberedStyle by remember { mutableStateOf<Style?>(null) }
-  val styleComposition by rememberStyleComposition(rememberedStyle, logger, if (forceContentReload) nanoTime() else 0L, content)
+  val styleComposition by rememberStyleComposition(rememberedStyle, logger, content)
 
   val callbacks =
     remember(cameraState, styleState, styleComposition) {

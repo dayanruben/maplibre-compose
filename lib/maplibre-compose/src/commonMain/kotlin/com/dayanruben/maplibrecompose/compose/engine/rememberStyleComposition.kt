@@ -18,13 +18,12 @@ import kotlinx.coroutines.awaitCancellation
 internal fun rememberStyleComposition(
   maybeStyle: Style?,
   logger: Logger?,
-  forceRecomposeKey: Long = 0L,
   content: @Composable @MaplibreComposable () -> Unit,
 ): State<StyleNode?> {
   val nodeState = remember { mutableStateOf<StyleNode?>(null) }
   val compositionContext = rememberCompositionContext()
 
-  LaunchedEffect(maybeStyle, compositionContext, forceRecomposeKey) {
+  LaunchedEffect(maybeStyle, compositionContext) {
     val style = maybeStyle ?: return@LaunchedEffect
     val rootNode = StyleNode(style, logger).also { nodeState.value = it }
     val composition = Composition(MapNodeApplier(rootNode), compositionContext)
