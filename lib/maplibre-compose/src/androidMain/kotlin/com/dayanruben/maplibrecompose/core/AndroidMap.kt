@@ -59,6 +59,17 @@ internal class AndroidMap(
   styleUri: String,
 ) : StandardMaplibreMap {
 
+  private var moveListener: OnMoveListener? = null
+  private var scaleListener: OnScaleListener? = null
+  private var shoveListener: MLNMap.OnShoveListener? = null
+  private var rotateListener: MLNMap.OnRotateListener? = null
+  private var cameraMoveStartedListener: OnCameraMoveStartedListener? = null
+  private var cameraMoveListener: MLNMap.OnCameraMoveListener? = null
+  private var cameraIdleListener: MLNMap.OnCameraIdleListener? = null
+  private var mapClickListener: MLNMap.OnMapClickListener? = null
+  private var mapLongClickListener: MLNMap.OnMapLongClickListener? = null
+  private var fpsChangedListener: MLNMap.OnFpsChangedListener? = null
+
   internal var layoutDir: LayoutDirection = layoutDir
     set(value) {
       field = value
@@ -96,7 +107,7 @@ internal class AndroidMap(
   }
 
   init {
-    map.addOnCameraMoveStartedListener { reason ->
+    cameraMoveStartedListener = OnCameraMoveStartedListener { reason ->
       // MapLibre doesn't have docs on these reasons, and even though they're named like Google's:
       // https://developers.google.com/android/reference/com/google/android/gms/maps/GoogleMap.OnCameraMoveStartedListener#constants
       // they don't quite work the way the Google ones are documented. In particular,
@@ -114,15 +125,18 @@ internal class AndroidMap(
             }
           },
       )
-    }
-    map.addOnCameraMoveListener { callbacks.onCameraMoved(this) }
-    map.addOnCameraIdleListener { callbacks.onCameraMoveEnded(this) }
+    }.also { map.addOnCameraMoveStartedListener(it) }
+
+    cameraMoveListener = MLNMap.OnCameraMoveListener { callbacks.onCameraMoved(this) }
+      .also { map.addOnCameraMoveListener(it) }
+
+    cameraIdleListener = MLNMap.OnCameraIdleListener { callbacks.onCameraMoveEnded(this) }
+      .also { map.addOnCameraIdleListener(it) }
 
     // TODO: Support double tap below.
     // This is a bit of a hack since the OnCameraMoveStartedListener above doesn't always fire when
     // gestures are simultaneous with animations.
-    map.addOnMoveListener(
-      object : OnMoveListener {
+    moveListener = object : OnMoveListener {
         override fun onMoveBegin(detector: MoveGestureDetector) {
           callbacks.onCameraMoveStarted(this@AndroidMap, CameraMoveReason.GESTURE)
         }
@@ -130,10 +144,9 @@ internal class AndroidMap(
         override fun onMove(detector: MoveGestureDetector) {}
 
         override fun onMoveEnd(detector: MoveGestureDetector) {}
-      }
-    )
-    map.addOnScaleListener(
-      object : OnScaleListener {
+      }.also { map.addOnMoveListener(it) }
+
+    scaleListener = object : OnScaleListener {
         override fun onScaleBegin(detector: StandardScaleGestureDetector) {
           callbacks.onCameraMoveStarted(this@AndroidMap, CameraMoveReason.GESTURE)
         }
@@ -141,10 +154,9 @@ internal class AndroidMap(
         override fun onScale(detector: StandardScaleGestureDetector) {}
 
         override fun onScaleEnd(detector: StandardScaleGestureDetector) {}
-      }
-    )
-    map.addOnShoveListener(
-      object : MLNMap.OnShoveListener {
+      }.also { map.addOnScaleListener(it) }
+
+    shoveListener = object : MLNMap.OnShoveListener {
         override fun onShoveBegin(detector: ShoveGestureDetector) {
           callbacks.onCameraMoveStarted(this@AndroidMap, CameraMoveReason.GESTURE)
         }
@@ -152,10 +164,9 @@ internal class AndroidMap(
         override fun onShove(detector: ShoveGestureDetector) {}
 
         override fun onShoveEnd(detector: ShoveGestureDetector) {}
-      }
-    )
-    map.addOnRotateListener(
-      object : MLNMap.OnRotateListener {
+      }.also { map.addOnShoveListener(it) }
+
+    rotateListener = object : MLNMap.OnRotateListener {
         override fun onRotateBegin(detector: RotateGestureDetector) {
           callbacks.onCameraMoveStarted(this@AndroidMap, CameraMoveReason.GESTURE)
         }
@@ -163,22 +174,22 @@ internal class AndroidMap(
         override fun onRotate(detector: RotateGestureDetector) {}
 
         override fun onRotateEnd(detector: RotateGestureDetector) {}
-      }
-    )
+      }.also { map.addOnRotateListener(it) }
 
-    map.addOnMapClickListener { coords ->
+    mapClickListener = MLNMap.OnMapClickListener { coords ->
       val pos = coords.toPosition()
       callbacks.onClick(this, pos, screenLocationFromPosition(pos))
       true
-    }
+    }.also { map.addOnMapClickListener(it) }
 
-    map.addOnMapLongClickListener { coords ->
+    mapLongClickListener = MLNMap.OnMapLongClickListener { coords ->
       val pos = coords.toPosition()
       callbacks.onLongClick(this, pos, screenLocationFromPosition(pos))
       true
-    }
+    }.also { map.addOnMapLongClickListener(it) }
 
-    map.setOnFpsChangedListener { fps -> callbacks.onFrame(fps) }
+    fpsChangedListener = MLNMap.OnFpsChangedListener { fps -> callbacks.onFrame(fps) }
+      .also { map.setOnFpsChangedListener(it) }
 
     this.setStyleUri(styleUri)
   }
@@ -368,6 +379,30 @@ internal class AndroidMap(
 
   override fun metersPerDpAtLatitude(latitude: Double) =
     map.projection.getMetersPerPixelAtLatitude(latitude)
+
+  internal fun cleanup() {
+    moveListener?.let { map.removeOnMoveListener(it) }
+    scaleListener?.let { map.removeOnScaleListener(it) }
+    shoveListener?.let { map.removeOnShoveListener(it) }
+    rotateListener?.let { map.removeOnRotateListener(it) }
+    cameraMoveStartedListener?.let { map.removeOnCameraMoveStartedListener(it) }
+    cameraMoveListener?.let { map.removeOnCameraMoveListener(it) }
+    cameraIdleListener?.let { map.removeOnCameraIdleListener(it) }
+    mapClickListener?.let { map.removeOnMapClickListener(it) }
+    mapLongClickListener?.let { map.removeOnMapLongClickListener(it) }
+    fpsChangedListener?.let { map.setOnFpsChangedListener(null) }
+
+    moveListener = null
+    scaleListener = null
+    shoveListener = null
+    rotateListener = null
+    cameraMoveStartedListener = null
+    cameraMoveListener = null
+    cameraIdleListener = null
+    mapClickListener = null
+    mapLongClickListener = null
+    fpsChangedListener = null
+  }
 }
 
 private fun MLNVisibleRegion.toVisibleRegion() =

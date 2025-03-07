@@ -53,7 +53,7 @@ internal fun AndroidMapView(
   var currentMapView by remember { mutableStateOf<MapView?>(null) }
   var currentMap by remember { mutableStateOf<AndroidMap?>(null) }
 
-  MapViewLifecycleEffect(currentMapView)
+  MapViewLifecycleEffect(currentMapView, currentMap)
 
   AndroidView(
     modifier = modifier,
