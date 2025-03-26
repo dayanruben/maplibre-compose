@@ -1,7 +1,7 @@
 PODS:
   - demo_app (0.0.0):
-    - MapLibre (= 6.11.0)
-  - MapLibre (6.11.0)
+    - MapLibre (= 6.12.1)
+  - MapLibre (6.12.1)
 
 DEPENDENCIES:
   - demo_app (from `../demo-app`)
@@ -15,8 +15,8 @@ EXTERNAL SOURCES:
     :path: "../demo-app"
 
 SPEC CHECKSUMS:
-  demo_app: f5eaf5b500010da4fe24bbf4b6870841c6e199d7
-  MapLibre: 9ff4ba8fb55fe159c9e1729624c394e00a2e0d1c
+  demo_app: ebef1011352bbcdc57d1251e96d96db6ab7fa4f4
+  MapLibre: 32f6873a5346bf31c82faaf4b3066d254e45a22b
 
 PODFILE CHECKSUM: faffe0b5720ea7a96818a908bd93100321d4e51f
 
