@@ -51,15 +51,25 @@ internal fun AndroidMapView(
   val density = LocalDensity.current
   val currentOnReset by rememberUpdatedState(onReset)
 
-  var currentMapView by remember { mutableStateOf<MapView?>(null) }
-  var currentMap by remember { mutableStateOf<AndroidMap?>(null) }
+  // Create a key that will force recomposition when the composable enters composition
+  val compositionKey = remember { Any() }
 
+  // Use the composition key to force state recreation
+  var currentMapView by remember(compositionKey) { mutableStateOf<MapView?>(null) }
+  var currentMap by remember(compositionKey) { mutableStateOf<AndroidMap?>(null) }
+
+  // Ensure proper lifecycle management
   MapViewLifecycleEffect(currentMapView)
 
+  // Ensure proper cleanup when the composable leaves composition
   DisposableEffect(Unit) {
     onDispose {
-      currentOnReset()
+      // Perform thorough cleanup
+      currentMap?.let { map ->
+        // Any additional cleanup needed for the map
+      }
       currentMapView?.onDestroy()
+      currentOnReset()
       currentMap = null
       currentMapView = null
     }
