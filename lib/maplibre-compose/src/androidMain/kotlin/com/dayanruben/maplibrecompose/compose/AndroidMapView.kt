@@ -1,6 +1,7 @@
 package com.dayanruben.maplibrecompose.compose
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,12 +56,21 @@ internal fun AndroidMapView(
 
   MapViewLifecycleEffect(currentMapView)
 
+  DisposableEffect(Unit) {
+    onDispose {
+      currentOnReset()
+      currentMapView?.onDestroy()
+      currentMap = null
+      currentMapView = null
+    }
+  }
+
   AndroidView(
     modifier = modifier,
     factory = { context ->
       MapLibre.getInstance(context)
       MapView(context, MapLibreMapOptions.createFromAttributes(context).textureMode(false)).also {
-        mapView ->
+          mapView ->
         currentMapView = mapView
         mapView.getMapAsync { map ->
           currentMap =
@@ -79,7 +89,7 @@ internal fun AndroidMapView(
         }
       }
     },
-    update = { _ ->
+    update = { view ->
       val map = currentMap ?: return@AndroidView
       map.layoutDir = layoutDir
       map.density = density
@@ -87,11 +97,6 @@ internal fun AndroidMapView(
       map.logger = logger
       map.setStyleUri(styleUri)
       update(map)
-    },
-    onReset = {
-      currentOnReset()
-      currentMap = null
-      currentMapView = null
     },
   )
 }
