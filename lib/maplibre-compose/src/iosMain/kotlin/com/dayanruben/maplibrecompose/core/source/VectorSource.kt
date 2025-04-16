@@ -8,7 +8,7 @@ import com.dayanruben.maplibrecompose.expressions.ExpressionContext
 import com.dayanruben.maplibrecompose.expressions.ast.Expression
 import com.dayanruben.maplibrecompose.expressions.dsl.const
 import com.dayanruben.maplibrecompose.expressions.value.BooleanValue
-import io.github.dellisd.spatialk.geojson.Feature
+import com.dayanruben.spatialk.geojson.Feature
 import platform.Foundation.NSURL
 
 public actual class VectorSource : Source {

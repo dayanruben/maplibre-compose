@@ -13,7 +13,7 @@ import com.dayanruben.maplibrecompose.compose.rememberCameraState
 import com.dayanruben.maplibrecompose.core.CameraPosition
 import com.dayanruben.maplibrecompose.core.GestureSettings
 import com.dayanruben.maplibrecompose.core.OrnamentSettings
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Position
 import kotlin.time.Duration.Companion.seconds
 
 @Composable

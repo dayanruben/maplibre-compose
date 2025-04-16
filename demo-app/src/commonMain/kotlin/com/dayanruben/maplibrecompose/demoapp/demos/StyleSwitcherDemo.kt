@@ -23,7 +23,7 @@ import com.dayanruben.maplibrecompose.demoapp.DemoMapControls
 import com.dayanruben.maplibrecompose.demoapp.DemoOrnamentSettings
 import com.dayanruben.maplibrecompose.demoapp.DemoScaffold
 import com.dayanruben.maplibrecompose.demoapp.getDefaultColorScheme
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Position
 
 private val NEW_YORK = Position(latitude = 40.744, longitude = -73.981)
 

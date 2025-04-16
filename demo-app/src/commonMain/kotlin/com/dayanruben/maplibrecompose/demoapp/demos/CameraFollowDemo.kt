@@ -44,8 +44,8 @@ import com.dayanruben.maplibrecompose.demoapp.PositionVectorConverter
 import com.dayanruben.maplibrecompose.demoapp.supportsLayers
 import com.dayanruben.maplibrecompose.expressions.dsl.const
 import com.dayanruben.maplibrecompose.expressions.dsl.offset
-import io.github.dellisd.spatialk.geojson.Point
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Point
+import com.dayanruben.spatialk.geojson.Position
 import kotlin.math.roundToInt
 
 private val START_POINT = Position(longitude = -122.4194, latitude = 37.7749)

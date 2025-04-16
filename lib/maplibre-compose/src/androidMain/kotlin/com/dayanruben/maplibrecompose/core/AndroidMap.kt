@@ -22,9 +22,9 @@ import com.dayanruben.maplibrecompose.core.util.toPosition
 import com.dayanruben.maplibrecompose.core.util.toRectF
 import com.dayanruben.maplibrecompose.expressions.ast.CompiledExpression
 import com.dayanruben.maplibrecompose.expressions.value.BooleanValue
-import io.github.dellisd.spatialk.geojson.BoundingBox
-import io.github.dellisd.spatialk.geojson.Feature
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.BoundingBox
+import com.dayanruben.spatialk.geojson.Feature
+import com.dayanruben.spatialk.geojson.Position
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine

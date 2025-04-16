@@ -19,7 +19,7 @@ import com.dayanruben.maplibrecompose.core.OrnamentSettings
 import com.dayanruben.maplibrecompose.core.StandardMaplibreMap
 import com.dayanruben.maplibrecompose.core.Style
 import com.dayanruben.maplibrecompose.core.util.PlatformUtils
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Position
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 

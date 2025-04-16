@@ -14,7 +14,7 @@ import com.dayanruben.maplibrecompose.core.util.toMLNShape
 import com.dayanruben.maplibrecompose.core.util.toNSExpression
 import com.dayanruben.maplibrecompose.expressions.ExpressionContext
 import com.dayanruben.maplibrecompose.expressions.ast.FunctionCall
-import io.github.dellisd.spatialk.geojson.GeoJson
+import com.dayanruben.spatialk.geojson.GeoJson
 import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
 

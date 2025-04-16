@@ -30,7 +30,7 @@ import com.dayanruben.maplibrecompose.expressions.dsl.interpolate
 import com.dayanruben.maplibrecompose.expressions.dsl.zoom
 import com.dayanruben.maplibrecompose.expressions.value.LineCap
 import com.dayanruben.maplibrecompose.expressions.value.LineJoin
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Position
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 
 private const val ROUTES_FILE = "files/data/amtrak_routes.geojson"

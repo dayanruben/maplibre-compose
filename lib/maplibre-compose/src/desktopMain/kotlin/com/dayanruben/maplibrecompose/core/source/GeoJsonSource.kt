@@ -1,6 +1,6 @@
 package com.dayanruben.maplibrecompose.core.source
 
-import io.github.dellisd.spatialk.geojson.GeoJson
+import com.dayanruben.spatialk.geojson.GeoJson
 
 public actual class GeoJsonSource : Source {
 

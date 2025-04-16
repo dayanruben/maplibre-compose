@@ -10,8 +10,8 @@ import com.dayanruben.maplibrejs.LngLat
 import com.dayanruben.maplibrejs.LngLatBounds
 import com.dayanruben.maplibrejs.PaddingOptions
 import com.dayanruben.maplibrejs.Point
-import io.github.dellisd.spatialk.geojson.BoundingBox
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.BoundingBox
+import com.dayanruben.spatialk.geojson.Position
 
 internal fun Alignment.toControlPosition(layoutDir: LayoutDirection): String {
   val (x, y) = align(IntSize(1, 1), IntSize(2, 2), layoutDir)

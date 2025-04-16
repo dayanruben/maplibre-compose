@@ -27,8 +27,8 @@ import com.dayanruben.maplibrecompose.expressions.ast.FloatLiteral
 import com.dayanruben.maplibrecompose.expressions.ast.NullLiteral
 import com.dayanruben.maplibrecompose.expressions.ast.OffsetLiteral
 import com.dayanruben.maplibrecompose.expressions.ast.StringLiteral
-import io.github.dellisd.spatialk.geojson.BoundingBox
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.BoundingBox
+import com.dayanruben.spatialk.geojson.Position
 import java.net.URI
 import java.net.URISyntaxException
 import org.maplibre.android.geometry.LatLng
