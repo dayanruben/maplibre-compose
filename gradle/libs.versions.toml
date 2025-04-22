@@ -15,7 +15,7 @@ webpack-html = "5.6.3"
 webpack-htmlInlineScript = "3.2.1"
 webview = "1.9.40"
 
-gradle-android = "8.9.1"
+gradle-android = "8.9.2"
 gradle-compose = "1.7.3"
 gradle-dokka = "2.0.0"
 gradle-jgitver = "0.10.0-rc03"
