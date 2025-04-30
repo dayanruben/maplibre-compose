@@ -32,9 +32,9 @@ import com.dayanruben.maplibrejs.NavigationControlOptions
 import com.dayanruben.maplibrejs.Point
 import com.dayanruben.maplibrejs.QueryRenderedFeaturesOptions
 import com.dayanruben.maplibrejs.ScaleControl
-import io.github.dellisd.spatialk.geojson.BoundingBox
-import io.github.dellisd.spatialk.geojson.Feature
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.BoundingBox
+import com.dayanruben.spatialk.geojson.Feature
+import com.dayanruben.spatialk.geojson.Position
 import kotlin.time.Duration
 import kotlin.time.DurationUnit
 import kotlin.time.TimeSource

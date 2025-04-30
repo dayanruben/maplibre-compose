@@ -24,7 +24,7 @@ import com.dayanruben.maplibrecompose.demoapp.DemoMapControls
 import com.dayanruben.maplibrecompose.demoapp.DemoOrnamentSettings
 import com.dayanruben.maplibrecompose.demoapp.DemoScaffold
 import com.dayanruben.maplibrecompose.demoapp.format
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Position
 import kotlin.math.roundToInt
 
 private val CHICAGO = Position(latitude = 41.878, longitude = -87.626)

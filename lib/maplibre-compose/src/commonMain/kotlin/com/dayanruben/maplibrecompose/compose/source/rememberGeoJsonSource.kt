@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import com.dayanruben.maplibrecompose.core.source.GeoJsonOptions
 import com.dayanruben.maplibrecompose.core.source.GeoJsonSource
-import io.github.dellisd.spatialk.geojson.GeoJson
+import com.dayanruben.spatialk.geojson.GeoJson
 
 /**
  * Remember a new [GeoJsonSource] with the given [id] and [options] from the GeoJson data at the

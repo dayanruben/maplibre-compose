@@ -4,7 +4,7 @@ import com.dayanruben.maplibrecompose.core.util.correctedAndroidUri
 import com.dayanruben.maplibrecompose.core.util.toMLNExpression
 import com.dayanruben.maplibrecompose.expressions.ExpressionContext
 import com.dayanruben.maplibrecompose.expressions.dsl.const
-import io.github.dellisd.spatialk.geojson.GeoJson
+import com.dayanruben.spatialk.geojson.GeoJson
 import java.net.URI
 import org.maplibre.android.style.sources.GeoJsonOptions as MLNGeoJsonOptions
 import org.maplibre.android.style.sources.GeoJsonSource as MLNGeoJsonSource

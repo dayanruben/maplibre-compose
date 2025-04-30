@@ -33,10 +33,10 @@ import com.dayanruben.maplibrecompose.expressions.ast.NullLiteral
 import com.dayanruben.maplibrecompose.expressions.ast.OffsetLiteral
 import com.dayanruben.maplibrecompose.expressions.ast.StringLiteral
 import com.dayanruben.maplibrecompose.expressions.value.BooleanValue
-import io.github.dellisd.spatialk.geojson.BoundingBox
-import io.github.dellisd.spatialk.geojson.Feature
-import io.github.dellisd.spatialk.geojson.GeoJson
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.BoundingBox
+import com.dayanruben.spatialk.geojson.Feature
+import com.dayanruben.spatialk.geojson.GeoJson
+import com.dayanruben.spatialk.geojson.Position
 import kotlinx.cinterop.CValue
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.useContents

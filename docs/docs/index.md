@@ -49,4 +49,4 @@ We don't yet support Wasm because one of our dependencies,
 [MLJS]: https://github.com/maplibre/maplibre-gl-js
 [kcef]: https://github.com/DatL4g/KCEF
 [repo-demo]: https://github.com/dayanruben/maplibre-compose/tree/main/demo-app
-[spatial-k]: https://github.com/dellisd/spatial-k
+[spatial-k]: https://github.com/dayanruben/spatial-k

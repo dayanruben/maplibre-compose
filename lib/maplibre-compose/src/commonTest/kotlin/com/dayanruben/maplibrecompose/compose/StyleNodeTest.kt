@@ -10,7 +10,7 @@ import com.dayanruben.maplibrecompose.core.layer.LineLayer
 import com.dayanruben.maplibrecompose.core.source.GeoJsonOptions
 import com.dayanruben.maplibrecompose.core.source.GeoJsonSource
 import com.dayanruben.maplibrecompose.core.source.VectorSource
-import io.github.dellisd.spatialk.geojson.FeatureCollection
+import com.dayanruben.spatialk.geojson.FeatureCollection
 import kotlin.test.BeforeTest
 import kotlin.test.Test
 import kotlin.test.assertEquals

@@ -18,7 +18,7 @@ import com.dayanruben.maplibrecompose.demoapp.Demo
 import com.dayanruben.maplibrecompose.demoapp.DemoAppBar
 import com.dayanruben.maplibrecompose.demoapp.DemoMapControls
 import com.dayanruben.maplibrecompose.demoapp.DemoOrnamentSettings
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Position
 
 private val PORTLAND = Position(latitude = 45.521, longitude = -122.675)
 

@@ -35,10 +35,10 @@ import com.dayanruben.maplibrecompose.expressions.dsl.feature
 import com.dayanruben.maplibrecompose.expressions.dsl.not
 import com.dayanruben.maplibrecompose.expressions.dsl.offset
 import com.dayanruben.maplibrecompose.expressions.dsl.step
-import io.github.dellisd.spatialk.geojson.Feature
-import io.github.dellisd.spatialk.geojson.FeatureCollection
-import io.github.dellisd.spatialk.geojson.Point
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Feature
+import com.dayanruben.spatialk.geojson.FeatureCollection
+import com.dayanruben.spatialk.geojson.Point
+import com.dayanruben.spatialk.geojson.Position
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull

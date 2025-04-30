@@ -1,4 +1,5 @@
-[![Github Actions](https://github.com/dayanruben/maplibre-compose/actions/workflows/ci.yml/badge.svg)](https://github.com/dayanruben/maplibre-compose/actions/workflows/ci.yml?query=branch%3Amain)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.1.20-blue.svg?logo=kotlin)](http://kotlinlang.org)
+[![Gradle](https://img.shields.io/badge/Gradle-8.13-blue?logo=gradle)](https://gradle.org)
 [![Maven Central Version](https://img.shields.io/maven-central/v/com.dayanruben.maplibre-compose/maplibre-compose)](https://central.sonatype.com/namespace/com.dayanruben.maplibre-compose)
 [![License](https://img.shields.io/github/license/dayanruben/maplibre-compose)](https://github.com/dayanruben/maplibre-compose/blob/main/LICENSE)
 [![Documentation](https://img.shields.io/badge/Documentation-blue?logo=MaterialForMkDocs&logoColor=white)](https://sargunv.github.io/maplibre-compose/)

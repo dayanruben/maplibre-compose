@@ -2,8 +2,8 @@ package com.dayanruben.maplibrecompose.compose
 
 import androidx.compose.runtime.ComposableTargetMarker
 import androidx.compose.ui.unit.DpOffset
-import io.github.dellisd.spatialk.geojson.Feature
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Feature
+import com.dayanruben.spatialk.geojson.Position
 
 /**
  * A callback for when the map is clicked. Called before any layer click handlers.

@@ -34,8 +34,8 @@ import com.dayanruben.maplibrecompose.expressions.dsl.format
 import com.dayanruben.maplibrecompose.expressions.dsl.image
 import com.dayanruben.maplibrecompose.expressions.dsl.offset
 import com.dayanruben.maplibrecompose.expressions.dsl.span
-import io.github.dellisd.spatialk.geojson.Feature
-import io.github.dellisd.spatialk.geojson.Position
+import com.dayanruben.spatialk.geojson.Feature
+import com.dayanruben.spatialk.geojson.Position
 import org.jetbrains.compose.resources.painterResource
 
 private val CHICAGO = Position(latitude = 41.878, longitude = -87.626)
