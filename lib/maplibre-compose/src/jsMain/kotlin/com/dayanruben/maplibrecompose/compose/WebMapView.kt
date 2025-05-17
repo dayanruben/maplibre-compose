@@ -14,6 +14,7 @@ import co.touchlab.kermit.Logger
 import com.dayanruben.composehtmlinterop.HtmlElement
 import com.dayanruben.maplibrecompose.core.JsMap
 import com.dayanruben.maplibrecompose.core.MaplibreMap
+import com.dayanruben.maplibrecompose.core.SafeStyle
 import kotlinx.browser.document
 import org.w3c.dom.HTMLElement
 
@@ -21,6 +22,7 @@ import org.w3c.dom.HTMLElement
 internal actual fun ComposableMapView(
   modifier: Modifier,
   styleUri: String,
+  rememberedStyle: SafeStyle?,
   update: (map: MaplibreMap) -> Unit,
   onReset: () -> Unit,
   logger: Logger?,
