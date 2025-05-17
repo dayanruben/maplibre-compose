@@ -16,6 +16,7 @@ import com.dayanruben.maplibrecompose.core.CameraMoveReason
 import com.dayanruben.maplibrecompose.core.GestureSettings
 import com.dayanruben.maplibrecompose.core.MaplibreMap
 import com.dayanruben.maplibrecompose.core.OrnamentSettings
+import com.dayanruben.maplibrecompose.core.SafeStyle
 import com.dayanruben.maplibrecompose.core.StandardMaplibreMap
 import com.dayanruben.maplibrecompose.core.Style
 import com.dayanruben.maplibrecompose.core.util.PlatformUtils
@@ -107,7 +108,7 @@ public fun MaplibreMap(
   logger: Logger? = remember { Logger.withTag("maplibre-compose") },
   content: @Composable @MaplibreComposable () -> Unit = {},
 ) {
-  var rememberedStyle by remember { mutableStateOf<Style?>(null) }
+  var rememberedStyle by remember { mutableStateOf<SafeStyle?>(null) }
   val styleComposition by rememberStyleComposition(rememberedStyle, logger, content)
 
   val callbacks =
@@ -115,8 +116,10 @@ public fun MaplibreMap(
       object : MaplibreMap.Callbacks {
         override fun onStyleChanged(map: MaplibreMap, style: Style?) {
           map as StandardMaplibreMap
-          styleState.attach(style)
-          rememberedStyle = style
+          rememberedStyle?.unload()
+          val safeStyle = style?.let { SafeStyle(it) }
+          styleState.attach(safeStyle)
+          rememberedStyle = safeStyle
           cameraState.metersPerDpAtTargetState.value =
             map.metersPerDpAtLatitude(map.getCameraPosition().target.latitude)
           if (style != null) {
@@ -222,5 +225,6 @@ public fun MaplibreMap(
     },
     logger = logger,
     callbacks = callbacks,
+    rememberedStyle = rememberedStyle,
   )
 }

@@ -1,9 +1,9 @@
 package com.dayanruben.maplibrecompose.compose.engine
 
 import co.touchlab.kermit.Logger
-import com.dayanruben.maplibrecompose.core.Style
+import com.dayanruben.maplibrecompose.core.SafeStyle
 
-internal class StyleNode(var style: Style, internal var logger: Logger?) : MapNode() {
+internal class StyleNode(var style: SafeStyle, internal var logger: Logger?) : MapNode() {
 
   internal val sourceManager = SourceManager(this)
   internal val layerManager = LayerManager(this)

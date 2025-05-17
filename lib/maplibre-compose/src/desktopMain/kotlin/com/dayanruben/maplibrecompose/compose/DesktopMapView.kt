@@ -14,6 +14,7 @@ import com.multiplatform.webview.web.WebViewNavigator
 import com.multiplatform.webview.web.rememberWebViewNavigator
 import com.multiplatform.webview.web.rememberWebViewStateWithHTMLData
 import com.dayanruben.maplibrecompose.core.MaplibreMap
+import com.dayanruben.maplibrecompose.core.SafeStyle
 import com.dayanruben.maplibrecompose.core.WebviewBridge
 import com.dayanruben.maplibrecompose.core.WebviewMap
 
@@ -21,6 +22,7 @@ import com.dayanruben.maplibrecompose.core.WebviewMap
 internal actual fun ComposableMapView(
   modifier: Modifier,
   styleUri: String,
+  rememberedStyle: SafeStyle?,
   update: (map: MaplibreMap) -> Unit,
   onReset: () -> Unit,
   logger: Logger?,

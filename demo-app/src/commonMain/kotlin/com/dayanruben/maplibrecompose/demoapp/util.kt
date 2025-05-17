@@ -33,7 +33,7 @@ val ALL_STYLES =
     StyleInfo("Dark", "https://tiles.openfreemap.org/styles/dark", isDark = true),
     StyleInfo("Colorful", Res.getUri("files/styles/colorful.json"), isDark = false),
     StyleInfo("Eclipse", Res.getUri("files/styles/eclipse.json"), isDark = true),
-    StyleInfo("OSM Mapnik", Res.getUri("files/styles/osm-raster.json"), isDark = false),
+    StyleInfo("OSM Carto", Res.getUri("files/styles/osm-raster.json"), isDark = false),
   )
 
 val DEFAULT_STYLE = ALL_STYLES[0].uri

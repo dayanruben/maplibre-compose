@@ -439,10 +439,15 @@ internal class IosMap(
     suspendCoroutine { cont ->
       mapView.flyToCamera(
         camera =
-          mapView.cameraThatFitsCoordinateBounds(boundingBox.toMLNCoordinateBounds()).apply {
-            heading = bearing
-            pitch = tilt
-          },
+          mapView
+            .cameraThatFitsCoordinateBounds(
+              bounds = boundingBox.toMLNCoordinateBounds(),
+              edgePadding = padding.toEdgeInsets(),
+            )
+            .apply {
+              heading = bearing
+              pitch = tilt
+            },
         withDuration = duration.toDouble(DurationUnit.SECONDS),
         edgePadding = padding.toEdgeInsets(),
         completionHandler = { cont.resume(Unit) },

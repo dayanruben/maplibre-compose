@@ -7,6 +7,7 @@ import androidx.compose.runtime.key
 import com.dayanruben.maplibrecompose.compose.FeaturesClickHandler
 import com.dayanruben.maplibrecompose.compose.MaplibreComposable
 import com.dayanruben.maplibrecompose.compose.engine.LayerNode
+import com.dayanruben.maplibrecompose.compose.engine.LocalStyleNode
 import com.dayanruben.maplibrecompose.compose.engine.MapNodeApplier
 import com.dayanruben.maplibrecompose.core.layer.Layer
 
@@ -19,13 +20,17 @@ internal fun <T : Layer> LayerNode(
   onLongClick: FeaturesClickHandler?,
 ) {
   val anchor = LocalAnchor.current
+  val node = LocalStyleNode.current
+
   key(factory, anchor) {
     ComposeNode<LayerNode<T>, MapNodeApplier>(
       factory = { LayerNode(layer = factory(), anchor = anchor) },
       update = {
-        update()
-        set(onClick) { this.onClick = it }
-        set(onLongClick) { this.onLongClick = it }
+        if (!node.style.isUnloaded) {
+          update()
+          set(onClick) { this.onClick = it }
+          set(onLongClick) { this.onLongClick = it }
+        }
       },
     )
   }
