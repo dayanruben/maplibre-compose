@@ -14,7 +14,7 @@ import co.touchlab.kermit.Logger
 import com.dayanruben.maplibrecompose.core.AndroidMap
 import com.dayanruben.maplibrecompose.core.AndroidScaleBar
 import com.dayanruben.maplibrecompose.core.MaplibreMap
-import dev.dayanruben.maplibrecompose.core.SafeStyle
+import com.dayanruben.maplibrecompose.core.SafeStyle
 import org.maplibre.android.MapLibre
 import org.maplibre.android.maps.MapLibreMapOptions
 import org.maplibre.android.maps.MapView

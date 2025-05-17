@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import co.touchlab.kermit.Logger
 import com.dayanruben.maplibrecompose.core.MaplibreMap
-import dev.dayanruben.maplibrecompose.core.SafeStyle
+import com.dayanruben.maplibrecompose.core.SafeStyle
 
 @Composable
 internal expect fun ComposableMapView(
