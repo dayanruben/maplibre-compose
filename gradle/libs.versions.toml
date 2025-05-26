@@ -5,9 +5,10 @@
 # https://www.jetbrains.com/help/kotlin-multiplatform-dev/compose-compatibility-and-versioning.html#jetpack-compose-artifacts-used
 
 [versions]
+alchemist = "0.2.0"
 androidx-activity = "1.10.1"
-androidx-composeUi = "1.8.1"
-androidx-navigation = "2.9.0-beta01"
+androidx-composeUi = "1.8.2"
+androidx-navigation = "2.9.0-beta02"
 kermit = "2.0.5"
 kotlinx-browser = "0.3"
 kotlinx-coroutines = "1.10.2"
@@ -22,7 +23,7 @@ webpack-htmlInlineScript = "3.2.1"
 webview = "1.9.40"
 
 gradle-android = "8.10.0"
-gradle-compose = "1.8.0"
+gradle-compose = "1.8.1"
 gradle-dokka = "2.0.0"
 gradle-jgitver = "0.10.0-rc03"
 gradle-kotlin = "2.1.21"
@@ -33,6 +34,7 @@ gradle-spotless = "7.0.3"
 tool-prettier = "3.5.3"
 
 [libraries]
+alchemist = { module = "io.github.kevincianfarini.alchemist:alchemist", version.ref = "alchemist" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
 androidx-composeUi-testManifest = { module = "androidx.compose.ui:ui-test-manifest", version.ref = "androidx-composeUi" }
 androidx-navigation-compose = { module = "org.jetbrains.androidx.navigation:navigation-compose", version.ref = "androidx-navigation" }

@@ -39,6 +39,7 @@ import cocoapods.MapLibre.MLNOrnamentPositionBottomLeft
 import cocoapods.MapLibre.MLNOrnamentPositionBottomRight
 import cocoapods.MapLibre.MLNOrnamentPositionTopLeft
 import cocoapods.MapLibre.MLNOrnamentPositionTopRight
+import cocoapods.MapLibre.MLNSource
 import cocoapods.MapLibre.MLNStyle
 import cocoapods.MapLibre.allowsTilting
 import com.dayanruben.maplibrecompose.core.util.toBoundingBox
@@ -105,7 +106,7 @@ internal class IosMap(
         val point = locationInView(this@IosMap.mapView).toDpOffset()
         callbacks.onClick(this@IosMap, positionFromScreenLocation(point), point)
       },
-      Gesture(UILongPressGestureRecognizer()) {
+      Gesture(UILongPressGestureRecognizer(), isCooperative = false) {
         if (state != UIGestureRecognizerStateBegan) return@Gesture
         val point = locationInView(this@IosMap.mapView).toDpOffset()
         callbacks.onLongClick(this@IosMap, positionFromScreenLocation(point), point)
@@ -157,6 +158,12 @@ internal class IosMap(
         map = map,
         style = IosStyle(style = didFinishLoadingStyle, getScale = { map.density.density }),
       )
+    }
+
+    override fun mapView(mapView: MLNMapView, sourceDidChange: MLNSource) {
+      val sourceId = sourceDidChange.identifier
+      map.logger?.i { "Source $sourceId changed" }
+      map.callbacks.onSourceChanged(map, sourceId)
     }
 
     private val anyGesture =

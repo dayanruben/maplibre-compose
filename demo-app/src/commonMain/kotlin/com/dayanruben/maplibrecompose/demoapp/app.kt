@@ -45,12 +45,13 @@ import com.dayanruben.maplibrecompose.demoapp.demos.FrameRateDemo
 import com.dayanruben.maplibrecompose.demoapp.demos.LocalTilesDemo
 import com.dayanruben.maplibrecompose.demoapp.demos.MarkersDemo
 import com.dayanruben.maplibrecompose.demoapp.demos.StyleSwitcherDemo
+import com.dayanruben.maplibrecompose.demoapp.demos.platformDemos
 import com.dayanruben.maplibrecompose.demoapp.generated.Res
 import com.dayanruben.maplibrecompose.demoapp.generated.arrow_back
 import com.dayanruben.maplibrecompose.demoapp.generated.info
-import com.dayanruben.maplibrecompose.material3.controls.AttributionButton
 import com.dayanruben.maplibrecompose.material3.controls.DisappearingCompassButton
 import com.dayanruben.maplibrecompose.material3.controls.DisappearingScaleBar
+import com.dayanruben.maplibrecompose.material3.controls.ExpandingAttributionButton
 import com.dayanruben.maplibrecompose.material3.controls.ScaleBarMeasures
 import com.dayanruben.maplibrecompose.material3.defaultScaleBarMeasures
 import org.jetbrains.compose.resources.vectorResource
@@ -67,6 +68,7 @@ private val DEMOS = buildList {
   if (!Platform.isDesktop) add(CameraStateDemo)
   if (Platform.usesMaplibreNative) add(CameraFollowDemo)
   if (!Platform.isDesktop) add(FrameRateDemo)
+  addAll(platformDemos)
 }
 
 @Composable
@@ -173,7 +175,12 @@ fun DemoMapControls(
         modifier = Modifier.align(Alignment.TopEnd),
         onClick = onCompassClick,
       )
-      AttributionButton(styleState, modifier = Modifier.align(Alignment.BottomEnd))
+      ExpandingAttributionButton(
+        cameraState = cameraState,
+        styleState = styleState,
+        modifier = Modifier.align(Alignment.BottomEnd),
+        contentAlignment = Alignment.BottomEnd,
+      )
     }
   }
 }

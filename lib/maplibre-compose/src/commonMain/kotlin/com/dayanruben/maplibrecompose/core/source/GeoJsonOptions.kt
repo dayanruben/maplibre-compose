@@ -2,6 +2,7 @@ package com.dayanruben.maplibrecompose.core.source
 
 import androidx.compose.runtime.Immutable
 import com.dayanruben.maplibrecompose.expressions.ast.Expression
+import com.dayanruben.maplibrecompose.expressions.value.ExpressionValue
 
 /**
  * @param minZoom Minimum zoom level at which to create vector tiles (lower means more field of view
@@ -15,12 +16,10 @@ import com.dayanruben.maplibrecompose.expressions.ast.Expression
  *   faster performance).
  * @param cluster If the data is a collection of point features, setting this to `true` clusters the
  *   points by radius into groups. Cluster groups become new `Point` features in the source with
- *   additional properties:
- *     * `cluster`: Is `true` if the point is a cluster
- *     * `cluster_id`: A unique id for the cluster to be used in conjunction with the cluster
- *       inspection methods. (TODO which are not implemented yet on [GeoJsonSource] - #80)
- *     * `point_count`: Number of original points grouped into this cluster
- *     * `point_count_abbreviated`: An abbreviated point count
+ *   additional properties: `cluster`, `cluster_id`, `point_count`, and `point_count_abbreviated`.
+ *
+ *   See the [MapLibre Style Spec](https://maplibre.org/maplibre-style-spec/sources/#cluster) for
+ *   details.
  *
  * @param clusterRadius Radius of each cluster when clustering points, measured in 1/512ths of a
  *   tile. I.e. a value of 512 indicates a radius equal to the width of a tile.
@@ -34,9 +33,9 @@ import com.dayanruben.maplibrecompose.expressions.ast.Expression
  *
  * @param clusterProperties A map defining custom properties on the generated clusters if clustering
  *   is enabled, aggregating values from clustered points. The keys are the property names, the
- *   values are expressions.
+ *   values are an aggregation mapper and reducer.
  *
- *   TODO examples missing, see https://maplibre.org/maplibre-style-spec/sources/#clusterproperties
+ *   See [ClusterPropertyAggregator.reducer] for an example.
  *
  * @param lineMetrics Whether to calculate line distance metrics. This is required for
  *   [LineLayer][com.dayanruben.maplibrecompose.compose.layer.LineLayer]s that specify a `gradient`.
@@ -51,9 +50,27 @@ public data class GeoJsonOptions(
   val clusterRadius: Int = 50,
   val clusterMinPoints: Int = 2,
   val clusterMaxZoom: Int = maxZoom - 1,
-  val clusterProperties: Map<String, ClusterProperty> = emptyMap(),
+  val clusterProperties: Map<String, ClusterPropertyAggregator<*>> = emptyMap(),
   val lineMetrics: Boolean = false,
 ) {
-  // TODO seems to contradict https://maplibre.org/maplibre-style-spec/sources/#clusterproperties
-  public data class ClusterProperty(val operator: String, val mapper: Expression<*>)
+  public data class ClusterPropertyAggregator<T : ExpressionValue>(
+    /** Produces the value of a single point, passed to the accumulation operator. */
+    val mapper: Expression<T>,
+
+    /**
+     * An expression that aggregates values produced by the [mapper]. The special function
+     * [com.dayanruben.maplibrecompose.expressions.dsl.Feature.accumulated] will return the value
+     * accumulated so far, and the feature property with the name of the property will return the
+     * next value to aggregate.
+     *
+     * Example:
+     * ```kt
+     * GeoJsonOptions.ClusterPropertyAggregator(
+     *   mapper = feature.get("current_range_meters").asNumber(),
+     *   reducer = feature.get("total_range").asNumber() + feature.accumulated().asNumber(),
+     * )
+     * ```
+     */
+    val reducer: Expression<T>,
+  )
 }

@@ -13,10 +13,10 @@ import com.dayanruben.maplibrecompose.compose.MaplibreMap
 import com.dayanruben.maplibrecompose.compose.rememberCameraState
 import com.dayanruben.maplibrecompose.compose.rememberStyleState
 import com.dayanruben.maplibrecompose.core.OrnamentSettings
-import com.dayanruben.maplibrecompose.material3.controls.AttributionButton
 import com.dayanruben.maplibrecompose.material3.controls.CompassButton
 import com.dayanruben.maplibrecompose.material3.controls.DisappearingCompassButton
 import com.dayanruben.maplibrecompose.material3.controls.DisappearingScaleBar
+import com.dayanruben.maplibrecompose.material3.controls.ExpandingAttributionButton
 import com.dayanruben.maplibrecompose.material3.controls.ScaleBar
 
 @Composable
@@ -35,7 +35,12 @@ fun Material3() {
     Box(modifier = Modifier.fillMaxSize().padding(8.dp)) {
       ScaleBar(cameraState.metersPerDpAtTarget, modifier = Modifier.align(Alignment.TopStart))
       CompassButton(cameraState, modifier = Modifier.align(Alignment.TopEnd))
-      AttributionButton(styleState, modifier = Modifier.align(Alignment.BottomEnd))
+      ExpandingAttributionButton(
+        cameraState = cameraState,
+        styleState = styleState,
+        modifier = Modifier.align(Alignment.BottomEnd),
+        contentAlignment = Alignment.BottomEnd,
+      )
     }
   }
   // -8<- [end:controls]
@@ -55,7 +60,12 @@ fun Material3() {
         modifier = Modifier.align(Alignment.TopStart),
       ) // (1)!
       DisappearingCompassButton(cameraState, modifier = Modifier.align(Alignment.TopEnd)) // (2)!
-      AttributionButton(styleState, modifier = Modifier.align(Alignment.BottomEnd))
+      ExpandingAttributionButton(
+        cameraState = cameraState,
+        styleState = styleState,
+        modifier = Modifier.align(Alignment.BottomEnd),
+        contentAlignment = Alignment.BottomEnd,
+      )
     }
   }
   // -8<- [end:disappearing-controls]

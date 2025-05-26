@@ -13,6 +13,7 @@ import com.multiplatform.webview.web.WebView
 import com.multiplatform.webview.web.WebViewNavigator
 import com.multiplatform.webview.web.rememberWebViewNavigator
 import com.multiplatform.webview.web.rememberWebViewStateWithHTMLData
+import com.dayanruben.maplibrecompose.core.MapOptions
 import com.dayanruben.maplibrecompose.core.MaplibreMap
 import com.dayanruben.maplibrecompose.core.SafeStyle
 import com.dayanruben.maplibrecompose.core.WebviewBridge
@@ -27,6 +28,7 @@ internal actual fun ComposableMapView(
   onReset: () -> Unit,
   logger: Logger?,
   callbacks: MaplibreMap.Callbacks,
+  platformOptions: MapOptions,
 ) =
   DesktopMapView(
     modifier = modifier,

@@ -27,8 +27,8 @@ maps to your Compose UIs across Android, iOS, Desktop, and Web.
 
 ## Usage
 
-- [Getting Started](https://sargunv.github.io/maplibre-compose/getting-started/)
-- [API Reference](https://sargunv.github.io/maplibre-compose/api/)
+- [Getting Started](https://maplibre.org/maplibre-compose/getting-started/)
+- [API Reference](https://maplibre.org/maplibre-compose/api/)
 - [Demo App](./demo-app)
 
 ## Status
@@ -44,4 +44,4 @@ are still catching up.
 
 [compose]: https://www.jetbrains.com/compose-multiplatform/
 [maplibre]: https://maplibre.org/
-[status]: https://sargunv.github.io/maplibre-compose/#status
+[status]: https://maplibre.org/maplibre-compose/#status

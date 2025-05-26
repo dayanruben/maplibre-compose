@@ -3,8 +3,7 @@ package com.dayanruben.maplibrecompose.core.source
 import com.dayanruben.maplibrecompose.core.util.correctedAndroidUri
 import com.dayanruben.maplibrecompose.core.util.toMLNExpression
 import com.dayanruben.maplibrecompose.expressions.ExpressionContext
-import com.dayanruben.maplibrecompose.expressions.dsl.const
-import com.dayanruben.spatialk.geojson.GeoJson
+import io.github.dellisd.spatialk.geojson.GeoJson
 import java.net.URI
 import org.maplibre.android.style.sources.GeoJsonOptions as MLNGeoJsonOptions
 import org.maplibre.android.style.sources.GeoJsonSource as MLNGeoJsonSource
@@ -34,11 +33,11 @@ public actual class GeoJsonSource : Source {
       withCluster(options.cluster)
       withClusterMaxZoom(options.clusterMaxZoom)
       withClusterRadius(options.clusterRadius)
-      options.clusterProperties.forEach { (key, value) ->
+      options.clusterProperties.forEach { (name, aggregator) ->
         withClusterProperty(
-          key,
-          const(value.operator).toMLNExpression()!!,
-          value.mapper.compile(ExpressionContext.None).toMLNExpression()!!,
+          name,
+          aggregator.reducer.compile(ExpressionContext.None).toMLNExpression()!!,
+          aggregator.mapper.compile(ExpressionContext.None).toMLNExpression()!!,
         )
       }
     }

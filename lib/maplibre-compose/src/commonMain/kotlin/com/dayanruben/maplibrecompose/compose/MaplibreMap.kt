@@ -14,13 +14,15 @@ import com.dayanruben.maplibrecompose.compose.engine.LayerNode
 import com.dayanruben.maplibrecompose.compose.engine.rememberStyleComposition
 import com.dayanruben.maplibrecompose.core.CameraMoveReason
 import com.dayanruben.maplibrecompose.core.GestureSettings
+import com.dayanruben.maplibrecompose.core.MapOptions
 import com.dayanruben.maplibrecompose.core.MaplibreMap
 import com.dayanruben.maplibrecompose.core.OrnamentSettings
 import com.dayanruben.maplibrecompose.core.SafeStyle
 import com.dayanruben.maplibrecompose.core.StandardMaplibreMap
 import com.dayanruben.maplibrecompose.core.Style
+import com.dayanruben.maplibrecompose.core.defaultMapOptions
 import com.dayanruben.maplibrecompose.core.util.PlatformUtils
-import com.dayanruben.spatialk.geojson.Position
+import io.github.dellisd.spatialk.geojson.Position
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -106,6 +108,7 @@ public fun MaplibreMap(
   isDebugEnabled: Boolean = false,
   maximumFps: Int = PlatformUtils.getSystemRefreshRate().roundToInt(),
   logger: Logger? = remember { Logger.withTag("maplibre-compose") },
+  platformOptions: MapOptions = defaultMapOptions(),
   content: @Composable @MaplibreComposable () -> Unit = {},
 ) {
   var rememberedStyle by remember { mutableStateOf<SafeStyle?>(null) }
@@ -118,13 +121,17 @@ public fun MaplibreMap(
           map as StandardMaplibreMap
           rememberedStyle?.unload()
           val safeStyle = style?.let { SafeStyle(it) }
-          styleState.attach(safeStyle)
+          styleState.updateSources()
           rememberedStyle = safeStyle
           cameraState.metersPerDpAtTargetState.value =
             map.metersPerDpAtLatitude(map.getCameraPosition().target.latitude)
           if (style != null) {
             onMapReady()
           }
+        }
+
+        override fun onSourceChanged(map: MaplibreMap, id: String) {
+          styleState.updateSources()
         }
 
         override fun onCameraMoveStarted(map: MaplibreMap, reason: CameraMoveReason) {
@@ -196,6 +203,7 @@ public fun MaplibreMap(
       when (map) {
         is StandardMaplibreMap -> {
           cameraState.map = map
+          styleState.attach(styleComposition)
           map.setDebugEnabled(isDebugEnabled)
           map.setMinZoom(zoomRange.start.toDouble())
           map.setMaxZoom(zoomRange.endInclusive.toDouble())
@@ -221,10 +229,12 @@ public fun MaplibreMap(
     },
     onReset = {
       cameraState.map = null
+      styleState.attach(null)
       rememberedStyle = null
     },
     logger = logger,
     callbacks = callbacks,
     rememberedStyle = rememberedStyle,
+    platformOptions = platformOptions,
   )
 }

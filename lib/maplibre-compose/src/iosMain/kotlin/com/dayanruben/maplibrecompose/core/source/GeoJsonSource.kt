@@ -13,8 +13,7 @@ import cocoapods.MapLibre.MLNShapeSourceOptionSimplificationTolerance
 import com.dayanruben.maplibrecompose.core.util.toMLNShape
 import com.dayanruben.maplibrecompose.core.util.toNSExpression
 import com.dayanruben.maplibrecompose.expressions.ExpressionContext
-import com.dayanruben.maplibrecompose.expressions.ast.FunctionCall
-import com.dayanruben.spatialk.geojson.GeoJson
+import io.github.dellisd.spatialk.geojson.GeoJson
 import platform.Foundation.NSNumber
 import platform.Foundation.NSURL
 
@@ -47,8 +46,11 @@ public actual class GeoJsonSource : Source {
       put(MLNShapeSourceOptionClusterRadius, NSNumber(options.clusterRadius))
       put(
         MLNShapeSourceOptionClusterProperties,
-        options.clusterProperties.mapValues { (_, p) ->
-          FunctionCall.of(p.operator, p.mapper).compile(ExpressionContext.None).toNSExpression()
+        options.clusterProperties.mapValues { (name, aggregator) ->
+          listOf(
+            aggregator.reducer.compile(ExpressionContext.None).toNSExpression(),
+            aggregator.mapper.compile(ExpressionContext.None).toNSExpression(),
+          )
         },
       )
     }
