@@ -1,4 +1,4 @@
-package dev.sargunv.maplibrecompose.core
+package com.dayanruben.maplibrecompose.core
 
 public actual class MapOptions
 

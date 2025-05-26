@@ -1,18 +1,18 @@
-package dev.sargunv.maplibrecompose.demoapp.demos
+package com.dayanruben.maplibrecompose.demoapp.demos
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import dev.sargunv.maplibrecompose.compose.MaplibreMap
-import dev.sargunv.maplibrecompose.compose.rememberCameraState
-import dev.sargunv.maplibrecompose.compose.rememberStyleState
-import dev.sargunv.maplibrecompose.core.MapOptions
-import dev.sargunv.maplibrecompose.demoapp.DEFAULT_STYLE
-import dev.sargunv.maplibrecompose.demoapp.Demo
-import dev.sargunv.maplibrecompose.demoapp.DemoMapControls
-import dev.sargunv.maplibrecompose.demoapp.DemoOrnamentSettings
-import dev.sargunv.maplibrecompose.demoapp.DemoScaffold
+import com.dayanruben.maplibrecompose.compose.MaplibreMap
+import com.dayanruben.maplibrecompose.compose.rememberCameraState
+import com.dayanruben.maplibrecompose.compose.rememberStyleState
+import com.dayanruben.maplibrecompose.core.MapOptions
+import com.dayanruben.maplibrecompose.demoapp.DEFAULT_STYLE
+import com.dayanruben.maplibrecompose.demoapp.Demo
+import com.dayanruben.maplibrecompose.demoapp.DemoMapControls
+import com.dayanruben.maplibrecompose.demoapp.DemoOrnamentSettings
+import com.dayanruben.maplibrecompose.demoapp.DemoScaffold
 import org.jetbrains.compose.resources.ExperimentalResourceApi
 
 object TextureModeDemo : Demo {

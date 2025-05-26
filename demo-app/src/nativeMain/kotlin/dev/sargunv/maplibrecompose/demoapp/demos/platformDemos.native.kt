@@ -1,1 +1,1 @@
-package dev.sargunv.maplibrecompose.demoapp.demos
+package com.dayanruben.maplibrecompose.demoapp.demos

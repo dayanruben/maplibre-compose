@@ -1,5 +1,5 @@
-package dev.sargunv.maplibrecompose.demoapp.demos
+package com.dayanruben.maplibrecompose.demoapp.demos
 
-import dev.sargunv.maplibrecompose.demoapp.Demo
+import com.dayanruben.maplibrecompose.demoapp.Demo
 
 actual val platformDemos: List<Demo> = listOf(TextureModeDemo)
