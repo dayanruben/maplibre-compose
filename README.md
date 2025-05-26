@@ -9,8 +9,14 @@
 # MapLibre for Compose Multiplatform
 
 > [!WARNING]
-> Special thanks to the original [author](https://github.com/sargunv) for laying the foundation of this [repository](https://github.com/sargunv/maplibre-compose), your work continues to inspire.
-> This library will continue to be actively maintained with updates and modifications specifically required by the projects that depend on it. Efforts will be made to keep it as up-to-date as possible with the original implementation.
+> 
+> **Archive Notice (as of May 26, 2025):**
+> 
+> This repository is now **archived** in favor of the official implementation maintained by the MapLibre organization. Special thanks to the original author for laying the foundation of this work—your contributions continue to inspire.
+>
+> For the latest updates, issue tracking, and active maintenance, please migrate to the [MapLibre repository](https://github.com/maplibre/maplibre-compose).
+>
+> If you require any project-specific modifications, please consider opening an issue or pull request in the MapLibre repo, or fork it as needed.
 
 ---
 
