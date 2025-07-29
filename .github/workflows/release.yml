@@ -9,8 +9,8 @@ jobs:
   publish-maven:
     runs-on: "macos-latest"
     environment:
-      name: "maven-central"
-      url: "https://central.sonatype.com/namespace/dev.sargunv.maplibre-compose"
+      name: "maven-central-maplibre"
+      url: "https://central.sonatype.com/namespace/org.maplibre.compose"
     steps:
       - uses: "actions/checkout@v4"
         with:

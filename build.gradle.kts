@@ -47,10 +47,8 @@ tasks.register("generateDocs") {
 
 dependencies {
   dokka(project(":lib:maplibre-compose:"))
-  dokka(project(":lib:maplibre-compose-expressions:"))
   dokka(project(":lib:maplibre-compose-material3:"))
   dokka(project(":lib:kotlin-maplibre-js"))
-  dokka(project(":lib:compose-html-interop:"))
 }
 
 spotless {

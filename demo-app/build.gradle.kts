@@ -1,3 +1,4 @@
+import io.github.frankois944.spmForKmp.utils.ExperimentalSpmForKmpFeature
 import org.jetbrains.compose.ExperimentalComposeLibrary
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
@@ -14,10 +15,10 @@ plugins {
 }
 
 android {
-  namespace = "dev.sargunv.maplibrecompose.demoapp"
+  namespace = "org.maplibre.compose.demoapp"
 
   defaultConfig {
-    applicationId = "dev.sargunv.maplibrecompose.demoapp"
+    applicationId = "org.maplibre.compose.demoapp"
     minSdk = project.properties["androidMinSdk"]!!.toString().toInt()
     compileSdk = project.properties["androidCompileSdk"]!!.toString().toInt()
     targetSdk = project.properties["androidTargetSdk"]!!.toString().toInt()
@@ -164,17 +165,24 @@ kotlin {
   }
 }
 
-compose.resources { packageOfResClass = "dev.sargunv.maplibrecompose.demoapp.generated" }
+swiftPackageConfig {
+  getByName("spmMaplibre") {
+    @OptIn(ExperimentalSpmForKmpFeature::class)
+    copyDependenciesToApp = true
+  }
+}
+
+compose.resources { packageOfResClass = "org.maplibre.compose.demoapp.generated" }
 
 composeCompiler { reportsDestination = layout.buildDirectory.dir("compose/reports") }
 
 compose.desktop {
   application {
-    mainClass = "dev.sargunv.maplibrecompose.demoapp.MainKt"
+    mainClass = "org.maplibre.compose.demoapp.MainKt"
 
     nativeDistributions {
       targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
-      packageName = "dev.sargunv.maplibrecompose.demoapp"
+      packageName = "org.maplibre.compose.demoapp"
       // https://youtrack.jetbrains.com/issue/CMP-2360
       // packageVersion = project.ext["base_tag"].toString().replace("v", "")
       packageVersion = "1.0.0"

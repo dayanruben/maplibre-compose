@@ -40,14 +40,14 @@ val copyDesktopResources by
   }
 
 kotlin {
-  androidLibrary { namespace = "dev.sargunv.maplibrecompose" }
+  androidLibrary { namespace = "org.maplibre.compose" }
 
   listOf(iosArm64(), iosSimulatorArm64(), iosX64()).forEach {
     it.compilations.getByName("main") {
       cinterops {
         create("observer") {
           defFile(project.file("src/nativeInterop/cinterop/observer.def"))
-          packageName("dev.sargunv.maplibrecompose.core.util")
+          packageName("org.maplibre.compose.util")
         }
       }
     }
@@ -72,7 +72,6 @@ kotlin {
       implementation(compose.components.resources)
       api(libs.kermit)
       api(libs.spatialk.geojson)
-      api(project(":lib:maplibre-compose-expressions"))
     }
 
     // used to share some implementation on platforms where Compose UI is backed by Skia directly
@@ -114,8 +113,9 @@ kotlin {
       dependsOn(skiaMain)
       dependsOn(maplibreJsMain)
       dependencies {
+        // TODO replace this with the official component in the next version of Compose
+        implementation("dev.sargunv.maplibre-compose:compose-html-interop:0.10.4")
         implementation(project(":lib:kotlin-maplibre-js"))
-        implementation(project(":lib:compose-html-interop"))
       }
     }
 
@@ -137,7 +137,7 @@ kotlin {
 }
 
 compose.resources {
-  packageOfResClass = "dev.sargunv.maplibrecompose.generated"
+  packageOfResClass = "org.maplibre.compose.generated"
 
   customDirectory(
     sourceSetName = "desktopMain",
