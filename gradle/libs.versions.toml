@@ -2,11 +2,11 @@
 # Regular libraries: keep as up to date as possible.
 alchemist = "0.2.0"
 androidx-activity = "1.10.1"
-bytesize = "2.0.0-beta04"
+bytesize = "2.0.0"
 compass = "2.3.1"
 htmlConverterCompose = "1.1.0"
 kermit = "2.0.6"
-kotlin-wrappers = "2025.7.10"
+kotlin-wrappers = "2025.7.14"
 kotlinx-browser = "0.3"
 kotlinx-coroutines = "1.10.2"
 ktor = "3.2.2"
@@ -23,7 +23,7 @@ gradle-dokka = "2.0.0"
 gradle-jgitver = "0.10.0-rc03"
 gradle-mavenPublish = "0.34.0"
 gradle-mkdocs = "4.0.1"
-gradle-spotless = "7.2.0"
+gradle-spotless = "7.2.1"
 gradle-spmForKmp = "0.11.3"
 tool-prettier = "3.5.3"
 
@@ -33,7 +33,7 @@ gradle-compose = "1.8.2"
 #noinspection GradleDependency: follow version matrix above
 androidx-compose = "1.8.2"
 #noinspection GradleDependency: follow version matrix above
-androidx-navigation = "2.9.0-beta03"
+androidx-navigation = "2.9.0-beta04"
 
 # Android and Kotlin: Keep Kotlin up to date and set Android accordingly.
 # Also note the Gradle and XCode versions in the matrix!
