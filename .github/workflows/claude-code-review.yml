@@ -8,6 +8,7 @@ jobs:
   claude-review:
     # Optional: Filter by PR author
     if: |
+      github.repository_owner == 'maplibre' &&
       github.event.pull_request.user.login == 'sargunv'
 
     runs-on: ubuntu-latest
