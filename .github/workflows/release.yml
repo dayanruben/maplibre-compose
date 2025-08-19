@@ -6,6 +6,7 @@ on:
 
 jobs:
   publish-maven:
+    if: ${{ github.repository_owner == 'maplibre' }}
     runs-on: macos-latest
     environment:
       name: maven-central-maplibre
@@ -27,6 +28,7 @@ jobs:
             ${{ secrets.GPG_PASSPHRASE }}
 
   publish-pages:
+    if: ${{ github.repository_owner == 'maplibre' }}
     needs:
       - publish-maven
     runs-on: macos-latest
