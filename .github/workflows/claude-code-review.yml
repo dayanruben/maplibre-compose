@@ -7,7 +7,9 @@ on:
 jobs:
   claude-review:
     # Optional: Filter by PR author
-    if: github.repository_owner == 'maplibre' && github.event.pull_request.user.login == 'sargunv'
+    if:
+      github.repository_owner == 'maplibre' &&
+      github.event.pull_request.user.login == 'sargunv'
     runs-on: ubuntu-latest
     permissions:
       contents: read
