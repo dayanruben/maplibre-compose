@@ -37,13 +37,6 @@ repos:
         types_or: [c, c++, objective-c, objective-c++]
       - id: swift
         name: format swift
-        language: system
-        entry: |
-          bash -euo pipefail -c '
-            if ! command -v swift >/dev/null 2>&1; then
-              echo "swift not found"
-              exit $([ "${CI:-}" = "true" ] && echo 1 || echo 0)
-            fi
-            exec swift format -i "$@"
-          ' --
+        language: python
+        entry: python scripts/swift-format.py
         types_or: [swift]
