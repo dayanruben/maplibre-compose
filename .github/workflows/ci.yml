@@ -40,7 +40,7 @@ jobs:
         api-level:
           # the latest, Android 15 (Vanilla Ice Cream)
           - 35
-            # the oldest we support, Android 7 (Nougat) (supports back to ~Galaxy S6 from 2015)
+          # the oldest we support, Android 7 (Nougat) (supports back to ~Galaxy S6 from 2015)
           - 24
     steps:
       - uses: actions/checkout@v5
@@ -90,11 +90,32 @@ jobs:
       - run: ./gradlew jsBrowserTest
 
   test-desktop:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # TODO add alternative architectures
+          - runner: macos-latest # aarch64
+          - runner: ubuntu-latest # amd64
+          - runner: windows-latest # amd64
+    runs-on: ${{ matrix.runner }}
     steps:
+      - if: ${{ matrix.runner == 'windows-latest' }}
+        run: git config --global core.longpaths true
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+          submodules: recursive
+      - if: ${{ matrix.runner == 'windows-latest' }}
+        uses: ilammy/msvc-dev-cmd@v1
+      - if: ${{ matrix.runner == 'ubuntu-latest' }}
+        name: Install Linux maplibre-native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libcurl4-openssl-dev libjpeg-turbo8-dev libpng-dev libwebp-dev \
+            libx11-dev libgl1-mesa-dev libuv1-dev libbz2-dev libicu-dev \
+            libvulkan-dev
       - uses: ./.github/actions/setup
       - run: ./gradlew desktopTest
 
@@ -122,8 +143,51 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           if-no-files-found: error
-          name: demo-app-debug
+          name: demo-app-android
           path: demo-app/build/outputs/apk/debug/demo-app-debug.apk
+
+  build-desktop-app:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # TODO add alternative architectures
+          - runner: macos-latest # aarch64
+            artifact_type: dmg
+            artifact_name: demo-app-desktop-macos-aarch64
+          - runner: ubuntu-latest # amd64
+            artifact_type: deb
+            artifact_name: demo-app-desktop-linux-amd64
+          - runner: windows-latest # amd64
+            artifact_type: msi
+            artifact_name: demo-app-desktop-windows-amd64
+    runs-on: ${{ matrix.runner }}
+    name: build-desktop-app (${{ matrix.runner }})
+    steps:
+      - if: ${{ matrix.runner == 'windows-latest' }}
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - if: ${{ matrix.runner == 'windows-latest' }}
+        uses: ilammy/msvc-dev-cmd@v1
+      - if: ${{ matrix.runner == 'ubuntu-latest' }}
+        name: Install Linux maplibre-native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libcurl4-openssl-dev libjpeg-turbo8-dev libpng-dev libwebp-dev \
+            libx11-dev libgl1-mesa-dev libuv1-dev libbz2-dev libicu-dev \
+            libvulkan-dev
+      - uses: ./.github/actions/setup
+      - run: ./gradlew :demo-app:packageDistributionForCurrentOS
+      - uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: error
+          name: ${{ matrix.artifact_name }}
+          path:
+            "demo-app/build/compose/binaries/main/${{ matrix.artifact_type }}/*"
 
   all-good:
     needs:
@@ -135,6 +199,7 @@ jobs:
       - test-js
       - build-docs
       - build-android-app
+      - build-desktop-app
     runs-on: ubuntu-latest
     steps:
       - run: echo 'All checks passed!'
