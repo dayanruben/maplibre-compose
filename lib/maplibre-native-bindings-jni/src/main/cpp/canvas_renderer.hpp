@@ -11,7 +11,6 @@
 
 #include <jawt.h>
 #include <jawt_md.h>
-#include <jni.h>
 #include <smjni/java_ref.h>
 #include <type_mapping.h>
 
@@ -73,9 +72,10 @@ class CanvasRenderer : public mbgl::RendererFrontend {
   void update(std::shared_ptr<mbgl::UpdateParameters> params) override;
   const mbgl::TaggedScheduler& getThreadPool() const override;
   void setSize(mbgl::Size size);
-  std::unique_ptr<mbgl::util::RunLoop> runLoop_;
+  void runOnce();
 
  private:
+  std::unique_ptr<mbgl::util::RunLoop> runLoop_;
   smjni::global_java_ref<jCanvasRenderer> canvasRenderer_;
   std::unique_ptr<CanvasBackend> backend_;
   std::unique_ptr<mbgl::Renderer> renderer_;
