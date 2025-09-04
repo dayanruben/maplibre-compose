@@ -1,43 +1,40 @@
----
-name: "CI"
+name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 jobs:
   check-format:
-    runs-on: "ubuntu-latest"
+    runs-on: ubuntu-latest
     permissions:
       checks: write
       issues: write
       pull-requests: write
     steps:
-      - uses: "actions/checkout@v4"
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: "./.github/actions/setup"
-      - run: "./gradlew spotlessApply"
-      - if: "${{ github.event_name == 'pull_request' }}"
+      - uses: pre-commit/action@v3.0.1
+      - if: ${{ github.event_name == 'pull_request' && failure() }}
         uses: reviewdog/action-suggester@v1
         with:
-          tool_name: spotless
+          tool_name: pre-commit
           cleanup: false
-      - run: "git diff --exit-code"
 
   lint-android:
-    runs-on: "ubuntu-latest"
+    runs-on: ubuntu-latest
     steps:
-      - uses: "actions/checkout@v4"
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: "./.github/actions/setup"
-      - run: "./gradlew lint"
+      - uses: ./.github/actions/setup-gradle
+      - run: ./gradlew lint
 
   test-android:
-    runs-on: "ubuntu-latest"
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         api-level:
@@ -46,95 +43,145 @@ jobs:
           # the oldest we support, Android 7 (Nougat) (supports back to ~Galaxy S6 from 2015)
           - 24
     steps:
-      - uses: "actions/checkout@v4"
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: "./.github/actions/setup"
-      - run: "./gradlew testDebugUnitTest"
-      - name: "Run with AVD ./gradlew connectedDebugAndroidTest"
-        uses: "./.github/actions/run-with-avd"
+      - uses: ./.github/actions/setup-gradle
+      - run: ./gradlew testDebugUnitTest
+      - name: Run with AVD ./gradlew connectedDebugAndroidTest
+        uses: ./.github/actions/run-with-avd
         with:
-          api-level: "${{ matrix.api-level }}"
-          script: "./gradlew connectedDebugAndroidTest"
+          api-level: ${{ matrix.api-level }}
+          script: ./gradlew connectedDebugAndroidTest
 
   test-ios:
     strategy:
       matrix:
         include:
           # the latest
-          - runner: "macos-15"
-            os_version: "^18"
-          # the oldest on GH Actions (supports back to ~iPhone XS from 2018)
-          - runner: "macos-14"
-            os_version: "^17"
-    name: "test-ios (${{ matrix.os_version }})"
-    runs-on: "${{ matrix.runner }}"
+          - runner: macos-15
+            os_version: ^18
+            # the oldest on GH Actions (supports back to ~iPhone XS from 2018)
+          - runner: macos-14
+            os_version: ^17
+    name: test-ios (${{ matrix.os_version }})
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: "actions/checkout@v4"
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: "./.github/actions/setup"
-      - uses: "futureware-tech/simulator-action@v4"
-        id: "setup-simulator"
+      - uses: ./.github/actions/setup-gradle
+      - uses: futureware-tech/simulator-action@v4
+        id: setup-simulator
         with:
-          os: "iOS"
-          os_version: "${{ matrix.os_version }}"
-      - run: "./gradlew iosSimulatorArm64Test -- --device ${{ steps.setup-simulator.outputs.udid }}"
+          os: iOS
+          os_version: ${{ matrix.os_version }}
+      - run:
+          ./gradlew iosSimulatorArm64Test -- --device ${{
+          steps.setup-simulator.outputs.udid }}
 
   test-js:
     runs-on: ubuntu-latest
     steps:
-      - uses: "actions/checkout@v4"
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: "./.github/actions/setup"
-      - run: "./gradlew jsBrowserTest"
+      - uses: ./.github/actions/setup-gradle
+      - run: ./gradlew jsBrowserTest
 
   test-desktop:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # TODO add alternative architectures
+          - runner: macos-latest # aarch64
+          - runner: ubuntu-latest # amd64
+          - runner: windows-latest # amd64
+    runs-on: ${{ matrix.runner }}
     steps:
-      - uses: "actions/checkout@v4"
+      - if: ${{ matrix.runner == 'windows-latest' }}
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: "./.github/actions/setup"
-      - run: "./gradlew desktopTest"
+          submodules: recursive
+      - uses: ./.github/actions/setup-cmake
+      - uses: ./.github/actions/setup-gradle
+      - run: ./gradlew desktopTest
 
   build-docs:
-    runs-on: "macos-latest"
+    if: ${{ github.repository_owner == 'maplibre' }}
+    runs-on: macos-latest
     steps:
-      - uses: "actions/checkout@v4"
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: "./.github/actions/setup"
-      - run: "./gradlew generateDocs"
-      - uses: "actions/upload-pages-artifact@v3"
+      - uses: ./.github/actions/setup-gradle
+      - run: ./gradlew generateDocs
+      - uses: actions/upload-pages-artifact@v3
         with:
-          path: "build/docs"
+          path: build/docs
 
   build-android-app:
-    runs-on: "ubuntu-latest"
+    runs-on: ubuntu-latest
     steps:
-      - uses: "actions/checkout@v4"
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: "./.github/actions/setup"
-      - run: "./gradlew packageDebug"
-      - uses: "actions/upload-artifact@v4"
+      - uses: ./.github/actions/setup-gradle
+      - run: ./gradlew packageDebug
+      - uses: actions/upload-artifact@v4
         with:
-          if-no-files-found: "error"
-          name: "demo-app-debug"
-          path: "demo-app/build/outputs/apk/debug/demo-app-debug.apk"
+          if-no-files-found: error
+          name: demo-app-android
+          path: demo-app/build/outputs/apk/debug/demo-app-debug.apk
+
+  build-desktop-app:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # TODO add alternative architectures
+          - runner: macos-latest # aarch64
+            artifact_type: dmg
+            artifact_name: demo-app-desktop-macos-aarch64
+          - runner: ubuntu-latest # amd64
+            artifact_type: deb
+            artifact_name: demo-app-desktop-linux-amd64
+          - runner: windows-latest # amd64
+            artifact_type: msi
+            artifact_name: demo-app-desktop-windows-amd64
+    runs-on: ${{ matrix.runner }}
+    name: build-desktop-app (${{ matrix.runner }})
+    steps:
+      - if: ${{ matrix.runner == 'windows-latest' }}
+        run: git config --global core.longpaths true
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - uses: ./.github/actions/setup-cmake
+      - uses: ./.github/actions/setup-gradle
+      - run: ./gradlew :demo-app:packageDistributionForCurrentOS
+      - uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: error
+          name: ${{ matrix.artifact_name }}
+          path:
+            "demo-app/build/compose/binaries/main/${{ matrix.artifact_type }}/*"
 
   all-good:
     needs:
-      - "check-format"
-      - "lint-android"
-      - "test-android"
-      - "test-ios"
-      - "test-desktop"
-      - "test-js"
-      - "build-docs"
-      - "build-android-app"
-    runs-on: "ubuntu-latest"
+      - check-format
+      - lint-android
+      - test-android
+      - test-ios
+      - test-desktop
+      - test-js
+      - build-docs
+      - build-android-app
+      - build-desktop-app
+    runs-on: ubuntu-latest
     steps:
-      - run: "echo 'All checks passed!'"
+      - run: echo 'All checks passed!'

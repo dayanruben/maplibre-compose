@@ -135,6 +135,26 @@ kotlin {
         implementation(compose.desktop.currentOs)
         implementation(libs.kotlinx.coroutines.swing)
         implementation(libs.ktor.client.okhttp)
+
+        runtimeOnly(project(":lib:maplibre-native-bindings-jni")) {
+          capabilities {
+            val osPart =
+              when (val os = System.getProperty("os.name").lowercase()) {
+                "mac os x" -> "macos"
+                else -> os.split(' ').first()
+              }
+            val archPart =
+              when (val arch = System.getProperty("os.arch").lowercase()) {
+                "x86_64" -> "amd64" // jdk returns x86_64 on macos but amd64 elsewhere
+                else -> arch
+              }
+            val rendererPart =
+              project.properties["desktopRenderer"] ?: if (osPart == "macos") "metal" else "opengl"
+            requireCapability(
+              "org.maplibre.compose:maplibre-native-bindings-jni-$osPart-$archPart-$rendererPart"
+            )
+          }
+        }
       }
     }
 
@@ -187,16 +207,16 @@ compose.desktop {
       // packageVersion = project.ext["base_tag"].toString().replace("v", "")
       packageVersion = "1.0.0"
     }
+  }
+}
 
-    // https://github.com/KevinnZou/compose-webview-multiplatform/blob/main/README.desktop.md#flags
-    jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
-    jvmArgs(
-      "--add-opens",
-      "java.desktop/java.awt.peer=ALL-UNNAMED",
-    ) // recommended but not necessary
-    if (System.getProperty("os.name").contains("Mac")) {
-      jvmArgs("--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED")
-      jvmArgs("--add-opens", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
-    }
+tasks.withType<JavaExec>().configureEach {
+  if (System.getProperty("os.name").lowercase().contains("mac")) {
+    val homebrewPath = System.getenv("HOMEBREW_PREFIX")?.let { "$it/lib" } ?: ""
+    val existingPath = System.getenv("DYLD_FALLBACK_LIBRARY_PATH") ?: "/usr/local/lib:/usr/lib"
+    val vulkanSdkPath = System.getenv("VULKAN_SDK")?.let { "$it/lib" } ?: ""
+    val paths =
+      listOf(homebrewPath, vulkanSdkPath, existingPath).filter { it.isNotEmpty() }.joinToString(":")
+    environment("DYLD_FALLBACK_LIBRARY_PATH", paths)
   }
 }

@@ -150,7 +150,7 @@ For Web, you'll additionally need to add the MapLibre CSS to your page. The
 easiest way to do this is via the CDN:
 
 ```html title="index.html"
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
     <link
@@ -168,43 +168,36 @@ easiest way to do this is via the CDN:
 
     Desktop support is not yet at feature parity with Android and iOS. Check the [status table](index.md#status) for more info.
 
-On desktop, we use [DATL4g/KCEF][kcef] to embed a Chromium based browser. It
-requires some special configuration.
-
-Add this Maven repo to your project:
-
-```kotlin title="settings.gradle.kts"
-repositories {
-  maven("https://jogamp.org/deployment/maven")
-}
-```
-
-Add these JVM flags to your app:
+On desktop, we use MapLibre Native via a JNI bindings module that bundles
+platform-specific native libraries. Add a runtime-only dependency for each
+platform you want to support, selecting exactly one renderer per OS/architecture
+combination via capabilities.
 
 ```kotlin title="build.gradle.kts"
-compose.desktop {
-  application {
-    jvmArgs("--add-opens", "java.desktop/sun.awt=ALL-UNNAMED")
-    jvmArgs(
-      "--add-opens",
-      "java.desktop/java.awt.peer=ALL-UNNAMED"
-    ) // recommended but not necessary
-
-    if (System.getProperty("os.name").contains("Mac")) {
-      jvmArgs("--add-opens", "java.desktop/sun.lwawt=ALL-UNNAMED")
-      jvmArgs("--add-opens", "java.desktop/sun.lwawt.macosx=ALL-UNNAMED")
+sourceSets {
+  val desktopMain by getting {
+    dependencies {
+      implementation(compose.desktop.currentOs)
+      implementation("org.maplibre.compose:maplibre-compose:{{ gradle.release_version }}")
+      runtimeOnly("org.maplibre.compose:maplibre-native-bindings-jni:{{ gradle.release_version }}") {
+        capabilities {
+          requireCapability("org.maplibre.compose:maplibre-native-bindings-jni-macos-aarch64-metal")
+          requireCapability("org.maplibre.compose:maplibre-native-bindings-jni-linux-amd64-opengl")
+          requireCapability("org.maplibre.compose:maplibre-native-bindings-jni-windows-amd64-opengl")
+        }
+      }
     }
   }
 }
 ```
 
-Wrap your app with `KcefProvider` to download KCEF on first lanch, and
-`MaplibreContext` to provide the library with context about the window your app
-is running in:
+The following targets are available now:
 
-```kotlin title="Main.kt"
--8<- "demo-app/src/desktopMain/kotlin/org/maplibre/compose/demoapp/Main.kt:main"
-```
+- `macos-aarch64-metal`
+- `linux-amd64-opengl`
+- `windows-amd64-opengl`
+
+Other architectures and renderers will be added later.
 
 ## Display your first map
 
@@ -230,4 +223,3 @@ to get a detailed map with all the features you'd expect, proceed to
 [cocoapods-support]: https://blog.cocoapods.org/CocoaPods-Support-Plans/
 [repo]: https://github.com/maplibre/maplibre-compose
 [demotiles]: https://demotiles.maplibre.org/
-[kcef]: https://github.com/DatL4g/KCEF
