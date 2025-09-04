@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
@@ -14,7 +15,6 @@ import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.expressions.dsl.div
 import org.maplibre.compose.expressions.dsl.nil
 import org.maplibre.compose.expressions.dsl.offset
-import org.maplibre.compose.expressions.dsl.times
 import org.maplibre.compose.expressions.value.BooleanValue
 import org.maplibre.compose.expressions.value.ColorValue
 import org.maplibre.compose.expressions.value.DpOffsetValue
@@ -46,6 +46,24 @@ import org.maplibre.compose.sources.Source
 import org.maplibre.compose.sources.SourceReferenceEffect
 import org.maplibre.compose.util.FeaturesClickHandler
 import org.maplibre.compose.util.MaplibreComposable
+
+private const val ASSUMED_SP = 16f // MapLibre's default text size
+
+@Composable
+private fun rememberDpCompiler(dpPerSp: Dp) =
+  rememberPropertyCompiler(
+    emScale = const(ASSUMED_SP * dpPerSp.value),
+    spScale = const(dpPerSp.value),
+  )
+
+@Composable
+private fun rememberEmCompiler(textSize: Expression<TextUnitValue>): LayerPropertyCompiler {
+  val compileWithSpTextSize =
+    rememberPropertyCompiler(emScale = const(ASSUMED_SP), spScale = const(1f))
+  val textSizeSp = compileWithSpTextSize(textSize)
+  val spScale = remember(textSizeSp) { const(1f) / textSizeSp.cast() }
+  return rememberPropertyCompiler(emScale = const(1f), spScale = spScale)
+}
 
 /**
  * A symbol layer draws data from the [sourceLayer] in the given [source] as icons and/or text
@@ -218,6 +236,11 @@ import org.maplibre.compose.util.MaplibreComposable
  *
  *   Ignored if [textField] is not specified.
  *
+ *   **Important:** If using zoom interpolation for text size, then all other properties defined in
+ *   text units (like [textLetterSpacing], [textOffset], etc) MUST be defined in EM units, not SP
+ *   units. This is a limitation of the MapLibre expression parser. If text size does not use zoom
+ *   interpolation, then those other properties can be defined in either unit.
+ *
  * @param textTransform Specifies how to capitalize text.
  * @param textLetterSpacing Text tracking amount.
  *
@@ -346,7 +369,7 @@ import org.maplibre.compose.util.MaplibreComposable
  *   Ignored if [textField] is not specified.
  *
  * @param textOverlap Controls whether to show an icon/text when it overlaps other symbols on the
- *   map. See [SymbolOverlap][org.maplibre.compose.expressions.util.SymbolOverlap]. Overrides
+ *   map. See [SymbolOverlap][org.maplibre.compose.expressions.value.SymbolOverlap]. Overrides
  *   [textAllowOverlap].
  *
  *   Ignored if [textField] is not specified.
@@ -474,15 +497,10 @@ public fun SymbolLayer(
   onClick: FeaturesClickHandler? = null,
   onLongClick: FeaturesClickHandler? = null,
 ) {
-  // used for scaling textSize from sp (api) to dp (core)
-  // needs changes after https://github.com/maplibre/maplibre-native/issues/3057
-  val dpPerSp = LocalDensity.current.fontScale.dp
-  val compileTextSize = rememberPropertyCompiler(emScale = const(16f), spScale = const(1f))
-  val textSizeSp = compileTextSize(textSize.cast<FloatValue>())
-  val textSizeDp = remember(textSizeSp, dpPerSp) { textSizeSp * const(dpPerSp) }
-
-  // compiles TextUnit as EMs
-  val compile = rememberPropertyCompiler(emScale = const(1f), spScale = const(1f) / textSizeSp)
+  // Scaling code will need changes after https://github.com/maplibre/maplibre-native/issues/3057.
+  val compileWithDpTextSize = rememberDpCompiler(LocalDensity.current.fontScale.dp)
+  val compileWithEmTextSize = rememberEmCompiler(textSize)
+  val compile = rememberPropertyCompiler()
 
   val compiledFilter = compile(filter)
   val compiledSortKey = compile(sortKey)
@@ -521,22 +539,22 @@ public fun SymbolLayer(
   val compiledTextHaloWidth = compile(textHaloWidth)
   val compiledTextHaloBlur = compile(textHaloBlur)
   val compiledTextFont = compile(textFont)
-  val compiledTextSizeDp = compile(textSizeDp)
+  val compiledTextSizeDp = compileWithDpTextSize(textSize)
   val compiledTextTransform = compile(textTransform)
-  val compiledTextLetterSpacing = compile(textLetterSpacing)
+  val compiledTextLetterSpacing = compileWithEmTextSize(textLetterSpacing)
   val compiledTextRotationAlignment = compile(textRotationAlignment)
   val compiledTextPitchAlignment = compile(textPitchAlignment)
   val compiledTextMaxAngle = compile(textMaxAngle)
-  val compiledTextMaxWidth = compile(textMaxWidth)
-  val compiledTextLineHeight = compile(textLineHeight)
+  val compiledTextMaxWidth = compileWithEmTextSize(textMaxWidth)
+  val compiledTextLineHeight = compileWithEmTextSize(textLineHeight)
   val compiledTextJustify = compile(textJustify)
   val compiledTextWritingMode = compile(textWritingMode)
   val compiledTextKeepUpright = compile(textKeepUpright)
   val compiledTextRotate = compile(textRotate)
   val compiledTextAnchor = compile(textAnchor)
-  val compiledTextOffset = compile(textOffset)
+  val compiledTextOffset = compileWithEmTextSize(textOffset)
   val compiledTextVariableAnchor = compile(textVariableAnchor)
-  val compiledTextRadialOffset = compile(textRadialOffset)
+  val compiledTextRadialOffset = compileWithEmTextSize(textRadialOffset)
   val compiledTextVariableAnchorOffset = compile(textVariableAnchorOffset)
   val compiledTextPadding = compile(textPadding)
   val compiledTextAllowOverlap = compile(textAllowOverlap)
@@ -588,7 +606,7 @@ public fun SymbolLayer(
       set(compiledTextRotationAlignment) { layer.setTextRotationAlignment(it) }
       set(compiledTextField) { layer.setTextField(it) }
       set(compiledTextFont) { layer.setTextFont(it) }
-      set(compiledTextSizeDp) { layer.setTextSize(it) }
+      set(compiledTextSizeDp.cast<DpValue>()) { layer.setTextSize(it) }
       set(compiledTextMaxWidth.cast<FloatValue>()) { layer.setTextMaxWidth(it) }
       set(compiledTextLineHeight.cast<FloatValue>()) { layer.setTextLineHeight(it) }
       set(compiledTextLetterSpacing.cast<FloatValue>()) { layer.setTextLetterSpacing(it) }
