@@ -1,9 +1,11 @@
 #pragma once
 
+#include <mbgl/map/bound_options.hpp>
 #include <mbgl/map/camera.hpp>
 #include <mbgl/map/map_options.hpp>
 #include <mbgl/storage/resource_options.hpp>
 #include <mbgl/util/client_options.hpp>
+#include <mbgl/util/projection.hpp>
 #include <mbgl/util/tile_server_options.hpp>
 
 #include "type_mapping.h"
@@ -13,6 +15,12 @@ namespace maplibre_jni {
 auto convertLatLng(JNIEnv* env, jLatLng latLngObj) -> mbgl::LatLng;
 
 auto convertLatLng(JNIEnv* env, mbgl::LatLng latLng) -> jLatLng;
+
+auto convertLatLngBounds(JNIEnv* env, jLatLngBounds latLngBoundsObj)
+  -> mbgl::LatLngBounds;
+
+auto convertLatLngBounds(JNIEnv* env, const mbgl::LatLngBounds& latLngBounds)
+  -> jLatLngBounds;
 
 auto convertEdgeInsets(JNIEnv* env, jEdgeInsets edgeInsetsObj)
   -> mbgl::EdgeInsets;
@@ -26,6 +34,12 @@ auto convertScreenCoordinate(JNIEnv* env, jScreenCoordinate screenCoordinateObj)
 auto convertScreenCoordinate(
   JNIEnv* env, mbgl::ScreenCoordinate screenCoordinate
 ) -> jScreenCoordinate;
+
+auto convertBoundOptions(JNIEnv* env, jBoundOptions boundOptionsObj)
+  -> mbgl::BoundOptions;
+
+auto convertBoundOptions(JNIEnv* env, const mbgl::BoundOptions& boundOptions)
+  -> jBoundOptions;
 
 auto convertCameraOptions(JNIEnv* env, jCameraOptions cameraOptionsObj)
   -> mbgl::CameraOptions;

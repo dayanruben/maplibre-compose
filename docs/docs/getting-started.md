@@ -90,8 +90,26 @@ Follow the [official setup documentation][gradle-spm4kmp], and add the below to
 include MapLibre in your build:
 
 ```kotlin title="build.gradle.kts"
+kotlin {
+  listOf(
+    iosX64(),
+    iosArm64(),
+    iosSimulatorArm64()
+  ).forEach {
+    it.compilations {
+      getByName("main") {
+        cinterops.create("spmMaplibre") // (1)!
+      }
+    }
+    it.binaries.framework {
+      baseName = "ComposeApp"
+      isStatic = true
+    }
+  }
+}
+
 swiftPackageConfig {
-  create("[cinteropName]") { // (1)!
+  create("spmMaplibre") { // (1)!
     dependency {
       remotePackageVersion(
         url = URI("https://github.com/maplibre/maplibre-gl-native-distribution.git"),

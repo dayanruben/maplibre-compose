@@ -6,13 +6,16 @@
 #include <mbgl/gfx/renderer_backend.hpp>
 #include <mbgl/renderer/renderer_frontend.hpp>
 #include <mbgl/renderer/renderer_observer.hpp>
-#include <mbgl/renderer/update_parameters.hpp>
 #include <mbgl/util/run_loop.hpp>
 
 #include <jawt.h>
 #include <jawt_md.h>
 #include <smjni/java_ref.h>
 #include <type_mapping.h>
+
+// clang-format off
+#include "fix_x11_pollution.h"
+// clang-format on
 
 #if defined(USE_METAL_BACKEND)
 #include <mbgl/mtl/renderer_backend.hpp>
@@ -31,14 +34,12 @@ class CanvasBackend : public mbgl::mtl::RendererBackend,
                       public mbgl::gfx::Renderable {
  public:
   explicit CanvasBackend(JNIEnv* env, jCanvas canvas);
-  mbgl::gfx::Renderable& getDefaultRenderable() override;
-  void wait() override {}
+  auto getDefaultRenderable() -> mbgl::gfx::Renderable& override;
   void setSize(mbgl::Size);
 
  protected:
   void activate() override;
   void deactivate() override;
-  std::unique_ptr<mbgl::gfx::Context> createContext() override;
   void updateAssumedState() override {}
 };
 
@@ -80,7 +81,7 @@ class CanvasRenderer : public mbgl::RendererFrontend {
   std::unique_ptr<CanvasBackend> backend_;
   std::unique_ptr<mbgl::Renderer> renderer_;
   std::unique_ptr<mbgl::RendererObserver> observer_;
-  std::unique_ptr<mbgl::UpdateParameters> updateParameters_;
+  std::shared_ptr<mbgl::UpdateParameters> updateParameters_;
 
  public:
   void render();

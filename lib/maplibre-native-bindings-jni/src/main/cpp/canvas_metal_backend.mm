@@ -1,6 +1,6 @@
+#ifdef USE_METAL_BACKEND
 #include <iostream>
 #include <memory>
-#ifdef USE_METAL_BACKEND
 
 #include <mbgl/mtl/context.hpp>
 #include <mbgl/mtl/renderable_resource.hpp>
@@ -195,10 +195,6 @@ CanvasBackend::CanvasBackend(JNIEnv *env, jCanvas canvas)
 
 void CanvasBackend::setSize(mbgl::Size size) {
   getResource<MetalRenderableResource>().setSize(size);
-}
-
-auto CanvasBackend::createContext() -> std::unique_ptr<mbgl::gfx::Context> {
-  return std::make_unique<mbgl::mtl::Context>(*this);
 }
 
 auto CanvasBackend::getDefaultRenderable() -> mbgl::gfx::Renderable & {
