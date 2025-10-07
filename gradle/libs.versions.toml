@@ -32,7 +32,7 @@ jetbrains-navigation = "2.9.0"
 # Android and Kotlin: Keep Kotlin up to date and set Android accordingly.
 # Also note the Gradle and XCode versions in the matrix!
 # https://www.jetbrains.com/help/kotlin-multiplatform-dev/multiplatform-compatibility-guide.html
-gradle-kotlin = "2.2.20"
+gradle-kotlin = "2.2.21-RC"
 #noinspection AndroidGradlePluginVersion: follow version matrix above
 gradle-android = "8.11.1"
 #noinspection GradleDependency: follow Kotlin version above
