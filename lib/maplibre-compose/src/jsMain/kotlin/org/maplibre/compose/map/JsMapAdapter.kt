@@ -26,21 +26,24 @@ import org.maplibre.compose.util.toPaddingOptions
 import org.maplibre.compose.util.toPaddingValuesAbsolute
 import org.maplibre.compose.util.toPoint
 import org.maplibre.compose.util.toPosition
-import org.maplibre.kmp.js.AttributionControl
-import org.maplibre.kmp.js.EaseToOptions
-import org.maplibre.kmp.js.FitBoundsOptions
-import org.maplibre.kmp.js.JumpToOptions
-import org.maplibre.kmp.js.LngLat
-import org.maplibre.kmp.js.LogoControl
-import org.maplibre.kmp.js.Map
-import org.maplibre.kmp.js.MapLibreEvent
-import org.maplibre.kmp.js.MapMouseEvent
-import org.maplibre.kmp.js.MapOptions
-import org.maplibre.kmp.js.NavigationControl
-import org.maplibre.kmp.js.NavigationControlOptions
-import org.maplibre.kmp.js.Point
-import org.maplibre.kmp.js.QueryRenderedFeaturesOptions
-import org.maplibre.kmp.js.ScaleControl
+import org.maplibre.kmp.js.controls.AttributionControl
+import org.maplibre.kmp.js.controls.FullscreenControl
+import org.maplibre.kmp.js.controls.GeolocateControl
+import org.maplibre.kmp.js.controls.GlobeControl
+import org.maplibre.kmp.js.controls.LogoControl
+import org.maplibre.kmp.js.controls.NavigationControl
+import org.maplibre.kmp.js.controls.NavigationControlOptions
+import org.maplibre.kmp.js.controls.ScaleControl
+import org.maplibre.kmp.js.event.MapLibreEvent
+import org.maplibre.kmp.js.event.MapMouseEvent
+import org.maplibre.kmp.js.geometry.LngLat
+import org.maplibre.kmp.js.geometry.Point
+import org.maplibre.kmp.js.map.EaseToOptions
+import org.maplibre.kmp.js.map.FitBoundsOptions
+import org.maplibre.kmp.js.map.JumpToOptions
+import org.maplibre.kmp.js.map.Map
+import org.maplibre.kmp.js.map.MapOptions
+import org.maplibre.kmp.js.map.QueryRenderedFeaturesOptions
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.Geometry
@@ -217,22 +220,20 @@ internal class JsMapAdapter(
   private var logoPosition: String? = null
   private var scalePosition: String? = null
   private var attributionPosition: String? = null
-
+  private var globeButtonPosition: String? = null
+  private var fullscreenButtonPosition: String? = null
+  private var geolocateButtonPosition: String? = null
   private val navigationControl = NavigationControl(NavigationControlOptions(visualizePitch = true))
   private val logoControl = LogoControl()
   private val scaleControl = ScaleControl()
   private val attributionControl = AttributionControl()
+  private val globeControl = GlobeControl()
+  private val fullscreenControl = FullscreenControl()
+  private val geolocateControl = GeolocateControl()
 
   override fun setOrnamentSettings(value: OrnamentOptions) {
     val desiredCompassPosition =
       if (value.isNavigationEnabled) value.navigationAlignment.toControlPosition(layoutDir)
-      else null
-    val desiredLogoPosition =
-      if (value.isLogoEnabled) value.logoAlignment.toControlPosition(layoutDir) else null
-    val desiredScalePosition =
-      if (value.isScaleBarEnabled) value.scaleBarAlignment.toControlPosition(layoutDir) else null
-    val desiredAttributionPosition =
-      if (value.isAttributionEnabled) value.attributionAlignment.toControlPosition(layoutDir)
       else null
 
     if (compassPosition != desiredCompassPosition) {
@@ -241,11 +242,17 @@ internal class JsMapAdapter(
       compassPosition = desiredCompassPosition
     }
 
+    val desiredLogoPosition =
+      if (value.isLogoEnabled) value.logoAlignment.toControlPosition(layoutDir) else null
+
     if (logoPosition != desiredLogoPosition) {
       if (desiredLogoPosition == null) impl.removeControl(logoControl)
       else impl.addControl(logoControl, desiredLogoPosition)
       logoPosition = desiredLogoPosition
     }
+
+    val desiredScalePosition =
+      if (value.isScaleBarEnabled) value.scaleBarAlignment.toControlPosition(layoutDir) else null
 
     if (scalePosition != desiredScalePosition) {
       if (desiredScalePosition == null) impl.removeControl(scaleControl)
@@ -253,10 +260,46 @@ internal class JsMapAdapter(
       scalePosition = desiredScalePosition
     }
 
+    val desiredAttributionPosition =
+      if (value.isAttributionEnabled) value.attributionAlignment.toControlPosition(layoutDir)
+      else null
+
     if (attributionPosition != desiredAttributionPosition) {
       if (desiredAttributionPosition == null) impl.removeControl(attributionControl)
       else impl.addControl(attributionControl, desiredAttributionPosition)
       attributionPosition = desiredAttributionPosition
+    }
+
+    val desiredGlobeButtonPosition =
+      if (value.isGlobeButtonEnabled) value.globeButtonAlignment.toControlPosition(layoutDir)
+      else null
+
+    if (globeButtonPosition != desiredGlobeButtonPosition) {
+      if (desiredGlobeButtonPosition == null) impl.removeControl(globeControl)
+      else impl.addControl(globeControl, desiredGlobeButtonPosition)
+      globeButtonPosition = desiredGlobeButtonPosition
+    }
+
+    val desiredFullscreenButtonPosition =
+      if (value.isFullscreenButtonEnabled)
+        value.fullscreenButtonAlignment.toControlPosition(layoutDir)
+      else null
+
+    if (fullscreenButtonPosition != desiredFullscreenButtonPosition) {
+      if (desiredFullscreenButtonPosition == null) impl.removeControl(fullscreenControl)
+      else impl.addControl(fullscreenControl, desiredFullscreenButtonPosition)
+      fullscreenButtonPosition = desiredFullscreenButtonPosition
+    }
+
+    val desiredGeolocateButtonPosition =
+      if (value.isGeolocateButtonEnabled)
+        value.geolocateButtonAlignment.toControlPosition(layoutDir)
+      else null
+
+    if (geolocateButtonPosition != desiredGeolocateButtonPosition) {
+      if (desiredGeolocateButtonPosition == null) impl.removeControl(geolocateControl)
+      else impl.addControl(geolocateControl, desiredGeolocateButtonPosition)
+      geolocateButtonPosition = desiredGeolocateButtonPosition
     }
   }
 

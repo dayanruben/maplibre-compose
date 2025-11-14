@@ -23,7 +23,8 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
-import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.expressions.dsl.asNumber
 import org.maplibre.compose.expressions.dsl.condition
@@ -37,6 +38,7 @@ import org.maplibre.compose.expressions.dsl.minus
 import org.maplibre.compose.expressions.dsl.offset
 import org.maplibre.compose.expressions.dsl.plus
 import org.maplibre.compose.expressions.dsl.switch
+import org.maplibre.compose.expressions.value.CirclePitchAlignment
 import org.maplibre.compose.expressions.value.IconRotationAlignment
 import org.maplibre.compose.expressions.value.SymbolAnchor
 import org.maplibre.compose.layers.CircleLayer
@@ -114,6 +116,7 @@ public fun LocationPuck(
     color = const(colors.accuracyFillColor),
     strokeColor = const(colors.accuracyStrokeColor),
     strokeWidth = const(sizes.accuracyStrokeWidth),
+    pitchAlignment = const(CirclePitchAlignment.Map),
   )
 
   CircleLayer(
@@ -124,6 +127,7 @@ public fun LocationPuck(
     color = const(colors.shadowColor),
     blur = const(sizes.shadowBlur),
     translate = const(DpOffset(0.dp, 1.dp)),
+    pitchAlignment = const(CirclePitchAlignment.Map),
   )
 
   CircleLayer(
@@ -150,6 +154,7 @@ public fun LocationPuck(
       locationState.location?.let { onLongClick?.invoke(it) }
       ClickResult.Consume
     },
+    pitchAlignment = const(CirclePitchAlignment.Map),
   )
 
   SymbolLayer(
@@ -273,12 +278,12 @@ private fun rememberLocationSource(locationState: UserLocationState): GeoJsonSou
           Feature(
             geometry = Point(location.position),
             properties =
-              mapOf(
-                "accuracy" to JsonPrimitive(location.accuracy),
-                "bearing" to JsonPrimitive(location.bearing),
-                "bearingAccuracy" to JsonPrimitive(location.bearingAccuracy),
-                "age" to JsonPrimitive(location.timestamp.elapsedNow().inWholeNanoseconds),
-              ),
+              buildJsonObject {
+                put("accuracy", location.accuracy)
+                put("bearing", location.bearing)
+                put("bearingAccuracy", location.bearingAccuracy)
+                put("age", location.timestamp.elapsedNow().inWholeNanoseconds)
+              },
           )
         )
       }

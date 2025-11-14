@@ -21,24 +21,29 @@ namespace maplibre_jni {
 class MetalRenderableResource final : public mbgl::mtl::RenderableResource {
  public:
   MetalRenderableResource(CanvasBackend &backend, JNIEnv *env, jCanvas canvas)
-      : rendererBackend(backend), jawtContext_(env, canvas) {
-    commandQueue =
-      NS::TransferPtr(rendererBackend.getDevice()->newCommandQueue());
-    if (!commandQueue)
-      throw std::runtime_error("Failed to create command queue");
-
-    CGFloat scale = [NSScreen mainScreen].backingScaleFactor;
-    auto objCMetalLayer = [CAMetalLayer layer];
-    objCMetalLayer.bounds = CGRectMake(0, 0, size.width, size.height);
-    objCMetalLayer.contentsScale = scale;
-    jawtContext_.getSurfaceLayers().layer = objCMetalLayer;
-    [objCMetalLayer retain];
-
-    metalLayer =
-      // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-      NS::TransferPtr(reinterpret_cast<CA::MetalLayer *>(objCMetalLayer));
+      : jawtContext_(env, canvas),
+        rendererBackend(backend),
+        commandQueue(NS::TransferPtr(backend.getDevice()->newCommandQueue())),
+        metalLayer(NS::TransferPtr(CA::MetalLayer::layer())) {
     metalLayer->setDevice(rendererBackend.getDevice().get());
+
+    auto rawLayer = (__bridge CAMetalLayer *)metalLayer.get();
+    rawLayer.bounds = CGRectMake(0, 0, size.width, size.height);
+    rawLayer.contentsScale = [NSScreen mainScreen].backingScaleFactor;
+    jawtContext_.getSurfaceLayers().layer = rawLayer;
   }
+
+  ~MetalRenderableResource() override {
+    auto layer = (__bridge CAMetalLayer *)metalLayer.get();
+    [layer removeFromSuperlayer];
+  };
+
+  MetalRenderableResource(const MetalRenderableResource &) = delete;
+  MetalRenderableResource(MetalRenderableResource &&) = delete;
+  auto operator=(const MetalRenderableResource &)
+    -> MetalRenderableResource & = delete;
+  auto operator=(MetalRenderableResource &&)
+    -> MetalRenderableResource & = delete;
 
   void setSize(mbgl::Size size_) {
     size = size_;
@@ -143,6 +148,8 @@ class MetalRenderableResource final : public mbgl::mtl::RenderableResource {
     if (metalDrawable && commandBuffer) {
       commandBuffer->presentDrawable(metalDrawable.get());
       commandBuffer->commit();
+      commandBuffer.reset();
+      renderPassDescriptor.reset();
     }
   }
 

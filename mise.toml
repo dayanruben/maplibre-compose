@@ -1,0 +1,37 @@
+[tools]
+hk = "latest"
+java = "21"
+ninja = "latest"
+node = "lts"
+"npm:ktfmt" = "latest"
+pipx = "latest"
+"pipx:clang-format" = "latest"
+pre-commit = "latest"
+prettier = "latest"
+python = "latest"
+"vfox:cmake" = "latest"
+xcodes = { version = "latest", os = ["macos"] }
+swift = { version = "latest", os = ["linux", "windows", "other"] }
+pkl = "latest"
+actionlint = "latest"
+shellcheck = "latest"
+bazel = "latest"
+
+[settings]
+lockfile = true
+experimental = true
+
+[hooks]
+postinstall = [
+  "hk install",
+  # Install and select XCode from .xcode-version
+  "if command -v xcodes; then xcodes install && xcodes select; fi",
+]
+
+[tasks.check]
+description = "Run hk checks."
+run = "hk check --all"
+
+[tasks.fix]
+description = "Run hk fixes."
+run = "hk fix --all"

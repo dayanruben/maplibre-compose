@@ -6,17 +6,20 @@ import androidx.compose.ui.Alignment
 @Immutable
 public actual data class OrnamentOptions(
   val isLogoEnabled: Boolean = true,
-  val logoAlignment: Alignment = Alignment.Companion.BottomStart,
+  val logoAlignment: Alignment = Alignment.BottomStart,
   val isAttributionEnabled: Boolean = true,
-  val attributionAlignment: Alignment = Alignment.Companion.BottomEnd,
+  val attributionAlignment: Alignment = Alignment.BottomEnd,
   val isNavigationEnabled: Boolean = true,
-  val navigationAlignment: Alignment = Alignment.Companion.TopEnd,
+  val navigationAlignment: Alignment = Alignment.TopEnd,
   val isScaleBarEnabled: Boolean = true,
-  val scaleBarAlignment: Alignment = Alignment.Companion.TopStart,
-  // TODO: terrain control
-  // TODO: globe control
-  // TODO: fullscreen control
-  // TODO: geolocate control
+  val scaleBarAlignment: Alignment = Alignment.TopStart,
+  val isGlobeButtonEnabled: Boolean = true,
+  val globeButtonAlignment: Alignment = Alignment.TopEnd,
+  val isFullscreenButtonEnabled: Boolean = true,
+  val fullscreenButtonAlignment: Alignment = Alignment.BottomEnd,
+  val isGeolocateButtonEnabled: Boolean = true,
+  val geolocateButtonAlignment: Alignment = Alignment.TopEnd,
+  // TODO terrain control
 ) {
   public actual companion object Companion {
     public actual val AllEnabled: OrnamentOptions = OrnamentOptions()
@@ -26,6 +29,9 @@ public actual data class OrnamentOptions(
         isAttributionEnabled = false,
         isNavigationEnabled = false,
         isScaleBarEnabled = false,
+        isGlobeButtonEnabled = false,
+        isFullscreenButtonEnabled = false,
+        isGeolocateButtonEnabled = false,
       )
 
     public actual val OnlyLogo: OrnamentOptions = AllDisabled.copy(isLogoEnabled = true)

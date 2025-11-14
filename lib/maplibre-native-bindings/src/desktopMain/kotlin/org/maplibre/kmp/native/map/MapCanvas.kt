@@ -3,8 +3,11 @@ package org.maplibre.kmp.native.map
 import java.awt.Canvas
 import java.awt.Dimension
 import java.awt.Graphics
-import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.ComponentListener
+import java.awt.event.HierarchyBoundsListener
+import java.awt.event.HierarchyEvent
+import javax.swing.SwingUtilities
 import org.maplibre.kmp.native.util.Size
 
 /**
@@ -32,6 +35,7 @@ public class MapCanvas(
 
   init {
     addComponentListener(ResizeHandler())
+    addHierarchyBoundsListener(ResizeHandler())
   }
 
   override fun addNotify() {
@@ -62,9 +66,17 @@ public class MapCanvas(
 
   override fun removeNotify() {
     super.removeNotify()
-    // TODO: explicitly dispose the native map and renderer?
+    map?.dispose()
     map = null
+    renderer?.dispose()
     renderer = null
+
+    // HACK: Force a repaint by resizing the window slightly to avoid a ghost map on macoOS.
+    val root = SwingUtilities.getWindowAncestor(this)
+    val oWidth = root.width
+    val oHeight = root.height
+    root.size = Dimension(oWidth + 1, oHeight + 1)
+    root.size = Dimension(oWidth, oHeight)
   }
 
   /**
@@ -72,13 +84,37 @@ public class MapCanvas(
    * renderer and the map to match the new dimensions. The map size is adjusted based on logical
    * pixels, while the renderer size is adjusted based on physical pixels.
    */
-  private class ResizeHandler : ComponentAdapter() {
+  private class ResizeHandler : ComponentListener, HierarchyBoundsListener {
+
+    override fun componentHidden(e: ComponentEvent) {}
+
+    override fun componentShown(e: ComponentEvent) {}
+
+    override fun componentMoved(e: ComponentEvent) {}
+
     override fun componentResized(e: ComponentEvent) {
       val canvas = e.component as? MapCanvas ?: return
       val pixelRatio = canvas.graphicsConfiguration.defaultTransform.scaleX.toFloat()
       val size = Size(width = canvas.width, height = canvas.height)
       canvas.renderer?.setSize(size * pixelRatio)
       canvas.map?.setSize(size)
+    }
+
+    override fun ancestorMoved(e: HierarchyEvent) {}
+
+    override fun ancestorResized(e: HierarchyEvent) {
+      val canvas = e.component as? MapCanvas ?: return
+
+      // HACK: AWT does not correctly update position of the attached layer when:
+      // - the component is at the top of the window
+      // - the component is a fixed size
+      // - the window is resized vertically
+      // Because AWT treats the top-left as (0,0), while Apple treats the bottom-left as (0,0), so
+      // AWT thinks the component hasn't moved, but the CALayer needs to be updated.
+      val oX = canvas.location.x
+      val oY = canvas.location.y
+      canvas.setLocation(oX + 1, oY + 1)
+      canvas.setLocation(oX, oY)
     }
   }
 }

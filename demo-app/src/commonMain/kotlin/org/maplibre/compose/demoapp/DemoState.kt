@@ -17,18 +17,50 @@ import org.maplibre.compose.demoapp.demos.CameraStateDemo
 import org.maplibre.compose.demoapp.demos.ClusteredPointsDemo
 import org.maplibre.compose.demoapp.demos.Demo
 import org.maplibre.compose.demoapp.demos.MapClickDemo
+import org.maplibre.compose.demoapp.demos.MapManipulationDemo
 import org.maplibre.compose.demoapp.demos.MarkersDemo
 import org.maplibre.compose.demoapp.demos.StyleSelectorDemo
 import org.maplibre.compose.demoapp.demos.UserLocationDemo
 import org.maplibre.compose.demoapp.util.Platform
+import org.maplibre.compose.demoapp.util.PlatformFeature
 import org.maplibre.compose.location.UserLocationState
 import org.maplibre.compose.location.rememberDefaultLocationProvider
 import org.maplibre.compose.location.rememberNullLocationProvider
 import org.maplibre.compose.location.rememberUserLocationState
 import org.maplibre.compose.map.GestureOptions
+import org.maplibre.compose.map.OrnamentOptions
 import org.maplibre.compose.map.RenderOptions
 import org.maplibre.compose.style.StyleState
 import org.maplibre.compose.style.rememberStyleState
+
+enum class MapSize {
+  Full,
+  Half,
+  Fixed,
+}
+
+enum class MapPosition {
+  TopLeft,
+  TopCenter,
+  TopRight,
+  CenterLeft,
+  Center,
+  CenterRight,
+  BottomLeft,
+  BottomCenter,
+  BottomRight,
+}
+
+class MapManipulationState {
+  var isVisible by mutableStateOf(true)
+  var size by mutableStateOf(MapSize.Full)
+  var position by mutableStateOf(MapPosition.Center)
+}
+
+class OrnamentOptionsState {
+  var isMaterial3ControlsEnabled by
+    mutableStateOf(PlatformFeature.InteropBlending in Platform.supportedFeatures)
+}
 
 class DemoState(
   val nav: NavHostController,
@@ -36,13 +68,11 @@ class DemoState(
   val styleState: StyleState,
   val locationState: UserLocationState,
   val locationPermissionState: LocationPermissionState,
+  val mapManipulationState: MapManipulationState = MapManipulationState(),
+  val ornamentOptionsState: OrnamentOptionsState = OrnamentOptionsState(),
 ) {
 
   val mapClickEvents = mutableStateListOf<MapClickEvent>()
-
-  // TODO:
-  // Camera follow
-  // Image source
 
   val demos =
     (listOf(
@@ -53,11 +83,13 @@ class DemoState(
       MapClickDemo,
       ClusteredPointsDemo,
       UserLocationDemo,
+      MapManipulationDemo,
     ) + Platform.extraDemos)
 
   var selectedStyle by mutableStateOf<DemoStyle>(Protomaps.Light)
   var renderOptions by mutableStateOf(RenderOptions.Standard)
   var gestureOptions by mutableStateOf(GestureOptions.Standard)
+  var ornamentOptions by mutableStateOf(OrnamentOptions.AllEnabled)
 
   private val navDestinationState = mutableStateOf<NavDestination?>(null)
 
