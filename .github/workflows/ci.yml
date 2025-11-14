@@ -119,7 +119,7 @@ jobs:
       - run: ./gradlew desktopTest
 
   build-docs:
-    if: ${{ github.repository_owner == 'maplibre' }}
+    if: ${{ github.repository == 'maplibre/maplibre-compose' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5

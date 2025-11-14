@@ -7,7 +7,7 @@ on:
 
 jobs:
   check-last-run:
-    if: ${{ github.repository_owner == 'maplibre' }}
+    if: ${{ github.repository == 'maplibre/maplibre-compose' }}
     runs-on: ubuntu-latest
     steps:
       - uses: octokit/request-action@v2.x
@@ -25,7 +25,7 @@ jobs:
     needs: [check-last-run]
     if:
       ${{ needs.check-last-run.outputs.last_sha != github.sha &&
-      github.repository_owner == 'maplibre' }}
+      github.repository == 'maplibre/maplibre-compose' }}
     strategy:
       fail-fast: true
       matrix:
@@ -64,7 +64,9 @@ jobs:
 
   publish-snapshot:
     needs: [check-last-run, build-natives]
-    if: ${{ needs.check-last-run.outputs.last_sha != github.sha }}
+    if:
+      ${{ needs.check-last-run.outputs.last_sha != github.sha &&
+      github.repository == 'maplibre/maplibre-compose' }}
     runs-on: macos-latest
     permissions:
       packages: write
@@ -93,9 +95,7 @@ jobs:
 
   dependency-submission:
     needs: [check-last-run]
-    if:
-      ${{ needs.check-last-run.outputs.last_sha != github.sha &&
-      github.repository_owner == 'maplibre' }}
+    if: ${{ needs.check-last-run.outputs.last_sha != github.sha }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
