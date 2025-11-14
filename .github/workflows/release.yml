@@ -43,6 +43,7 @@ jobs:
             ./lib/maplibre-native-bindings-jni/build/lib/${{ matrix.preset }}/shared/*
 
   publish-maven:
+    if: ${{ github.repository == 'maplibre/maplibre-compose' }}
     needs: [build-natives]
     runs-on: macos-latest
     environment:
@@ -78,6 +79,7 @@ jobs:
             ${{ secrets.GPG_PASSPHRASE }}
 
   publish-pages:
+    if: ${{ github.repository == 'maplibre/maplibre-compose' }}
     needs:
       - publish-maven
     runs-on: macos-latest
