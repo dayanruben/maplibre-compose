@@ -100,7 +100,6 @@ jobs:
       matrix:
         include:
           # TODO add alternative architectures
-          - runner: macos-latest # aarch64
           - runner: ubuntu-latest # amd64
           - runner: windows-latest # amd64
     runs-on: ${{ matrix.runner }}
