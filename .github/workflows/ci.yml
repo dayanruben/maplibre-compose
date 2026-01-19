@@ -148,9 +148,6 @@ jobs:
       matrix:
         include:
           # TODO add alternative architectures
-          - runner: macos-latest # aarch64
-            artifact_type: dmg
-            artifact_name: demo-app-desktop-macos-aarch64
           - runner: ubuntu-latest # amd64
             artifact_type: deb
             artifact_name: demo-app-desktop-linux-amd64
