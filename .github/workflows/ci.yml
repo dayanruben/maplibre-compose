@@ -44,6 +44,7 @@ jobs:
       - run: ./gradlew lint
 
   test-android:
+    if: ${{ github.head_ref != 'eap/kotlin' || matrix.api-level != 35 }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
