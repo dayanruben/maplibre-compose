@@ -44,7 +44,6 @@ jobs:
       - run: ./gradlew lint
 
   test-android:
-    if: ${{ github.head_ref != 'eap/kotlin' || matrix.api-level != 35 }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -59,7 +58,11 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-gradle
       - run: ./gradlew testDebugUnitTest
+      - name: Skip Android 15 emulator on Kotlin EAP
+        if: ${{ github.head_ref == 'eap/kotlin' && matrix.api-level == 35 }}
+        run: echo "Skipping API 35 connected tests for Kotlin EAP"
       - name: Run with AVD ./gradlew connectedDebugAndroidTest
+        if: ${{ github.head_ref != 'eap/kotlin' || matrix.api-level != 35 }}
         uses: ./.github/actions/run-with-avd
         with:
           api-level: ${{ matrix.api-level }}
