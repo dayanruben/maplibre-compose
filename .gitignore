@@ -27,3 +27,5 @@ hs_err_*.log
 demo-app/maplibre-cache
 demo-app/maplibre-cache-journal
 compile_commands.json
+
+.junie
