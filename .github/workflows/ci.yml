@@ -35,7 +35,9 @@ jobs:
       - run: mise check
 
   lint-android:
-    if: ${{ github.ref != 'refs/heads/eap/kotlin' && github.head_ref != 'eap/kotlin' }}
+    if:
+      ${{ github.ref != 'refs/heads/eap/kotlin' && github.head_ref !=
+      'eap/kotlin' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -91,7 +93,9 @@ jobs:
           ./gradlew iosSimulatorArm64Test -- --device ${{ steps.setup-simulator.outputs.udid }}
 
   test-js:
-    if: ${{ github.ref != 'refs/heads/eap/kotlin' && github.head_ref != 'eap/kotlin' }}
+    if:
+      ${{ github.ref != 'refs/heads/eap/kotlin' && github.head_ref !=
+      'eap/kotlin' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
