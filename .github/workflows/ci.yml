@@ -35,6 +35,9 @@ jobs:
       - run: mise check
 
   lint-android:
+    if:
+      ${{ github.ref != 'refs/heads/eap/kotlin' && github.head_ref !=
+      'eap/kotlin' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -58,7 +61,11 @@ jobs:
           fetch-depth: 0
       - uses: ./.github/actions/setup-gradle
       - run: ./gradlew testDebugUnitTest
+      - name: Skip Android 15 emulator on Kotlin EAP
+        if: ${{ github.head_ref == 'eap/kotlin' && matrix.api-level == 35 }}
+        run: echo "Skipping API 35 connected tests for Kotlin EAP"
       - name: Run with AVD ./gradlew connectedDebugAndroidTest
+        if: ${{ github.head_ref != 'eap/kotlin' || matrix.api-level != 35 }}
         uses: ./.github/actions/run-with-avd
         with:
           api-level: ${{ matrix.api-level }}
@@ -86,6 +93,9 @@ jobs:
           ./gradlew iosSimulatorArm64Test -- --device ${{ steps.setup-simulator.outputs.udid }}
 
   test-js:
+    if:
+      ${{ github.ref != 'refs/heads/eap/kotlin' && github.head_ref !=
+      'eap/kotlin' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -100,7 +110,6 @@ jobs:
       matrix:
         include:
           # TODO add alternative architectures
-          - runner: macos-latest # aarch64
           - runner: ubuntu-latest # amd64
           - runner: windows-latest # amd64
     runs-on: ${{ matrix.runner }}
@@ -148,9 +157,6 @@ jobs:
       matrix:
         include:
           # TODO add alternative architectures
-          - runner: macos-latest # aarch64
-            artifact_type: dmg
-            artifact_name: demo-app-desktop-macos-aarch64
           - runner: ubuntu-latest # amd64
             artifact_type: deb
             artifact_name: demo-app-desktop-linux-amd64

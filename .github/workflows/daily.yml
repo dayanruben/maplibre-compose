@@ -65,7 +65,8 @@ jobs:
   publish-snapshot:
     needs: [check-last-run, build-natives]
     if:
-      ${{ needs.check-last-run.outputs.last_sha != github.sha &&
+      ${{ github.repository == 'maplibre/maplibre-compose' &&
+      needs.check-last-run.outputs.last_sha != github.sha &&
       github.repository_owner == 'maplibre' }}
     runs-on: macos-latest
     permissions:
