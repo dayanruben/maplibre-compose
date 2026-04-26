@@ -10,7 +10,7 @@ kotlin-wrappers = "2025.11.5"
 kotlinx-coroutines = "1.10.2"
 ktor = "3.3.2"
 lifecycleRuntimeCompose = "2.9.6"
-maplibre-android-sdk = "12.0.1"
+maplibre-android-sdk = "12.3.1"
 maplibre-android-plugins = "3.0.2"
 maplibre-js = "5.12.0"
 playServices-location = "21.3.0"
@@ -66,6 +66,7 @@ playServices-location = { module = "com.google.android.gms:play-services-locatio
 simplejni-annotations = { module = "io.github.gershnik:smjni-jnigen-annotations", version.ref = "simplejni" }
 simplejni-kprocessor = { module = "io.github.gershnik:smjni-jnigen-kprocessor", version.ref = "simplejni" }
 spatialk-geojson = { group = "org.maplibre.spatialk", name = "geojson", version.ref = "spatialk" }
+spatialk-units = { group = "org.maplibre.spatialk", name = "units", version.ref = "spatialk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "gradle-android" }
