@@ -38,6 +38,9 @@ CanvasRenderer::CanvasRenderer(
 }
 
 void CanvasRenderer::reset() {
+  if (renderer_) {
+    renderer_->setObserver(nullptr);
+  }
   renderer_.reset();
   observer_.reset();
   updateParameters_.reset();
@@ -63,6 +66,16 @@ auto CanvasRenderer::getThreadPool() const -> const mbgl::TaggedScheduler& {
 
 void CanvasRenderer::render() {
   if (!renderer_ || !updateParameters_) return;
+#if defined(USE_OPENGL_BACKEND) || defined(USE_METAL_BACKEND) || \
+  defined(USE_VULKAN_BACKEND)
+  if (!backend_->lockSurfaceForRender()) return;
+#endif
+#if defined(USE_VULKAN_BACKEND)
+  struct SurfaceUnlocker {
+    CanvasBackend& backend;
+    ~SurfaceUnlocker() { backend.unlockSurfaceAfterRender(); }
+  } surfaceUnlocker{*backend_};
+#endif
   mbgl::gfx::BackendScope scope(*backend_);
   renderer_->render(updateParameters_);
 }
@@ -80,7 +93,6 @@ CanvasRenderer_class::render(JNIEnv* env, jCanvasRenderer renderer) {
     auto* frontend = reinterpret_cast<maplibre_jni::CanvasRenderer*>(
       java_classes::get<CanvasRenderer_class>().getNativePointer(env, renderer)
     );
-    // TODO: something in here is segfaulting on Linux
     frontend->render();
   } catch (const std::exception& e) {
     smjni::java_exception::translate(env, e);
