@@ -6,27 +6,27 @@ androidx-activity = "1.11.0"
 bytesize = "2.0.0"
 htmlConverterCompose = "1.1.0"
 kermit = "2.0.8"
-kotlin-wrappers = "2025.11.5"
+kotlin-wrappers = "2026.4.12"
 kotlinx-coroutines = "1.10.2"
-ktor = "3.3.2"
+ktor = "3.4.3"
 lifecycleRuntimeCompose = "2.10.0"
-maplibre-android-sdk = "12.3.1"
+maplibre-android-sdk = "13.0.2"
 maplibre-android-plugins = "3.0.2"
 maplibre-js = "5.12.0"
 playServices-location = "21.3.0"
-spatialk = "0.6.1"
+spatialk = "0.7.0"
 
 # Regular tools: keep as up to date as possible
 gradle-dokka = "2.2.0"
 gradle-jgitver = "0.10.0-rc03"
 gradle-mavenPublish = "0.36.0"
 gradle-mkdocs = "4.0.1"
-gradle-spmForKmp = "1.0.4"
+gradle-spmForKmp = "1.9.1"
 
 # SimpleJNI and KSP: keep SimpleJNI up to date and set KSP accordingly.
 # https://github.com/gershnik/SimpleJNI/issues/4
-gradle-ksp = "2.3.3"
-simplejni = "3.15"
+gradle-ksp = "2.3.7"
+simplejni = "3.16"
 
 # Libraries coupled to Compose: keep Compose up to date and set others accordingly.
 # https://www.jetbrains.com/help/kotlin-multiplatform-dev/compose-compatibility-and-versioning.html#jetpack-compose-artifacts-used
@@ -74,7 +74,7 @@ jetbrains-compose-ui-testJunit4 = { module = "org.jetbrains.compose.ui:ui-test-j
 jetbrains-compose-ui-tooling = { module = "org.jetbrains.compose.ui:ui-tooling", version.ref = "gradle-compose" }
 maplibre-android = { module = "org.maplibre.gl:android-sdk", version.ref = "maplibre-android-sdk" }
 maplibre-androidOpenGL = { module = "org.maplibre.gl:android-sdk-opengl", version.ref = "maplibre-android-sdk" }
-maplibre-androidVulkan = { module = "org.maplibre.gl:android-sdk-vulkan", version.ref = "maplibre-android-sdk" }
+maplibre-androidVulkan = { module = "org.maplibre.gl:android-sdk", version.ref = "maplibre-android-sdk" }
 maplibre-androidDebug = { module = "org.maplibre.gl:android-sdk-debug", version.ref = "maplibre-android-sdk" }
 maplibre-android-scalebar = { module = "org.maplibre.gl:android-plugin-scalebar-v9", version.ref = "maplibre-android-plugins" }
 playServices-location = { module = "com.google.android.gms:play-services-location", version.ref = "playServices-location" }

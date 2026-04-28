@@ -64,6 +64,23 @@ The easiest way is to select one of these two Gradle plugins:
 - JetBrains's [CocoaPods plugin][gradle-cocoapods]
 - Third party [Swift Package Manager plugin][gradle-spm4kmp]
 
+!!! warning
+
+    In Xcode, ensure your Kotlin/Compose framework is linked before
+    `MapLibre.framework`. Select your iOS app target, open **Build Settings**,
+    search for **Other Linker Flags**, and order the flags like this:
+
+    ```text
+    -framework ComposeApp
+    -framework MapLibre
+    ```
+
+    Replace `ComposeApp` with your Kotlin framework name. The opposite order can
+    cause broken Compose text rendering on iOS because both Compose and
+    MapLibre include HarfBuzz symbols.
+
+    See [CMP-8882](https://youtrack.jetbrains.com/issue/CMP-8882/)
+
 ### Cocoapods
 
 !!! info
@@ -95,53 +112,48 @@ kotlin {
     iosX64(),
     iosArm64(),
     iosSimulatorArm64()
-  ).forEach {
-    it.compilations {
-      getByName("main") {
-        cinterops.create("spmMaplibre") // (1)!
+  ).forEach { target ->
+    target.swiftPackageConfig {
+      dependency {
+        remotePackageVersion(
+          url = URI("https://github.com/maplibre/maplibre-gl-native-distribution.git"),
+          products = { add("MapLibre", exportToKotlin = true) },
+          packageName = "maplibre-gl-native-distribution",
+          version = "{{ gradle.maplibre_ios_version }}",
+        )
       }
     }
-    it.binaries.framework {
+
+    target.binaries.framework {
       baseName = "ComposeApp"
       isStatic = true
     }
   }
 }
-
-swiftPackageConfig {
-  create("spmMaplibre") { // (1)!
-    dependency {
-      remotePackageVersion(
-        url = URI("https://github.com/maplibre/maplibre-gl-native-distribution.git"),
-        products = { add("MapLibre") },
-        version = "{{ gradle.maplibre_ios_version }}",
-      )
-    }
-  }
-}
 ```
 
-1. This name must match with `cinterops.create` name.
-
-## Set up Vulkan on Android (Optional)
+## Revert to OpenGL on Android (Optional)
 
 !!! warning
 
-    The Vulkan renderer is not yet as stable as the OpenGL renderer. Check the [MapLibre Native issues](https://github.com/maplibre/maplibre-native/issues?q=sort%3Aupdated-desc%20state%3Aopen%20label%3A%22Vulkan%22%20type%3ABug) for more info.
+    The OpenGL renderer is available for compatibility, but Vulkan is the default
+    renderer for MapLibre Android 13 and later.
+    Some Android emulators do not expose Vulkan support; use OpenGL when Vulkan
+    initialization fails in an emulator.
 
 By default, we ship with the standard version of MapLibre for Android, which
-uses the OpenGL backend. If you'd prefer to use the Vulkan backend, you can
+uses the Vulkan backend. If you'd prefer to use the OpenGL backend, you can
 update your build.
 
-First, add the Vulkan build of MapLibre to your version catalog:
+First, add the OpenGL build of MapLibre to your version catalog:
 
 ```toml title="libs.versions.toml"
 [libraries]
-maplibre-android-vulkan = { module = "org.maplibre.gl:android-sdk-vulkan", version = "{{ gradle.maplibre_android_version }}" }
+maplibre-android-opengl = { module = "org.maplibre.gl:android-sdk-opengl", version = "{{ gradle.maplibre_android_version }}" }
 ```
 
 Then, exclude the standard MapLibre build from your dependency tree, and add the
-Vulkan build to your Android dependencies:
+OpenGL build to your Android dependencies:
 
 ```kotlin title="build.gradle.kts"
 commonMain.dependencies {
@@ -151,7 +163,7 @@ commonMain.dependencies {
 }
 
 androidMain.dependencies {
-  implementation(libs.maplibre.android.vulkan)
+  implementation(libs.maplibre.android.opengl)
 }
 ```
 
