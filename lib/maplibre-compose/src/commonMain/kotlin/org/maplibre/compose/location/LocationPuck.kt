@@ -295,7 +295,7 @@ private fun rememberLocationSource(
             properties =
               buildJsonObject {
                 put("accuracy", location.position.accuracy?.inMeters)
-                put("bearing", bearing?.value?.smallestRotationTo(Bearing.North)?.inDegrees)
+                put("bearing", bearing?.value?.let { (it - Bearing.North).inDegrees })
                 put("bearingAccuracy", bearing?.accuracy?.inDegrees)
                 put("age", location.timestamp.elapsedNow().inWholeNanoseconds)
               },

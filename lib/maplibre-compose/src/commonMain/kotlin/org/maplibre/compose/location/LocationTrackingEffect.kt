@@ -159,7 +159,7 @@ internal class LocationChangeCollector(private val onEmit: suspend LocationChang
           cameraState.position.copy(
             target = target,
             bearing =
-              currentLocation.location?.course?.value?.clockwiseRotationTo(Bearing.North)?.inDegrees
+              currentLocation.location?.course?.value?.let { (it - Bearing.North).inDegrees }
                 ?: cameraState.position.bearing,
           )
         }
@@ -168,11 +168,9 @@ internal class LocationChangeCollector(private val onEmit: suspend LocationChang
           cameraState.position.copy(
             target = target,
             bearing =
-              currentLocation.orientation
-                ?.orientation
-                ?.value
-                ?.clockwiseRotationTo(Bearing.North)
-                ?.inDegrees ?: cameraState.position.bearing,
+              currentLocation.orientation?.orientation?.value?.let {
+                (it - Bearing.North).inDegrees
+              } ?: cameraState.position.bearing,
           )
         }
 
@@ -180,11 +178,8 @@ internal class LocationChangeCollector(private val onEmit: suspend LocationChang
           cameraState.position.copy(
             target = target,
             bearing =
-              currentLocation
-                .mostAccurateBearing()
-                ?.value
-                ?.clockwiseRotationTo(Bearing.North)
-                ?.inDegrees ?: cameraState.position.bearing,
+              currentLocation.mostAccurateBearing()?.value?.let { (it - Bearing.North).inDegrees }
+                ?: cameraState.position.bearing,
           )
         }
       }

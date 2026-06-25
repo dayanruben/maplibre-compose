@@ -30,7 +30,6 @@ import org.maplibre.compose.location.LocationPuck
 import org.maplibre.compose.location.LocationTrackingEffect
 import org.maplibre.compose.map.GestureOptions
 import org.maplibre.compose.material3.LocationPuckDefaults
-import org.maplibre.spatialk.units.Bearing
 import org.maplibre.spatialk.units.extensions.degrees
 import org.maplibre.spatialk.units.extensions.inDegrees
 import org.maplibre.spatialk.units.extensions.inMeters
@@ -196,14 +195,10 @@ object UserLocationDemo : Demo {
               "Position: ${state.location?.position?.value} +- ${state.location?.position?.accuracy?.inMeters?.roundToInt()}m"
             )
             Text(
-              "Course: ${state.location?.course?.value?.smallestRotationTo(Bearing.North)?.inDegrees?.roundToInt()} +- ${state.location?.course?.accuracy?.inDegrees?.roundToInt()}"
+              "Course: ${state.location?.course?.value} +- ${state.location?.course?.accuracy?.inDegrees?.roundToInt()}"
             )
             Text(
-              "Orientation: ${
-                state.orientation?.orientation?.value?.smallestRotationTo(
-                  Bearing.North
-                )?.inDegrees?.roundToInt()
-              } +- ${state.orientation?.orientation?.accuracy?.inDegrees?.roundToInt()}"
+              "Orientation: ${state.orientation?.orientation?.value} +- ${state.orientation?.orientation?.accuracy?.inDegrees?.roundToInt()}"
             )
           }
         }
