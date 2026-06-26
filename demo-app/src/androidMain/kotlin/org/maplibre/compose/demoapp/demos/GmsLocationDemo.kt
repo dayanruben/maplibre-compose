@@ -29,7 +29,6 @@ import org.maplibre.compose.location.UserLocationState
 import org.maplibre.compose.location.mostAccurateBearing
 import org.maplibre.compose.location.rememberUserLocationState
 import org.maplibre.compose.material3.LocationPuckDefaults
-import org.maplibre.spatialk.units.Bearing
 import org.maplibre.spatialk.units.extensions.inDegrees
 import org.maplibre.spatialk.units.extensions.inMeters
 
@@ -94,14 +93,10 @@ object GmsLocationDemo : Demo {
             "Position: ${locationState?.location?.position?.value} +- ${locationState?.location?.position?.accuracy?.inMeters?.roundToInt()}m"
           )
           Text(
-            "Course: ${locationState?.location?.course?.value?.smallestRotationTo(Bearing.North)?.inDegrees?.roundToInt()} +- ${locationState?.location?.course?.accuracy?.inDegrees?.roundToInt()}"
+            "Course: ${locationState?.location?.course?.value} +- ${locationState?.location?.course?.accuracy?.inDegrees?.roundToInt()}"
           )
           Text(
-            "Orientation: ${
-              locationState?.orientation?.orientation?.value?.smallestRotationTo(
-                Bearing.North
-              )?.inDegrees?.roundToInt()
-            } +- ${locationState?.orientation?.orientation?.accuracy?.inDegrees?.roundToInt()}"
+            "Orientation: ${locationState?.orientation?.orientation?.value} +- ${locationState?.orientation?.orientation?.accuracy?.inDegrees?.roundToInt()}"
           )
         }
       }
