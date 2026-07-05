@@ -38,12 +38,17 @@ public fun LocationTrackingEffect(
   LaunchedEffect(enabled, trackBearing, changeCollector) {
     if (!enabled) return@LaunchedEffect
 
-    snapshotFlow { locationState }
+    // Observe UserLocationState.location and UserLocationState.orientation instead of
+    // UserLocationState. Compose only tracks State reads, so snapshotFlow { UserLocationState }
+    // will not emit when UserLocationState.location or UserLocationState.orientation changes.
+    snapshotFlow { locationState.location to locationState.orientation }
       .distinctUntilChanged equal@{ old, new ->
-        val oldLocation = old.location
-        val newLocation = new.location
+        val oldLocation = old.first
+        val newLocation = new.first
 
-        if (oldLocation != null && newLocation != null) {
+        if (oldLocation == null || newLocation == null) {
+          if (oldLocation != newLocation) return@equal false
+        } else {
           if (trackBearing && (oldLocation.course != null || newLocation.course != null)) {
             if (oldLocation.course == null) return@equal false
             if (newLocation.course == null) return@equal false
@@ -67,17 +72,22 @@ public fun LocationTrackingEffect(
             return@equal false
         }
 
-        val oldOrientation = old.orientation?.orientation
-        val newOrientation = new.orientation?.orientation
+        val oldOrientation = old.second?.orientation
+        val newOrientation = new.second?.orientation
 
-        if (trackBearing && oldOrientation != null && newOrientation != null) {
-          if (oldOrientation.value.smallestRotationTo(newOrientation.value).inDegrees >= precision)
+        if (trackBearing) {
+          if (oldOrientation == null || newOrientation == null) {
+            if (oldOrientation != newOrientation) return@equal false
+          } else if (
+            abs(oldOrientation.value.smallestRotationTo(newOrientation.value).inDegrees) >=
+              precision
+          )
             return@equal false
         }
 
         true
       }
-      .collect(changeCollector)
+      .collect { changeCollector.emit(locationState) }
   }
 }
 
