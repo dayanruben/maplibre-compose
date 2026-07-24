@@ -26,6 +26,7 @@ public class MapCanvas(
   private var map: MapLibreMap? = null
 
   override fun paint(g: Graphics) {
+    if (width <= 0 || height <= 0) return
     renderer?.render()
   }
 
@@ -40,6 +41,12 @@ public class MapCanvas(
 
   override fun addNotify() {
     super.addNotify()
+
+    initializeMapIfReady()
+  }
+
+  private fun initializeMapIfReady() {
+    if (map != null || renderer != null || width <= 0 || height <= 0) return
 
     // Initialize a map
     val pixelRatio = this.graphicsConfiguration.defaultTransform.scaleX.toFloat()
@@ -65,18 +72,23 @@ public class MapCanvas(
   }
 
   override fun removeNotify() {
-    super.removeNotify()
-    map?.dispose()
-    map = null
-    renderer?.dispose()
-    renderer = null
+    val root = SwingUtilities.getWindowAncestor(this)
+    try {
+      map?.dispose()
+      map = null
+      renderer?.dispose()
+      renderer = null
+    } finally {
+      super.removeNotify()
+    }
 
     // HACK: Force a repaint by resizing the window slightly to avoid a ghost map on macoOS.
-    val root = SwingUtilities.getWindowAncestor(this)
-    val oWidth = root.width
-    val oHeight = root.height
-    root.size = Dimension(oWidth + 1, oHeight + 1)
-    root.size = Dimension(oWidth, oHeight)
+    if (root != null) {
+      val oWidth = root.width
+      val oHeight = root.height
+      root.size = Dimension(oWidth + 1, oHeight + 1)
+      root.size = Dimension(oWidth, oHeight)
+    }
   }
 
   /**
@@ -94,6 +106,8 @@ public class MapCanvas(
 
     override fun componentResized(e: ComponentEvent) {
       val canvas = e.component as? MapCanvas ?: return
+      if (canvas.width <= 0 || canvas.height <= 0) return
+      canvas.initializeMapIfReady()
       val pixelRatio = canvas.graphicsConfiguration.defaultTransform.scaleX.toFloat()
       val size = Size(width = canvas.width, height = canvas.height)
       canvas.renderer?.setSize(size * pixelRatio)

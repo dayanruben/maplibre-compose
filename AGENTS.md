@@ -1,15 +1,16 @@
-# AGENTS.md
+## Pull requests
 
-This file provides guidance to OpenCode and other agents when working with code
-in this repository.
+When you open a pull request, write **Description** and **Test plan** in at most
+one sentence of prose each. I will expand the PR description if more detail is
+needed. More context: [AI_POLICY.md](./AI_POLICY.md).
 
-## SEARCHING VENDORED MAPLIBRE-NATIVE CODEBASE:
+## Searching vendored MapLibre Native codebase
 
 When searching the vendored maplibre-native codebase:
 
 - Location: Look in `lib/maplibre-native-bindings-jni/vendor/maplibre-native/`
 - Key Directories:
-  - `platform/linux/` `- Linux-specific code (includes linux.cmake)
+  - `platform/linux/` - Linux-specific code (includes linux.cmake)
   - `platform/windows/` - Windows-specific code (includes windows.cmake)
   - `platform/darwin/` - macOS/iOS-specific code (includes darwin.cmake)
   - `platform/default/` - Cross-platform code
@@ -86,10 +87,3 @@ The library uses platform-specific implementations:
 - **Android/iOS**: MapLibre Native SDKs (MapLibre Android SDK, MapLibre iOS)
 - **Web**: MapLibre GL JS via `maplibre-js-bindings`
 - **Desktop**: MapLibre Native Core via `maplibre-native-bindings`
-
-### Build Configuration
-
-- Kotlin version: Check `gradle/libs.versions.toml`
-- Android SDK: min 23, compile/target 35
-- iOS deployment target: 12.0
-- JVM toolchain: 21, target: 11

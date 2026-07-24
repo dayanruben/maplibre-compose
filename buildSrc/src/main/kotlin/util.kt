@@ -1,3 +1,5 @@
+import io.github.frankois944.spmForKmp.swiftPackageConfig
+import java.net.URI
 import org.gradle.api.Project
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
@@ -8,7 +10,17 @@ fun Project.getJvmTarget(): JvmTarget {
 }
 
 fun KotlinNativeTarget.configureSpmMaplibre(project: Project) {
-  // ideally the SPM gradle plugin should handle this for us
+  swiftPackageConfig {
+    dependency {
+      remotePackageVersion(
+        url = URI("https://github.com/maplibre/maplibre-gl-native-distribution.git"),
+        products = { add("MapLibre", exportToKotlin = true) },
+        packageName = "maplibre-gl-native-distribution",
+        version = project.properties["maplibreIosVersion"]!!.toString(),
+      )
+    }
+  }
+
   val variant =
     when (targetName) {
       "iosArm64" -> "arm64-apple-ios"
@@ -17,9 +29,8 @@ fun KotlinNativeTarget.configureSpmMaplibre(project: Project) {
       else -> error("Unrecognized target: $targetName")
     }
   val rpath =
-    "${project.layout.buildDirectory.get()}/spmKmpPlugin/spmMaplibre/scratch/$variant/release/"
+    "${project.layout.buildDirectory.get()}/spmKmpPlugin/$targetName/scratch/$variant/release/"
   binaries.all { linkerOpts("-F$rpath", "-rpath", rpath) }
-  compilations.getByName("main") { cinterops { create("spmMaplibre") } }
 }
 
 class Configuration(private val project: Project) {
@@ -62,11 +73,11 @@ enum class DesktopVariant(
   MacosAarch64Vulkan("macos", "aarch64", "vulkan"),
   LinuxAmd64Opengl("linux", "amd64", "opengl", true),
   LinuxAarch64Opengl("linux", "aarch64", "opengl"),
-  LinuxAmd64Vulkan("linux", "amd64", "vulkan"),
+  LinuxAmd64Vulkan("linux", "amd64", "vulkan", true),
   LinuxAarch64Vulkan("linux", "aarch64", "vulkan"),
   WindowsAmd64Opengl("windows", "amd64", "opengl", true),
   WindowsAarch64Opengl("windows", "aarch64", "opengl"),
-  WindowsAmd64Vulkan("windows", "amd64", "vulkan"),
+  WindowsAmd64Vulkan("windows", "amd64", "vulkan", true),
   WindowsAarch64Vulkan("windows", "aarch64", "vulkan");
 
   companion object {

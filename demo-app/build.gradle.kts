@@ -1,16 +1,15 @@
-import org.jetbrains.compose.ExperimentalComposeLibrary
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.plugin.KotlinSourceSetTree
 
 plugins {
   id("module-conventions")
-  id("spm-maplibre")
   id(libs.plugins.kotlin.multiplatform.get().pluginId)
   id(libs.plugins.android.application.get().pluginId)
   id(libs.plugins.kotlin.composeCompiler.get().pluginId)
   id(libs.plugins.compose.get().pluginId)
   id(libs.plugins.kotlin.serialization.get().pluginId)
+  id(libs.plugins.spmForKmp.get().pluginId)
 }
 
 android {
@@ -42,7 +41,7 @@ kotlin {
     instrumentedTestVariant.sourceSetTree.set(KotlinSourceSetTree.test)
   }
 
-  listOf(iosArm64(), iosSimulatorArm64(), iosX64()).forEach {
+  listOf(iosArm64(), iosSimulatorArm64()).forEach {
     it.binaries.framework {
       baseName = "DemoApp"
       isStatic = true
@@ -71,11 +70,12 @@ kotlin {
     all { languageSettings { optIn("androidx.compose.material3.ExperimentalMaterial3Api") } }
 
     commonMain.dependencies {
-      implementation(compose.components.resources)
-      implementation(compose.foundation)
-      implementation(compose.material3)
-      implementation(compose.runtime)
-      implementation(compose.ui)
+      implementation(libs.jetbrains.compose.components.resources)
+      implementation(libs.jetbrains.compose.foundation)
+      implementation(libs.jetbrains.compose.material3)
+      implementation(libs.jetbrains.compose.runtime)
+      implementation(libs.jetbrains.compose.ui)
+      implementation(libs.jetbrains.compose.material.iconsExtended)
       implementation(libs.androidx.navigation.compose)
       implementation(libs.ktor.client.core)
       implementation(libs.ktor.client.contentNegotiation)
@@ -101,7 +101,7 @@ kotlin {
     androidMain {
       dependsOn(androidIosShared)
       dependencies {
-        implementation(compose.uiTooling)
+        implementation(libs.jetbrains.compose.ui.tooling)
         implementation(libs.androidx.activity.compose)
         implementation(libs.kotlinx.coroutines.android)
         implementation(libs.ktor.client.okhttp)
@@ -152,7 +152,7 @@ kotlin {
       dependsOn(nonAndroidShared)
       dependsOn(desktopJsShared)
       dependencies {
-        implementation(compose.html.core)
+        implementation(libs.jetbrains.compose.html.core)
         implementation(libs.ktor.client.js)
       }
     }
@@ -162,13 +162,13 @@ kotlin {
       implementation(kotlin("test-common"))
       implementation(kotlin("test-annotations-common"))
 
-      @OptIn(ExperimentalComposeLibrary::class) implementation(compose.uiTest)
+      implementation(libs.jetbrains.compose.ui.test)
     }
 
     androidUnitTest.dependencies { implementation(compose.desktop.currentOs) }
 
     androidInstrumentedTest.dependencies {
-      implementation(compose.desktop.uiTestJUnit4)
+      implementation(libs.jetbrains.compose.ui.testJunit4)
       implementation(libs.androidx.composeUi.testManifest)
     }
   }

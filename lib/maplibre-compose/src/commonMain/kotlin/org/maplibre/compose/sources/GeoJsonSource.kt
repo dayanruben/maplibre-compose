@@ -3,8 +3,11 @@ package org.maplibre.compose.sources
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.key
+import kotlinx.serialization.json.JsonObject
 import org.maplibre.compose.expressions.ast.Expression
 import org.maplibre.compose.expressions.value.ExpressionValue
+import org.maplibre.spatialk.geojson.Feature
+import org.maplibre.spatialk.geojson.FeatureCollection
 import org.maplibre.spatialk.geojson.GeoJsonObject
 
 /** A map data source consisting of geojson data. */
@@ -17,6 +20,18 @@ public expect class GeoJsonSource : Source {
   public constructor(id: String, data: GeoJsonData, options: GeoJsonOptions)
 
   public fun setData(data: GeoJsonData)
+
+  public fun isCluster(feature: Feature<*, JsonObject?>): Boolean
+
+  public fun getClusterExpansionZoom(feature: Feature<*, JsonObject?>): Double
+
+  public fun getClusterChildren(feature: Feature<*, JsonObject?>): FeatureCollection<*, JsonObject?>
+
+  public fun getClusterLeaves(
+    feature: Feature<*, JsonObject?>,
+    limit: Long,
+    offset: Long,
+  ): FeatureCollection<*, JsonObject?>
 }
 
 public sealed interface GeoJsonData {
@@ -59,6 +74,11 @@ public sealed interface GeoJsonData {
  *
  * @param lineMetrics Whether to calculate line distance metrics. This is required for
  *   [LineLayer][org.maplibre.compose.layers.LineLayer]s that specify a `gradient`.
+ * @param synchronousUpdate Whether in-memory GeoJSON updates should be applied synchronously. This
+ *   is intended for small, frequently updated sources such as live positions. Enabling it can
+ *   reduce update latency but may hurt frame rate. At the moment this has an effect only on
+ *   Android; other platforms ignore it. iOS support is currently blocked by
+ *   [#738](https://github.com/maplibre/maplibre-compose/issues/738#issuecomment-3716900291).
  */
 @Immutable
 public data class GeoJsonOptions(
@@ -72,6 +92,7 @@ public data class GeoJsonOptions(
   val clusterMaxZoom: Int = maxZoom - 1,
   val clusterProperties: Map<String, ClusterPropertyAggregator<*>> = emptyMap(),
   val lineMetrics: Boolean = false,
+  val synchronousUpdate: Boolean = false,
 ) {
   public data class ClusterPropertyAggregator<T : ExpressionValue>(
     /** Produces the value of a single point, passed to the accumulation operator. */

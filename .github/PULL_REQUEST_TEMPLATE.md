@@ -22,3 +22,11 @@
 - iOS: <!-- describe the device and OS version -->
 - Desktop: <!-- describe the OS -->
 - Web: <!-- describe the browser and version -->
+
+## AI assistance
+
+<!-- Remove this section if disclosure does not apply. -->
+
+- **Tools:** <!-- e.g. Codex, OpenCode, Claude Code, Cursor -->
+- **Context:**
+  <!-- how AI was used; links to plans, skills, or session exports if any — see AI_POLICY.md -->
