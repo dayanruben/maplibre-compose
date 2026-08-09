@@ -41,6 +41,7 @@ jobs:
         with:
           # .mise/bin/version-args reads the release tag off the checkout.
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
       - uses: ./.github/actions/setup-ci-deps
       - run: mise run publish:snapshot
