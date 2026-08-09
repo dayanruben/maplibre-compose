@@ -43,6 +43,9 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+      - name: Fetch upstream release tags
+        run: |
+          git fetch --force --tags https://github.com/maplibre/maplibre-compose.git
       - uses: ./.github/actions/setup-ci-deps
       - run: mise run publish:snapshot
         env:
