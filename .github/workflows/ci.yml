@@ -141,6 +141,7 @@ jobs:
         with:
           # version-args reads the release tag.
           fetch-depth: 0
+          fetch-tags: true
           persist-credentials: false
       - uses: ./.github/actions/setup-ci-deps
         with:
