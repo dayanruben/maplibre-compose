@@ -30,7 +30,14 @@ jobs:
 
   publish-snapshot:
     needs: [check-last-run]
-    if: ${{ needs.check-last-run.outputs.last_sha != github.sha }}
+    if: >-
+      ${{
+        needs.check-last-run.outputs.last_sha != github.sha &&
+        secrets.MAVEN_CENTRAL_USERNAME != '' &&
+        secrets.MAVEN_CENTRAL_PASSWORD != '' &&
+        secrets.GPG_PRIVATE_KEY != '' &&
+        secrets.GPG_PASSPHRASE != ''
+      }}
     timeout-minutes: 60
     runs-on: macos-26
     environment:
