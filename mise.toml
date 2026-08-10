@@ -1,5 +1,6 @@
 # https://mise.jdx.dev
 
+monorepo_root = true
 min_version = "2026.7.15"
 
 [settings]
@@ -18,29 +19,35 @@ activate_aggressive = true
 # Installing an SDK package accepts its license, so it is never a side effect.
 auto_install_disable_tools = ["android-sdk"]
 
+[monorepo]
+config_roots = ["docs"]
+lockfile = true
+
+# Cascades to every config root. Scoped to tasks; hooks and tool installs still
+# use the platform shell.
 [task_config]
+cascade = true
 shell = "bash -e -c"
 
 [vars]
 android_cmdline_tools_version = "22.0"
 android_api_level = "35"
-actionlint_version = "1.7.8"
-dprint_version = "0.53.2"
-hk_version = "1.45.0"
-java_version = "zulu-25.34.17.0"
+actionlint_version = "1.7.12"
+dprint_version = "0.55.2"
+hk_version = "1.54.1"
+java_version = "zulu-25.36.15.0"
 jvl_version = "2026.05.03"
-ktfmt_version = "0.62"
-node_version = "24.11.0"
-pkl_version = "0.31.0"
-python_version = "3.14.4"
-ruff_version = "0.16.1"
+ktfmt_version = "0.64"
+node_version = "24.19.0"
+pnpm_version = "10.33.2"
+python_version = "3.14.7"
+ruff_version = "0.16.2"
 shellcheck_version = "0.11.0"
-swiftformat_version = "0.61.1"
-xcodes_version = "1.6.2"
+swiftformat_version = "0.62.1"
+xcodes_version = "2.0.3"
 
 [tools]
 "aqua:jdx/hk" = "{{vars.hk_version}}" # Linter orchestration
-"aqua:apple/pkl" = "{{vars.pkl_version}}" # hk config dependency
 "aqua:dprint/dprint" = "{{vars.dprint_version}}" # Formatter orchestration
 "github:sargunv/jvl" = "{{vars.jvl_version}}" # JSON schema validator
 "aqua:rhysd/actionlint" = "{{vars.actionlint_version}}" # GH Actions linter
@@ -52,8 +59,9 @@ xcodes_version = "1.6.2"
 
 # For tooling outside Gradle; Kotlin/JS brings its own Node and Yarn.
 "core:node" = "{{vars.node_version}}"
+"aqua:pnpm/pnpm" = "{{vars.pnpm_version}}"
 
-# The MkDocs Gradle plugin builds its virtualenv from whichever Python it finds.
+# Runs the Python file tasks under .mise/tasks/.
 "core:python" = "{{vars.python_version}}"
 
 # Upstream ships Windows as an MSI only, which this backend cannot unpack, and
@@ -66,17 +74,23 @@ swiftformat = { version = "{{vars.swiftformat_version}}", backend = "github:nick
 [hooks]
 postinstall = ["hk install --mise --quiet"]
 
+[deps.pnpm]
+auto = true
+
 [tasks.check]
 description = "Run every formatter and linter in report-only mode."
-run = "hk check --all"
+# The type checker reads the types Astro generates.
+run = '''
+mise run //docs:install
+hk check --all
+'''
 
 [tasks.fix]
 description = "Apply every formatter and auto-fixable lint."
-run = "hk fix --all"
-
-[tasks.build]
-description = "Build every module for every target available on this host."
-run = "./gradlew build"
+run = '''
+mise run //docs:install
+hk fix --all
+'''
 
 [tasks.clean]
 description = "Remove every Gradle build output."
@@ -106,12 +120,16 @@ run = '.mise/bin/boot-android-emulator "$usage_api_level"'
 description = "Stop the Android emulator started by mise."
 run = ".mise/bin/stop-android-emulator"
 
+[tasks."android-emulator:diagnostics"]
+description = "Capture bounded diagnostics from the Android emulator."
+run = ".mise/bin/capture-android-emulator-diagnostics"
+
 [tasks."test:android:device"]
 description = "Run the Android instrumented test suite on an emulator."
 usage = 'arg "[api_level]" default="{{vars.android_api_level}}"'
 depends = [{ task = "android-emulator:boot", args = ["{{usage.api_level}}"] }]
 # One task name per Android plugin; see test:android.
-run = "./gradlew connectedDebugAndroidTest connectedAndroidDeviceTest"
+run = "./gradlew --no-parallel connectedDebugAndroidTest connectedAndroidDeviceTest"
 
 [tasks."ios-simulator:boot"]
 description = "Boot an iPhone simulator and print its UDID."
@@ -130,11 +148,11 @@ run = "./gradlew jsBrowserTest"
 
 [tasks."test:desktop"]
 description = "Run the desktop (JVM) test suite against a real Vulkan or Metal device."
-run = "./gradlew desktopTest"
+run = "./gradlew jvmTest"
 
 [tasks."build:docs"]
-description = "Build the MkDocs site and the Dokka API reference into build/docs."
-run = ".mise/bin/gradle-with-version build generateDocs"
+description = "Build the documentation site and the Dokka API reference into docs/dist."
+run = "mise run //docs:build"
 
 [tasks."build:android-app"]
 description = "Package the demo app as a debug APK."
@@ -142,7 +160,7 @@ run = "./gradlew packageDebug"
 
 [tasks."build:desktop-app"]
 description = "Package the demo app as a native installer for this host."
-run = "./gradlew :demo-app:packageDistributionForCurrentOS"
+run = "./gradlew :demo-app:desktop:packageDistributionForCurrentOS"
 
 [tasks."demo:android"]
 description = "Install the demo app on a connected Android device or emulator."
@@ -151,19 +169,19 @@ flag "--flavor <flavor>" default="default" {
   choices "default" "opengl" "vulkan" "debug"
 }
 '''
-run = './gradlew :demo-app:installDebug -PdemoAppMaplibreAndroidFlavor="$usage_flavor"'
+run = './gradlew :demo-app:android:installDebug -PdemoAppMaplibreAndroidFlavor="$usage_flavor"'
 
 [tasks."demo:desktop"]
 description = "Run the demo app on this host."
-run = "./gradlew :demo-app:run"
+run = "./gradlew :demo-app:desktop:run"
 
 [tasks."demo:js"]
 description = "Run the demo app in a browser."
-run = "./gradlew :demo-app:jsBrowserDevelopmentRun"
+run = "./gradlew :demo-app:common:jsBrowserDevelopmentRun"
 
-[tasks."run:glfw-fixture"]
-description = "Run the compose-glfw desktop host fixture."
-run = "./gradlew :glfw-fixture:runGlfwFixture"
+[tasks."demo:desktop-glfw"]
+description = "Run the demo app on the compose-glfw desktop host instead of the AWT one."
+run = "./gradlew :demo-app:desktop-glfw:run"
 
 [tasks."publish:snapshot"]
 description = "Publish a snapshot build to Maven Central."

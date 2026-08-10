@@ -2,7 +2,7 @@ package org.maplibre.compose.style
 
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.ExperimentalTestApi
-import androidx.compose.ui.test.runAndroidComposeUiTest
+import androidx.compose.ui.test.v2.runAndroidComposeUiTest
 import org.maplibre.android.MapLibre
 
 @OptIn(ExperimentalTestApi::class)

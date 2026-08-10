@@ -27,6 +27,7 @@ jobs:
       - uses: ./.github/actions/setup-ci-deps
         with:
           dprint-cache: "true"
+          pnpm-cache: "true"
           save-toolchains: "true"
       - run: mise run fix
       - name: Check formatted files
@@ -57,7 +58,23 @@ jobs:
         with:
           android-emulator: ${{ matrix.api-level }}
       - run: mise run test:android
-      - run: mise run test:android:device ${{ matrix.api-level }}
+      - id: android-device-tests
+        run: mise run test:android:device ${{ matrix.api-level }}
+      - name: Capture Android emulator diagnostics
+        if: ${{ failure() && steps.android-device-tests.outcome == 'failure' }}
+        run: mise run android-emulator:diagnostics
+      - name: Upload Android emulator diagnostics
+        if: ${{ failure() && steps.android-device-tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: android-${{ matrix.api-level }}-diagnostics
+          path: |
+            build/android-emulator/avd/**/*.ini
+            build/android-emulator/diagnostics
+            build/android-emulator/emulator.log
+            **/build/outputs/androidTest-results
+            **/build/reports/androidTests
       - if: ${{ matrix.artifact_name != '' }}
         run: mise run build:android-app
       - if: ${{ matrix.artifact_name != '' }}
@@ -65,7 +82,7 @@ jobs:
         with:
           if-no-files-found: error
           name: ${{ matrix.artifact_name }}
-          path: demo-app/build/outputs/apk/debug/demo-app-debug.apk
+          path: demo-app/android/build/outputs/apk/debug/android-debug.apk
 
   ios:
     timeout-minutes: 45
@@ -131,7 +148,7 @@ jobs:
           if-no-files-found: error
           name: ${{ matrix.artifact_name }}
           path:
-            "demo-app/build/compose/binaries/main/${{ matrix.artifact_type }}/*"
+            "demo-app/desktop/build/compose/binaries/main/${{ matrix.artifact_type }}/*"
 
   docs:
     timeout-minutes: 30
@@ -148,11 +165,11 @@ jobs:
           git fetch --force --tags https://github.com/maplibre/maplibre-compose.git
       - uses: ./.github/actions/setup-ci-deps
         with:
-          python-cache: "true"
+          pnpm-cache: "true"
       - run: mise run build:docs
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
-          path: build/docs
+          path: docs/dist
 
   all-good:
     needs:

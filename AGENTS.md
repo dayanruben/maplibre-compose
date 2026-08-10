@@ -12,11 +12,20 @@ every tool in `mise.toml`, and locks them per platform in `mise.lock`.
 
 ### Building and running
 
-- **Build all modules:** `mise run build`
+Run a mise task rather than `./gradlew build`. The aggregate Gradle task builds
+every target at once, including the iOS release frameworks, and runs out of
+memory before it finishes. Each task below covers one platform, so pick the one
+for the change you made.
+
+- **Package the Android APK:** `mise run build:android-app`
+- **Package the desktop installer:** `mise run build:desktop-app`
 - **Run desktop demo:** `mise run demo:desktop`
 - **Run web demo:** `mise run demo:js`
-- **Run the desktop host fixture:** `mise run run:glfw-fixture`
+- **Run the demo on the compose-glfw host:** `mise run demo:desktop-glfw`
 - **Clean build:** `mise run clean`
+
+To compile one module, name its task:
+`./gradlew :lib:maplibre-compose:assemble`.
 
 ### Formatting and linting
 
@@ -25,16 +34,26 @@ every tool in `mise.toml`, and locks them per platform in `mise.lock`.
 - **Android Lint:** `mise run lint:android`
 
 dprint formats every language in the repository, configured in `dprint.jsonc`.
-hk runs it, and runs actionlint, ruff, shellcheck, the Actions pins check, and
-JSON schema validation. `hk.pkl` lists the steps.
+hk runs it, and runs actionlint, ruff, shellcheck, the Actions pins check, JSON
+schema validation, and the documentation site's type check. `hk.pkl` lists the
+steps.
 
 ### Documentation
 
-- **Generate docs:** `mise run build:docs` (MkDocs site and Dokka API reference)
+- **Generate docs:** `mise run build:docs` (Starlight site and Dokka API
+  reference, into `docs/dist`)
+- **Serve docs:** `mise run //docs:dev`
 
-Build the docs through the task. It passes the versions derived from the Git
-tags, which the site prints as the coordinates to depend on; Gradle on its own
-uses the `0.0.0` placeholders from `gradle.properties`.
+The site is a pnpm workspace and its own mise config root, so its tasks run as
+`//docs:<task>`. Build the docs through a task. It passes the versions derived
+from the Git tags, which the site prints as the coordinates to depend on; Gradle
+on its own uses the `0.0.0` placeholders from `gradle.properties`.
+
+### Material Symbols
+
+Find Android vector XML under
+[`symbols/android/<icon-name>/`](https://github.com/google/material-design-icons/tree/master/symbols/android)
+in Google's official Material Design Icons repository.
 
 ### Versions
 
@@ -57,8 +76,10 @@ The build reads `local.properties`, then `ANDROID_HOME`, then
 it is. `mise run android-sdk-packages` adds the packages the build needs to that
 SDK.
 
-For a machine with no SDK, `mise -E android install` pins one. It is a separate
-environment because installing an SDK package accepts its license.
+For a machine with no SDK, install the pinned SDK with
+`mise -E android install`. Run Android tasks in the same environment, such as
+`mise -E android run test:android`. The `android` environment sets
+`ANDROID_HOME` for each command.
 
 ### Testing
 
@@ -108,7 +129,17 @@ rendering interactive maps across Android, iOS, Desktop, and Web platforms.
     - This wraps the TypeScript library whose original types are available at
       build/js/node_modules/maplibre-gl/dist/maplibre-gl.d.ts
 - **`demo-app/`**: Multiplatform demo application
-- **`iosApp/`**: iOS-specific demo app wrapper
+  - `common`: Every line of the app, and the only Kotlin Multiplatform module
+  - `android`: An Android application that launches `common`
+  - `desktop`: A JVM application that launches `common` on the AWT host
+  - `desktop-glfw`: The same JVM application on the compose-glfw host. A module
+    of its own so that its `MainDispatcherFactory`, which outranks
+    `kotlinx-coroutines-swing`, stays off the AWT runtime classpath.
+  - `ios`: An Xcode project that embeds the framework `common` produces
+
+  The browser app has no module of its own. Its entry point and page live in
+  `common/src/jsMain`, because a Kotlin/JS module would have to be a second
+  Kotlin Multiplatform module.
 - **`buildSrc/`**: Custom Gradle build conventions
 
 ### Key packages

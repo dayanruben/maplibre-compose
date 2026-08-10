@@ -19,10 +19,10 @@ dependencies {
   pluginImplementation(libs.plugins.android.lint)
   pluginImplementation(libs.plugins.compose)
   pluginImplementation(libs.plugins.dokka)
+  pluginImplementation(libs.plugins.kotlin.jvm)
   pluginImplementation(libs.plugins.kotlin.multiplatform)
   pluginImplementation(libs.plugins.kotlin.serialization)
   pluginImplementation(libs.plugins.kotlin.composeCompiler)
-  pluginImplementation(libs.plugins.mkdocs)
   pluginImplementation(libs.plugins.mavenPublish)
   pluginImplementation(libs.plugins.spmForKmp)
 }
