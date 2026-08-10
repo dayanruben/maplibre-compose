@@ -30,14 +30,7 @@ jobs:
 
   publish-snapshot:
     needs: [check-last-run]
-    if: >-
-      ${{
-        needs.check-last-run.outputs.last_sha != github.sha &&
-        secrets.MAVEN_CENTRAL_USERNAME != '' &&
-        secrets.MAVEN_CENTRAL_PASSWORD != '' &&
-        secrets.GPG_PRIVATE_KEY != '' &&
-        secrets.GPG_PASSPHRASE != ''
-      }}
+    if: ${{ needs.check-last-run.outputs.last_sha != github.sha }}
     timeout-minutes: 60
     runs-on: macos-26
     environment:
@@ -54,7 +47,23 @@ jobs:
         run: |
           git fetch --force --tags https://github.com/maplibre/maplibre-compose.git
       - uses: ./.github/actions/setup-ci-deps
+      - name: Check publish secrets
+        id: publish-secrets
+        run: |
+          if [ -n "${{ secrets.MAVEN_CENTRAL_USERNAME }}" ] \
+            && [ -n "${{ secrets.MAVEN_CENTRAL_PASSWORD }}" ] \
+            && [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ] \
+            && [ -n "${{ secrets.GPG_PASSPHRASE }}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Skip publish snapshot
+        if: ${{ steps.publish-secrets.outputs.enabled == 'false' }}
+        run: |
+          echo "Required Maven/GPG secrets are missing; skipping publish:snapshot."
       - run: mise run publish:snapshot
+        if: ${{ steps.publish-secrets.outputs.enabled == 'true' }}
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername:
             ${{ secrets.MAVEN_CENTRAL_USERNAME }}
