@@ -78,6 +78,8 @@ import org.maplibre.nativeffi.query.RenderedQueryGeometry
 import org.maplibre.nativeffi.render.MetalBorrowedTextureDescriptor
 import org.maplibre.nativeffi.render.NativePointer
 import org.maplibre.nativeffi.render.OpenGLBorrowedTextureDescriptor
+import org.maplibre.nativeffi.render.OpenGLClientApi
+import org.maplibre.nativeffi.render.OpenGLContextOwnership
 import org.maplibre.nativeffi.render.OpenGLSurfaceDescriptor
 import org.maplibre.nativeffi.render.RenderResult
 import org.maplibre.nativeffi.render.RenderSessionHandle
@@ -211,9 +213,12 @@ internal class MlnFfiMapSession(
     /**
      * `addSource`, `removeSource` and `removeImage` notify mbgl of nothing, so they render stale.
      */
-    override fun <T> mutateMap(action: (MapHandle) -> T): T? {
-      if (!isLoaded) return null
-      return runOnMap { map -> action(map).also { map.requestRepaint() } }
+    override fun <T> mutateMap(abandon: () -> Unit, action: (MapHandle) -> T): T? {
+      if (!isLoaded) {
+        abandon()
+        return null
+      }
+      return runOnMap(abandon) { map -> action(map).also { map.requestRepaint() } }
     }
 
     override fun <T> withRenderSession(action: (RenderSessionHandle) -> T): T? {
@@ -755,7 +760,16 @@ internal class MlnFfiMapSession(
 
   private fun <T> withMap(fallback: T, action: (MapHandle) -> T): T = loop?.call(action) ?: fallback
 
-  private fun <T> runOnMap(action: (MapHandle) -> T): T? = loop?.call(action)
+  private fun <T> runOnMap(action: (MapHandle) -> T): T? = runOnMap({}, action)
+
+  private fun <T> runOnMap(abandon: () -> Unit, action: (MapHandle) -> T): T? {
+    val current = loop
+    if (current == null) {
+      abandon()
+      return null
+    }
+    return current.call(action, abandon)
+  }
 
   /** The render session lives on the host's renderer thread. */
   private fun <T> withRendererAccess(action: () -> T): T? {
@@ -1277,13 +1291,25 @@ private fun EglContextHandles.toFfi() =
   org.maplibre.nativeffi.render.EglContextDescriptor(
     display = NativePointer.ofAddress(display.address),
     config = NativePointer.ofAddress(config.address),
-    shareContext = NativePointer.ofAddress(shareContext.address),
+    shareContext =
+      if (ownership == OpenGLContextOwnership.DEDICATED) NativePointer.NULL
+      else NativePointer.ofAddress(shareContext.address),
     getProcAddress = NativePointer.ofAddress(getProcAddress.address),
+    clientApi =
+      if (ownership == OpenGLContextOwnership.DEDICATED) {
+        if (clientApi == OpenGLClientApi.UNSPECIFIED) OpenGLClientApi.GLES else clientApi
+      } else {
+        clientApi
+      },
+    ownership = ownership,
   )
 
 private fun WglContextHandles.toFfi() =
   org.maplibre.nativeffi.render.WglContextDescriptor(
     deviceContext = NativePointer.ofAddress(deviceContext.address),
-    shareContext = NativePointer.ofAddress(shareContext.address),
+    shareContext =
+      if (ownership == OpenGLContextOwnership.DEDICATED) NativePointer.NULL
+      else NativePointer.ofAddress(shareContext.address),
     getProcAddress = NativePointer.ofAddress(getProcAddress.address),
+    ownership = ownership,
   )
