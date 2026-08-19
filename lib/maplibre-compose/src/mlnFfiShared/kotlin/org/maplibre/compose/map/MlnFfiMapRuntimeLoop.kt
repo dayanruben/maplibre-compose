@@ -20,6 +20,12 @@ import org.maplibre.nativeffi.runtime.WakeSource
 /** Parks in the native pump until a wake arrives, rather than on a bound. */
 private const val PUMP_PARK_MILLIS = -1L
 
+/**
+ * Caps one native drain below a 120 Hz frame so posted gesture work runs before the next vsync. The
+ * first queued task always runs; leftover work re-arms the wake flag.
+ */
+private const val PUMP_BUDGET_MILLIS = 4L
+
 /** Bound on waiting for the render session to be closed before the map is destroyed. */
 private const val SHUTDOWN_WAIT_MILLIS = 5_000L
 
@@ -100,6 +106,9 @@ internal class MlnFfiMapRuntimeLoop(
   fun start() {
     thread.start()
   }
+
+  /** Whether the calling thread is the one that owns this loop's runtime and map. */
+  fun isOwnerThread(): Boolean = thread.isCurrent()
 
   /**
    * Runs [action] on the owner thread and waits until it has run or been dropped. Returns null when
@@ -231,7 +240,7 @@ internal class MlnFfiMapRuntimeLoop(
       if (stopRequested) break
       check(!acceptLock.isHeldByOwnerThread) { "the pump must not run under acceptLock" }
       // A batch that ran must not park: a task queuing nothing for native has nothing to wake it.
-      runtime.pump(if (ranTasks) 0L else PUMP_PARK_MILLIS)
+      runtime.pump(if (ranTasks) 0L else PUMP_PARK_MILLIS, PUMP_BUDGET_MILLIS)
       drainEvents(runtime, map)
     }
   }

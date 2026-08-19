@@ -25,14 +25,34 @@ class MapVisibleAreaTest {
       it.session.setBaseStyle(BaseStyle.Empty)
       it.awaitMapReady()
       it.session.setCameraPosition(CAMERA)
-      it.pumpUntil("the camera to apply") {
-        abs(it.session.getCameraPosition().zoom - CAMERA.zoom) < 0.01
-      }
+      it.pumpUntil("the camera to apply") { it.session.hasNativeCamera(CAMERA) }
 
       val box = it.session.getVisibleBoundingBox()
       assertContains(box, CAMERA.target, "the camera target")
       assertTrue(box.northeast.latitude > box.southwest.latitude, "the box should span latitude")
       assertTrue(box.northeast.longitude > box.southwest.longitude, "the box should span longitude")
+    }
+  }
+
+  @Test
+  fun the_camera_and_bounding_box_come_from_one_native_snapshot(): MapTestResult = runMapTest {
+    createMapFixture().use {
+      it.session.setBaseStyle(BaseStyle.Empty)
+      it.awaitMapReady()
+      it.session.setCameraPosition(CAMERA)
+
+      val camera = it.session.getCameraPosition()
+      val box = it.session.getVisibleBoundingBox()
+      val cameraApplied =
+        abs(camera.zoom - CAMERA.zoom) < 0.01 && abs(camera.bearing - CAMERA.bearing) < 0.01
+      val latSpan = box.northeast.latitude - box.southwest.latitude
+      val boxApplied = latSpan > 0.01 && latSpan < 40.0
+      assertTrue(
+        cameraApplied == boxApplied,
+        "the camera and bounding box should update together, camera applied=$cameraApplied box applied=$boxApplied (camera=$camera box=$box)",
+      )
+
+      it.pumpUntil("the camera to apply") { it.session.hasNativeCamera(CAMERA) }
     }
   }
 
@@ -43,9 +63,7 @@ class MapVisibleAreaTest {
         it.session.setBaseStyle(BaseStyle.Empty)
         it.awaitMapReady()
         it.session.setCameraPosition(ROTATED_CAMERA)
-        it.pumpUntil("the camera to rotate") {
-          abs(it.session.getCameraPosition().bearing - ROTATED_CAMERA.bearing) < 0.01
-        }
+        it.pumpUntil("the camera to rotate") { it.session.hasNativeCamera(ROTATED_CAMERA) }
 
         val region = it.session.getVisibleRegion()
         val box = it.session.getVisibleBoundingBox()
@@ -63,9 +81,7 @@ class MapVisibleAreaTest {
         it.session.setBaseStyle(BaseStyle.Empty)
         it.awaitMapReady()
         it.session.setCameraPosition(ROTATED_CAMERA)
-        it.pumpUntil("the camera to rotate") {
-          abs(it.session.getCameraPosition().bearing - ROTATED_CAMERA.bearing) < 0.01
-        }
+        it.pumpUntil("the camera to rotate") { it.session.hasNativeCamera(ROTATED_CAMERA) }
 
         val region = it.session.getVisibleRegion()
         val corners = region.corners()
@@ -87,9 +103,7 @@ class MapVisibleAreaTest {
       it.session.setBaseStyle(BaseStyle.Empty)
       it.awaitMapReady()
       it.session.setCameraPosition(ANTIMERIDIAN_CAMERA)
-      it.pumpUntil("the camera to apply") {
-        abs(it.session.getCameraPosition().zoom - ANTIMERIDIAN_CAMERA.zoom) < 0.01
-      }
+      it.pumpUntil("the camera to apply") { it.session.hasNativeCamera(ANTIMERIDIAN_CAMERA) }
 
       val box = it.session.getVisibleBoundingBox()
       // A wrapped hull would span nearly the whole world instead of the short interval, which may
@@ -108,9 +122,7 @@ class MapVisibleAreaTest {
       it.session.setBaseStyle(BaseStyle.Empty)
       it.awaitMapReady()
       it.session.setCameraPosition(ROTATED_CAMERA)
-      it.pumpUntil("the camera to rotate") {
-        abs(it.session.getCameraPosition().bearing - ROTATED_CAMERA.bearing) < 0.01
-      }
+      it.pumpUntil("the camera to rotate") { it.session.hasNativeCamera(ROTATED_CAMERA) }
 
       val projection = CameraProjection(it.session)
       assertNear(it.session.getVisibleBoundingBox(), projection.queryVisibleBoundingBox())
@@ -124,6 +136,18 @@ class MapVisibleAreaTest {
       CameraPosition(target = Position(11.0, 47.0), zoom = 5.0, bearing = 45.0, tilt = 40.0)
 
     const val TOLERANCE = 1e-6
+
+    /**
+     * Camera, bounding box, and region update together after native applies a position. Wait for a
+     * zoomed-in box so the assertions read that snapshot rather than the startup viewport.
+     */
+    fun MapAdapter.hasNativeCamera(camera: CameraPosition): Boolean {
+      if (abs(getCameraPosition().zoom - camera.zoom) >= 0.01) return false
+      if (abs(getCameraPosition().bearing - camera.bearing) >= 0.01) return false
+      val box = getVisibleBoundingBox()
+      val latSpan = box.northeast.latitude - box.southwest.latitude
+      return latSpan > 0.01 && latSpan < 40.0
+    }
 
     fun VisibleRegion.corners() = listOf(farLeft, farRight, nearLeft, nearRight)
 

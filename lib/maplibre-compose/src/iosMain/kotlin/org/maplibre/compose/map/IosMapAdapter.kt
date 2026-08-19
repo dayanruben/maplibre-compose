@@ -253,7 +253,12 @@ internal class IosMapAdapter(
 
   private fun beginStyleLoad(style: BaseStyle) {
     pendingBaseStyle = style
-    logger?.i { "Setting style URI" }
+    logger?.i {
+      when (style) {
+        is BaseStyle.Uri -> "Setting style URI"
+        is BaseStyle.Json -> "Setting style JSON"
+      }
+    }
     callbacks.onStyleChanged(this, null)
     when (style) {
       is BaseStyle.Uri -> mapView.setStyleURL(NSURL(string = style.uri))
@@ -494,7 +499,7 @@ internal class IosMapAdapter(
       .convertCoordinate(position.toCLLocationCoordinate2D(), toPointToView = mapView)
       .toDpOffset()
 
-  override fun queryRenderedFeatures(
+  override suspend fun queryRenderedFeatures(
     offset: DpOffset,
     layerIds: Set<String>?,
     predicate: CompiledExpression<BooleanValue>?,
@@ -507,7 +512,7 @@ internal class IosMapAdapter(
       )
       .map { (it as MLNFeatureProtocol).toFeature() }
 
-  override fun queryRenderedFeatures(
+  override suspend fun queryRenderedFeatures(
     rect: DpRect,
     layerIds: Set<String>?,
     predicate: CompiledExpression<BooleanValue>?,
