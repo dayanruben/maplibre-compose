@@ -2,6 +2,7 @@ package org.maplibre.compose.demoapp
 
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -36,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -47,6 +49,7 @@ import org.maplibre.compose.demoapp.design.SwitchRow
 import org.maplibre.compose.demoapp.generated.Res
 import org.maplibre.compose.demoapp.generated.arrow_back_24px
 import org.maplibre.compose.demoapp.generated.settings_24px
+import org.maplibre.compose.demoapp.generated.speed_24px
 
 /** The demo list, the style knob, and the selected demo's controls — or the settings page. */
 @Composable
@@ -56,7 +59,11 @@ fun DemoPanel(state: DemoAppState, modifier: Modifier = Modifier) {
   // selectedDemo drives the map overlay. Keep it aligned with this destination so
   // system and predictive back clear the overlay too.
   LaunchedEffect(route) {
-    if (route == "demos") state.selectedDemo = null
+    if (route == "demos") {
+      state.selectedDemo = null
+      state.shell = DemoShell.Demos
+      state.benchmark.abandonRun()
+    }
   }
   // Material 3 shared axis X: siblings slide 30dp while fading through.
   val slideDistance = with(LocalDensity.current) { 30.dp.roundToPx() }
@@ -68,6 +75,10 @@ fun DemoPanel(state: DemoAppState, modifier: Modifier = Modifier) {
     exitTransition = { sharedAxisExit(-slideDistance) },
     popEnterTransition = { sharedAxisEnter(-slideDistance) },
     popExitTransition = { sharedAxisExit(slideDistance) },
+    // Report the incoming destination's size while the outgoing screen is still
+    // composed, so a wrap-content parent (the bottom sheet) shrinks in time
+    // with the shared axis instead of waiting for the exit to finish.
+    sizeTransform = { sharedAxisSizeTransform },
   ) {
     composable("demos") {
       DemosScreen(
@@ -76,6 +87,11 @@ fun DemoPanel(state: DemoAppState, modifier: Modifier = Modifier) {
         onOpenDemo = { demo ->
           state.selectedDemo = demo
           navController.navigate("demo")
+        },
+        onOpenBenchmarks = {
+          state.selectedDemo = null
+          state.shell = DemoShell.Benchmarks
+          navController.navigate("benchmarks")
         },
       )
     }
@@ -92,6 +108,21 @@ fun DemoPanel(state: DemoAppState, modifier: Modifier = Modifier) {
           modifier = Modifier.padding(horizontal = 16.dp),
         )
         demo.Panel()
+      }
+    }
+    composable("benchmarks") {
+      BenchmarksScreen(
+        onBack = { navController.popBackStack() },
+        onOpenScenario = { scenario ->
+          state.selectedScenario = scenario
+          navController.navigate("benchmark")
+        },
+      )
+    }
+    composable("benchmark") {
+      val scenario = state.selectedScenario
+      SettingsSubScreen(scenario.title, onBack = { navController.popBackStack() }) {
+        BenchmarkScenarioPanel(state)
       }
     }
     composable("settings") {
@@ -131,16 +162,24 @@ private fun sharedAxisExit(slideDistance: Int): ExitTransition =
   slideOutHorizontally(tween(AxisDurationMillis, easing = StandardEasing)) { slideDistance } +
     fadeOut(tween(AxisDurationMillis * 3 / 10, easing = AccelerateEasing))
 
+private val sharedAxisSizeSpec = tween<IntSize>(AxisDurationMillis, easing = StandardEasing)
+
+private val sharedAxisSizeTransform = SizeTransform(clip = false) { _, _ -> sharedAxisSizeSpec }
+
 @Composable
 private fun DemosScreen(
   state: DemoAppState,
   onOpenSettings: () -> Unit,
   onOpenDemo: (Demo) -> Unit,
+  onOpenBenchmarks: () -> Unit,
 ) {
   Column {
     TopAppBar(
       title = { Text("MapLibre Compose") },
       actions = {
+        IconButton(onClick = onOpenBenchmarks) {
+          Icon(vectorResource(Res.drawable.speed_24px), contentDescription = "Benchmarks")
+        }
         IconButton(onClick = onOpenSettings) {
           Icon(vectorResource(Res.drawable.settings_24px), contentDescription = "Settings")
         }
@@ -199,7 +238,7 @@ private fun SettingsScreen(onBack: () -> Unit, onOpen: (route: String) -> Unit) 
 }
 
 @Composable
-private fun SubmenuRow(label: String, description: String, onClick: () -> Unit) {
+internal fun SubmenuRow(label: String, description: String, onClick: () -> Unit) {
   ListItem(
     headlineContent = { Text(label) },
     supportingContent = { Text(description) },
@@ -221,7 +260,7 @@ private fun InterfaceSettingsItems(settings: DemoSettings) {
 }
 
 @Composable
-private fun SettingsSubScreen(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
+internal fun SettingsSubScreen(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
   Column {
     TopAppBar(
       title = { Text(title) },

@@ -1,14 +1,15 @@
 package org.maplibre.compose.demoapp
 
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberBottomSheetScaffoldState
@@ -17,27 +18,28 @@ import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.window.core.layout.WindowSizeClass
+import org.maplibre.compose.demoapp.benchmark.BenchmarkMap
 
 @Composable
 fun DemoApp() {
   val state = rememberDemoAppState()
-  val colorScheme = if (state.selectedStyle.isDark) darkColorScheme() else lightColorScheme()
+  val dark =
+    if (state.shell == DemoShell.Benchmarks) state.selectedScenario.style.isDark
+    else state.selectedStyle.isDark
+  val colorScheme = if (dark) darkColorScheme() else lightColorScheme()
   // One composition for the panel, so the NavHost keeps its back stack when the
   // viewport crosses the side-pane / bottom-sheet breakpoint.
   val panel = remember { movableContentOf { modifier: Modifier -> DemoPanel(state, modifier) } }
   MaterialTheme(colorScheme = colorScheme) {
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-      if (maxWidth >= WideLayoutMinWidth) {
-        WideLayout(state, panel)
-      } else {
-        NarrowLayout(state, panel)
-      }
+    val windowSizeClass = currentWindowAdaptiveInfo().windowSizeClass
+    if (windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)) {
+      WideLayout(state, panel)
+    } else {
+      NarrowLayout(state, panel)
     }
   }
 }
-
-/** Below this width the panel becomes a bottom sheet. */
-private val WideLayoutMinWidth = 720.dp
 
 private val PanelWidth = 360.dp
 
@@ -50,7 +52,7 @@ private fun WideLayout(state: DemoAppState, panel: @Composable (Modifier) -> Uni
     Surface(modifier = Modifier.width(PanelWidth).fillMaxHeight(), tonalElevation = 1.dp) {
       panel(Modifier.fillMaxHeight())
     }
-    DemoMap(state, sheetInsets = WindowInsets(0))
+    ShellMap(state, sheetInsets = WindowInsets(0))
   }
 }
 
@@ -59,9 +61,20 @@ private fun NarrowLayout(state: DemoAppState, panel: @Composable (Modifier) -> U
   BottomSheetScaffold(
     sheetPeekHeight = SheetPeekHeight,
     scaffoldState = rememberBottomSheetScaffoldState(),
-    sheetContent = { panel(Modifier) },
+    // Expanded is the measured height of this content, capped at the scaffold.
+    // NavHost SizeTransform interpolates that height with the destination.
+    sheetContent = { panel(Modifier.fillMaxWidth()) },
   ) {
     // The map draws under the scaffold content area, so the sheet covers its bottom edge.
-    DemoMap(state, sheetInsets = WindowInsets(bottom = SheetPeekHeight))
+    ShellMap(state, sheetInsets = WindowInsets(bottom = SheetPeekHeight))
+  }
+}
+
+@Composable
+private fun ShellMap(state: DemoAppState, sheetInsets: WindowInsets) {
+  if (state.shell == DemoShell.Benchmarks) {
+    BenchmarkMap(state, sheetInsets)
+  } else {
+    DemoMap(state, sheetInsets)
   }
 }

@@ -9,14 +9,15 @@ import org.maplibre.compose.demoapp.demos.DataVizDemo
 import org.maplibre.compose.demoapp.demos.LiveTrackingDemo
 import org.maplibre.compose.demoapp.demos.LocationDemo
 import org.maplibre.compose.demoapp.demos.Manhattan3dDemo
+import org.maplibre.compose.overlay.MapOverlayScope
 import org.maplibre.compose.util.MaplibreComposable
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Position
 
 /**
  * A demo lives at a real place in the world. Selecting it composes [MapContent] into the shared map
- * and, when [fliesOnSelect] is true, flies the camera to [region] or [camera]. Each demo owns its
- * state internally.
+ * and [Overlay] on top of the map. When [fliesOnSelect] is true, the camera flies to [region] or
+ * [camera]. Each demo owns its state internally.
  */
 interface Demo {
   val name: String
@@ -46,6 +47,13 @@ interface Demo {
     get() = true
 
   @MaplibreComposable @Composable fun MapContent(cameraState: CameraState) {}
+
+  /**
+   * Compose UI drawn over the map while this demo is selected.
+   *
+   * [org.maplibre.compose.overlay.MapOverlayScope.placedAt] pins a child to a geographic position.
+   */
+  @UiComposable @Composable fun MapOverlayScope.Overlay() {}
 
   /** Controls shown in the sheet or side panel while this demo is selected. */
   @UiComposable @Composable fun Panel() {}

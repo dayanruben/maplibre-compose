@@ -12,7 +12,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
-import org.maplibre.compose.mlnffi.RecordingList
+import org.maplibre.compose.testing.RecordingList
 import org.maplibre.nativeffi.resource.ResourceErrorReason
 import org.maplibre.nativeffi.resource.ResourceResponse
 import org.maplibre.nativeffi.resource.ResourceResponseStatus
@@ -198,7 +198,7 @@ class MlnFfiResourceRequestTest {
 
     fun awaitClose() {
       val deadline = TimeSource.Monotonic.markNow() + WAIT_SECONDS.seconds
-      while (closes == 0 && deadline.hasNotPassedNow()) Thread.onSpinWait()
+      while (closes == 0 && deadline.hasNotPassedNow()) Thread.yield()
       assertEquals(1, closes, "the request was never closed")
     }
   }

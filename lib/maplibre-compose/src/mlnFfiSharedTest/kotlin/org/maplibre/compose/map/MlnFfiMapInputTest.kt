@@ -42,6 +42,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraState
@@ -80,25 +81,29 @@ class MlnFfiMapInputTest {
   }
 
   @Test
-  fun a_hover_does_not_cancel_an_arrow_key_pan() = runInputTest { camera ->
-    val before = camera.position.target.longitude
-    onRoot().performKeyInput { pressKey(Key.DirectionRight) }
-    waitUntil(timeoutMillis = TIMEOUT) { camera.isCameraMoving }
+  fun a_hover_does_not_cancel_an_arrow_key_pan() =
+    runInputTest(gestures = GestureOptions.Standard.copy(animationDuration = 2.seconds)) { camera ->
+      val before = camera.position.target.longitude
+      onRoot().performKeyInput { pressKey(Key.DirectionRight) }
+      waitUntil(timeoutMillis = TIMEOUT) { camera.isCameraMoving }
 
-    mainClock.autoAdvance = false
-    try {
-      onRoot().performMouseInput { moveTo(center) }
-      mainClock.advanceTimeByFrame()
-      waitForIdle()
-      assertTrue(camera.isCameraMoving, "a hover cancelled the keyboard pan")
-
-      mainClock.advanceTimeBy(GestureOptions.Standard.animationDuration.inWholeMilliseconds)
+      mainClock.autoAdvance = false
+      try {
+        onRoot().performMouseInput { moveTo(center) }
+        mainClock.advanceTimeByFrame()
+        // waitForIdle() would wait until overlay layout stops invalidating, which follows
+        // CameraState.projection replacements through the rest of this native ease.
+        assertTrue(camera.isCameraMoving, "a hover cancelled the keyboard pan")
+      } finally {
+        mainClock.autoAdvance = true
+      }
+      // Camera eases advance on map frames, which the host produces while the Compose clock runs.
       waitUntil(timeoutMillis = TIMEOUT) { !camera.isCameraMoving }
-    } finally {
-      mainClock.autoAdvance = true
+      assertTrue(
+        camera.position.target.longitude != before,
+        "the pan did not finish after the hover",
+      )
     }
-    assertTrue(camera.position.target.longitude != before, "the pan did not finish after the hover")
-  }
 
   @Test
   fun plus_and_minus_zoom_the_map() = runInputTest { camera ->
@@ -825,9 +830,7 @@ class MlnFfiMapInputTest {
         map.performTouchInput {
           swipe(center - Offset(100f, 0f), center + Offset(100f, 0f), durationMillis = 100)
         }
-        mainClock.advanceTimeByFrame()
-        waitForIdle()
-        assertTrue(camera.isCameraMoving, "the released touch gesture did not start momentum")
+        awaitReleasedTouchMomentum(camera)
         map.performMouseInput {
           moveTo(center)
           scroll(-1f)
@@ -857,9 +860,7 @@ class MlnFfiMapInputTest {
         map.performTouchInput {
           swipe(center - Offset(100f, 0f), center + Offset(100f, 0f), durationMillis = 100)
         }
-        mainClock.advanceTimeByFrame()
-        waitForIdle()
-        assertTrue(camera.isCameraMoving, "the released touch gesture did not start momentum")
+        awaitReleasedTouchMomentum(camera)
 
         map.performMouseInput { moveTo(center) }
         mainClock.advanceTimeByFrame()
@@ -879,9 +880,7 @@ class MlnFfiMapInputTest {
         map.performTouchInput {
           swipe(center - Offset(100f, 0f), center + Offset(100f, 0f), durationMillis = 100)
         }
-        mainClock.advanceTimeByFrame()
-        waitForIdle()
-        assertTrue(camera.isCameraMoving, "the released touch gesture did not start momentum")
+        awaitReleasedTouchMomentum(camera)
 
         map.performTouchInput { click(center) }
 
@@ -890,6 +889,18 @@ class MlnFfiMapInputTest {
         mainClock.autoAdvance = true
       }
     }
+
+  /**
+   * Waits until the swipe's camera move is visible. The map reports that move from its owner
+   * thread, which can land after Compose has gone idle. The clock stays frozen. The fling waits for
+   * later frames, and the interruption under test still sees a moving camera.
+   */
+  private fun androidx.compose.ui.test.ComposeUiTest.awaitReleasedTouchMomentum(
+    camera: CameraState
+  ) {
+    mainClock.advanceTimeByFrame()
+    waitUntil(timeoutMillis = TIMEOUT) { camera.isCameraMoving }
+  }
 
   /** Waits for the camera to settle at [zoom]. */
   private fun androidx.compose.ui.test.ComposeUiTest.awaitZoom(camera: CameraState, zoom: Double) {
