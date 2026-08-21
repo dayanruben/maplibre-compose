@@ -26,7 +26,7 @@ per `./gradlew` invocation. Two together can fail in ways neither does alone.
 - `mise run demo:desktop-glfw`
 - `mise run demo:android` (prompts when several devices are connected)
 - `mise run demo:ios` (pass `--device` for a connected iPhone; prompts when
-  several are ready)
+  several are ready; `--release` builds the optimized framework)
 - `mise run demo:js`
 
 ### Formatting and linting
@@ -162,9 +162,8 @@ rendering interactive maps across Android, iOS, Desktop, and Web platforms.
 
 The library uses platform-specific implementations:
 
-- **Android/Desktop**: MapLibre Native Core via
+- **Android/Desktop/iOS**: MapLibre Native Core via
   [`maplibre-native-ffi`](https://github.com/maplibre/maplibre-native-ffi)
-- **iOS**: MapLibre Native SDK (MapLibre iOS)
 - **Web**: MapLibre GL JS, declared in `org.maplibre.compose.gljs`; the upstream
   types it mirrors are at
   `build/js/node_modules/maplibre-gl/dist/maplibre-gl.d.ts`
