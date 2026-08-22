@@ -52,42 +52,20 @@ kotlin {
       api(libs.spatialk.units)
     }
 
-    // used to share some implementation on targets where Compose UI is backed by Skia directly
-    // (e.g. all but Android, which is backed by the Android Canvas API)
-    create("skiaMain") {
+    // Desktop, iOS, and the browser. Android implements the same expect APIs in androidMain,
+    // because Compose on Android draws through the Android Canvas API instead of Skia.
+    create("nonAndroidMain") {
       dependsOn(commonMain.get())
       jvmMain.dependsOn(this)
       iosMain.get().dependsOn(this)
       jsMain.get().dependsOn(this)
     }
 
-    // used to expose APIs only available on targets backed by MapLibre Native
-    // (e.g. all but browser targets, which use MapLibre JS)
+    // MapLibre Native platforms (Android, iOS, desktop). The browser stays on MapLibre GL JS.
+    // This source set stays free of java.* so a Native actual can sit beside the Java one.
     val maplibreNativeMain =
       create("maplibreNativeMain") {
         dependsOn(commonMain.get())
-        androidMain.get().dependsOn(this)
-        iosMain.get().dependsOn(this)
-      }
-
-    // commonMain in waiting: the parts of the mln-ffi and MapLibre GL JS platforms that carry no
-    // backend-conditional logic. It existed because iOS had typed layer actuals rather than
-    // JSON-shaped ones; with iOS on mlnFfiShared it could merge into commonMain, but that move
-    // is left to a follow-up to keep the iOS port reviewable.
-    val nextCommonMain =
-      create("nextCommonMain") {
-        dependsOn(commonMain.get())
-        jsMain.get().dependsOn(this)
-      }
-
-    // used to share the integration with the MapLibre Native FFI binding, as opposed to the
-    // platform SDKs. Android, desktop, and iOS use the same map, style, source, layer, and
-    // offline path. This source set stays free of java.* so a Native actual can sit beside the
-    // Java one.
-    val mlnFfiShared =
-      create("mlnFfiShared") {
-        dependsOn(maplibreNativeMain)
-        dependsOn(nextCommonMain)
         iosMain.get().dependsOn(this)
         dependencies {
           // Backend-independent binding only; the application selects the native runtime.
@@ -99,8 +77,8 @@ kotlin {
 
     // Java implementations shared by Android and desktop, including mln-ffi actuals that iOS
     // provides separately in iosMain.
-    create("androidJvmShared") {
-      dependsOn(mlnFfiShared)
+    create("androidJvmMain") {
+      dependsOn(maplibreNativeMain)
       androidMain.get().dependsOn(this)
       jvmMain.dependsOn(this)
     }
@@ -148,20 +126,23 @@ kotlin {
       implementation(libs.jetbrains.compose.ui.test)
     }
 
-    // The test counterpart of nextCommonMain, and on the same path into commonTest.
-    val nextCommonTest =
-      create("nextCommonTest") {
+    // Live-map and Compose UI tests shared by jsTest and every platform that consumes
+    // maplibreNativeMain. androidHostTest inherits commonTest and has no MapLibre runtime and no
+    // Compose UI test host.
+    val liveMapTest =
+      create("liveMapTest") {
         dependsOn(commonTest.get())
         jsTest.get().dependsOn(this)
       }
 
-    // Behavioral contracts for the shared MapLibre Native FFI integration. Every platform that
-    // consumes mlnFfiShared must execute this source set; the platform test source supplies only
-    // runtime, render-host, storage, and Compose-runner adapters.
-    val mlnFfiSharedTest =
-      create("mlnFfiSharedTest") {
+    // Behavioral contracts for the shared MapLibre Native integration. Every platform that
+    // consumes maplibreNativeMain must execute this source set except androidHostTest, which has
+    // no MapLibre runtime. The platform test source supplies only runtime, render-host, storage,
+    // and Compose-runner adapters.
+    val maplibreNativeTest =
+      create("maplibreNativeTest") {
         dependsOn(commonTest.get())
-        dependsOn(nextCommonTest)
+        dependsOn(liveMapTest)
       }
 
     // Java implementations of the shared test adapters. This source set also holds the handful of
@@ -169,15 +150,15 @@ kotlin {
     // needs a Compose test runner that hosts a native interop view, which the iOS headless runner
     // cannot (LocalInteropContainer is internal to Compose UI), and one test that exercises JVM
     // thread interruption.
-    create("androidJvmSharedTest") {
-      dependsOn(mlnFfiSharedTest)
+    create("androidJvmTest") {
+      dependsOn(maplibreNativeTest)
       getByName("androidDeviceTest").dependsOn(this)
       getByName("jvmTest").dependsOn(this)
     }
 
-    // iOS executes the same shared FFI contract suite; its test source supplies the Native
-    // platform adapters instead of the Java ones in androidJvmSharedTest.
-    getByName("iosTest").dependsOn(mlnFfiSharedTest)
+    // iOS executes the same shared Native contract suite; its test source supplies the Native
+    // platform adapters instead of the Java ones in androidJvmTest.
+    getByName("iosTest").dependsOn(maplibreNativeTest)
 
     // Runtime dependencies belong to platform/backend adapters. One native runtime is loaded per
     // test process; a CI matrix adds processes for additional applicable backends.

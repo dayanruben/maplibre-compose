@@ -15,12 +15,12 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.DpOffset
 import co.touchlab.kermit.Logger
 import kotlinx.coroutines.launch
 import org.maplibre.compose.camera.CameraMoveReason
-import org.maplibre.compose.camera.CameraProjection
 import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.camera.rememberCameraState
 import org.maplibre.compose.overlay.MapOverlay
@@ -95,6 +95,7 @@ import org.maplibre.spatialk.geojson.Position
  * [layer](https://maplibre.org/maplibre-style-spec/layers/) definition(s), which define how that
  * data is rendered, see:
  * - [BackgroundLayer][org.maplibre.compose.layers.BackgroundLayer]
+ * - [ColorReliefLayer][org.maplibre.compose.layers.ColorReliefLayer]
  * - [LineLayer][org.maplibre.compose.layers.LineLayer]
  * - [FillExtrusionLayer][org.maplibre.compose.layers.FillExtrusionLayer]
  * - [FillLayer][org.maplibre.compose.layers.FillLayer]
@@ -147,6 +148,9 @@ public fun MaplibreMap(
   SideEffect { rememberedStyle?.logger = currentLogger }
   val mapClickScope = rememberCoroutineScope()
 
+  val density = LocalDensity.current
+  SideEffect { cameraState.density = density }
+
   val callbacks =
     remember(cameraState, styleState, styleComposition, mapClickScope) {
       object : MapAdapter.Callbacks {
@@ -154,8 +158,7 @@ public fun MaplibreMap(
           rememberedStyle?.unload()
           val safeStyle = style?.let { SafeStyle(it, currentLogger) }
           rememberedStyle = safeStyle
-          cameraState.metersPerDpAtTargetState.value =
-            map.metersPerDpAtLatitude(map.getCameraPosition().target.latitude)
+          if (cameraState.map === map) cameraState.viewportState.value = map.getViewport()
         }
 
         override fun onMapFailLoading(reason: String?) {
@@ -180,11 +183,9 @@ public fun MaplibreMap(
         override fun onCameraMoved(map: MapAdapter) {
           if (cameraState.map !== map) return
           cameraState.positionState.value = map.getCameraPosition()
-          cameraState.metersPerDpAtTargetState.value =
-            map.metersPerDpAtLatitude(map.getCameraPosition().target.latitude)
-          // A new instance so a composition that reads CameraState.projection redraws when the
+          // A new instance so a composition that reads CameraState.viewport redraws when the
           // transform changes without the camera position changing, which is what a resize does.
-          cameraState.projectionState.value = CameraProjection(map)
+          cameraState.viewportState.value = map.getViewport()
         }
 
         override fun onCameraMoveEnded(map: MapAdapter) {
