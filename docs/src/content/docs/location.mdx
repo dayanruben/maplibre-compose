@@ -53,6 +53,27 @@ if (locationState.permission !is LocationPermission.Granted) {
 }
 ```
 
+When permission is not granted, `LocationPermission.NotGranted` says which step
+comes next: explain first when `shouldShowRationale` is set (Android only),
+request when `canRequest` is not `false`, and send the user to the system
+settings otherwise. `rememberSystemSettingsLauncher` opens the settings screens
+on the platforms that have them.
+
+```kotlin
+val settings = rememberSystemSettingsLauncher()
+val permission = locationState.permission
+if (permission is LocationPermission.NotGranted) {
+  when {
+    permission.shouldShowRationale ->
+      LocationRationale(onAccept = locationState::requestPermission)
+    permission.canRequest != false ->
+      Button(onClick = locationState::requestPermission) { Text("Use my location") }
+    settings.canOpenApplicationSettings ->
+      Button(onClick = { settings.openApplicationSettings() }) { Text("Open settings") }
+  }
+}
+```
+
 `locationState.location` is `null` until the first fix arrives, so the puck
 initially draws nothing. Afterward, the state retains the last fix when tracking
 stops or permission changes.
@@ -66,7 +87,7 @@ more accurate one should be used.
 
 The puck bearing and camera bearing are separate: `LocationPuck(bearing = ...)`
 rotates only the puck indicator, while `LocationTrackingEffect` and
-`updateFromLocation(updateBearing = ...)` control camera rotation.
+`updateCamera(updateBearing = ...)` control camera rotation.
 
 | Bearing update mode | Camera behavior                                          |
 | ------------------- | -------------------------------------------------------- |
@@ -112,30 +133,24 @@ activity that the context resolves to, so it works from a directly constructed
 provider too; with a context that cannot reach an activity, the request does
 nothing and the reported permission stays accurate.
 
-For better accuracy, use the Fused Location/Orientation Provider
-(requires Google Play Services):
-
-```kotlin
-val locationProvider = rememberFusedLocationProvider()
-val orientationProvider = rememberFusedOrientationProvider()
-```
-
-`rememberFusedLocationProvider` delegates permission to the Android provider
-above. The `FusedLocationProvider(client)` constructor keeps the always-granted
-default.
-
-Add the extension module to the Android source set:
+For better accuracy, add the Google Play services module to the Android source
+set:
 
 ```toml title="libs.versions.toml"
 [libraries]
-maplibre-composeGms = { module = "org.maplibre.compose:maplibre-compose-gms", version = "{{release}}" }
+maplibre-locationRuntimeGms = { module = "org.maplibre.compose:location-runtime-gms", version = "{{release}}" }
 ```
 
 ```kotlin title="build.gradle.kts"
 androidMain.dependencies {
-  implementation(libs.maplibre.composeGms)
+  implementation(libs.maplibre.locationRuntimeGms)
 }
 ```
+
+The default providers then use fused location and orientation on a device where
+Google Play services is available, and the framework providers otherwise.
+Construct `FusedLocationProvider` and `FusedOrientationProvider` directly when
+an application needs the fused providers regardless of discovery.
 
 #### Web
 
@@ -161,7 +176,8 @@ reports an unsupported backend through `LocationState.status`.
 
 On the standard AWT map host, the portal attaches its permission dialog to that
 window. A custom X11 or Wayland host can expose its window through
-`ComposeMapHost.xdgPortalWindow`. Other hosts use an unparented dialog.
+`ComposeMapHost.xdgPortalWindow`, and an application without a map host can
+install one with `LocalXdgPortalWindow`. Other setups use an unparented dialog.
 
 Each desktop rendering runtime installs its matching backend. A missing backend
 reports an unsupported backend, and multiple backends report a configuration

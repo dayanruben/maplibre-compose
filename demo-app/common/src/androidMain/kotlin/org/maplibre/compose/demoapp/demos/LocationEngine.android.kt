@@ -1,23 +1,55 @@
 package org.maplibre.compose.demoapp.demos
 
 import androidx.compose.runtime.Composable
-import org.maplibre.compose.demoapp.design.SwitchRow
-import org.maplibre.compose.gms.rememberFusedLocationProvider
-import org.maplibre.compose.gms.rememberFusedOrientationProvider
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalContext
+import kotlin.time.Duration.Companion.seconds
+import org.maplibre.compose.gms.GmsLocationBackend
+import org.maplibre.compose.location.AndroidLocationProvider
+import org.maplibre.compose.location.AndroidOrientationProvider
 import org.maplibre.compose.location.LocationProvider
 import org.maplibre.compose.location.OrientationProvider
-import org.maplibre.compose.location.rememberDefaultLocationProvider
-import org.maplibre.compose.location.rememberDefaultOrientationProvider
 
-@Composable
-internal actual fun rememberDemoLocationProvider(usePlayServices: Boolean): LocationProvider =
-  if (usePlayServices) rememberFusedLocationProvider() else rememberDefaultLocationProvider()
+/** The Google Play Services fused providers, regardless of backend discovery. */
+private object FusedLocationEngine : DemoLocationEngine {
+  override val label = "Fused"
 
-@Composable
-internal actual fun rememberDemoOrientationProvider(usePlayServices: Boolean): OrientationProvider =
-  if (usePlayServices) rememberFusedOrientationProvider() else rememberDefaultOrientationProvider()
+  @Composable
+  override fun rememberLocationProvider(): LocationProvider {
+    val context = LocalContext.current
+    return remember(context) { GmsLocationBackend().createLocationProvider(context) }
+  }
 
-@Composable
-internal actual fun LocationEngineRow(usePlayServices: Boolean, onChange: (Boolean) -> Unit) {
-  SwitchRow("Google Play Services", usePlayServices, onChange)
+  @Composable
+  override fun rememberOrientationProvider(): OrientationProvider {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    return remember(context, coroutineScope) {
+      GmsLocationBackend().createOrientationProvider(context, 1.seconds, coroutineScope)
+    }
+  }
 }
+
+/** The Android framework providers, regardless of backend discovery. */
+private object FrameworkLocationEngine : DemoLocationEngine {
+  override val label = "Framework"
+
+  @Composable
+  override fun rememberLocationProvider(): LocationProvider {
+    val context = LocalContext.current
+    return remember(context) { AndroidLocationProvider(context) }
+  }
+
+  @Composable
+  override fun rememberOrientationProvider(): OrientationProvider {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    return remember(context, coroutineScope) {
+      AndroidOrientationProvider(context, 1.seconds, coroutineScope)
+    }
+  }
+}
+
+internal actual val demoLocationEngines: List<DemoLocationEngine> =
+  listOf(DefaultLocationEngine, FusedLocationEngine, FrameworkLocationEngine)

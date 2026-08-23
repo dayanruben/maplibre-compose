@@ -40,6 +40,13 @@ hk runs it, and runs actionlint, ruff, shellcheck, the Actions pins check, JSON
 schema validation, and the documentation site's type check. `hk.pkl` lists the
 steps.
 
+### Style spec
+
+`mise run style-spec:parity` compares the layer API with the pinned MapLibre
+style spec release at the pinned engines. `--check` fails when an in-scope layer
+type, source type, paint or layout property, or native unsupported-table row is
+missing. Follow the `style-spec-parity` skill in `.agents/skills/` to add one.
+
 ### Documentation
 
 - **Generate docs:** `mise run build:docs` (Starlight site and Dokka API
@@ -138,7 +145,10 @@ rendering interactive maps across Android, iOS, Desktop, and Web platforms.
 - **`lib/`**: Core library modules
   - `maplibre-compose`: Main map composables and core functionality
   - `maplibre-compose-material3`: Material 3 themed UI components
-  - `maplibre-compose-gms`: Google location services components
+  - `location`: Location and orientation providers, usable without a map
+  - `location-runtime-gms|linux|macos|windows`: Location backends that
+    `ServiceLoader` discovers; gms upgrades the Android defaults to Google Play
+    services, and the desktop backends supply the only desktop implementations
 - **`demo-app/`**: Multiplatform demo application
   - `common`: Every line of the app, and the only Kotlin Multiplatform module
   - `android`: An Android application that launches `common`

@@ -43,10 +43,11 @@ kotlin {
     }
 
     commonMain.dependencies {
+      api(project(":lib:location"))
       implementation(libs.jetbrains.compose.foundation)
       implementation(libs.jetbrains.compose.components.resources)
       implementation(libs.htmlConverterCompose)
-      implementation(libs.lifecycle.runtime.compose)
+      api(libs.lifecycle.runtime.compose)
       api(libs.kermit)
       api(libs.spatialk.geojson)
       api(libs.spatialk.units)

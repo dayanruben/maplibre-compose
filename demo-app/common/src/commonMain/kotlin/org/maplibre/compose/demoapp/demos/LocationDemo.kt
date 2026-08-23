@@ -18,7 +18,10 @@ import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.demoapp.Demo
 import org.maplibre.compose.demoapp.DemoFlightDuration
 import org.maplibre.compose.demoapp.OpenFreeMap
+import org.maplibre.compose.demoapp.design.ButtonRow
+import org.maplibre.compose.demoapp.design.SegmentedRow
 import org.maplibre.compose.demoapp.design.SwitchRow
+import org.maplibre.compose.location.LocationPermission
 import org.maplibre.compose.location.LocationPuck
 import org.maplibre.compose.location.LocationState
 import org.maplibre.compose.location.LocationTrackingEffect
@@ -26,6 +29,8 @@ import org.maplibre.compose.location.LocationTrackingStatus
 import org.maplibre.compose.location.LocationUnavailableReason
 import org.maplibre.compose.location.mostAccurateBearing
 import org.maplibre.compose.location.rememberLocationState
+import org.maplibre.compose.location.rememberSystemSettingsLauncher
+import org.maplibre.compose.location.updateCamera
 import org.maplibre.compose.material3.LocationPuckDefaults
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Position
@@ -52,7 +57,7 @@ object LocationDemo : Demo {
     }
 
   private var follow by mutableStateOf(true)
-  private var usePlayServices by mutableStateOf(true)
+  private var engine by mutableStateOf(demoLocationEngines.first())
   private var useNativeIndicator by mutableStateOf(false)
   private var lastFix by mutableStateOf<Position?>(null)
   private var panelLocationState by mutableStateOf<LocationState?>(null)
@@ -61,8 +66,8 @@ object LocationDemo : Demo {
   override fun MapContent(cameraState: CameraState) {
     val locationState =
       rememberLocationState(
-        provider = rememberDemoLocationProvider(usePlayServices),
-        orientationProvider = rememberDemoOrientationProvider(usePlayServices),
+        provider = engine.rememberLocationProvider(),
+        orientationProvider = engine.rememberOrientationProvider(),
       )
     DisposableEffect(locationState) {
       panelLocationState = locationState
@@ -92,7 +97,7 @@ object LocationDemo : Demo {
           duration = DemoFlightDuration,
         )
       } else {
-        cameraState.updateFromLocation()
+        updateCamera(cameraState)
       }
     }
 
@@ -117,18 +122,52 @@ object LocationDemo : Demo {
       color = MaterialTheme.colorScheme.onSurfaceVariant,
       modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
     )
+    val settings = rememberSystemSettingsLauncher()
+    val permission = panelLocationState?.permission
+    if (
+      permission is LocationPermission.NotGranted &&
+        permission.canRequest == false &&
+        settings.canOpenApplicationSettings
+    ) {
+      ButtonRow("Open system settings") { settings.openApplicationSettings() }
+    }
+    val status = panelLocationState?.status
+    if (
+      status is LocationTrackingStatus.Unavailable &&
+        status.reason == LocationUnavailableReason.ServicesDisabled
+    ) {
+      if (settings.canOpenLocationServicesSettings) {
+        ButtonRow("Open location settings") { settings.openLocationServicesSettings() }
+      }
+      ButtonRow("Retry") { panelLocationState?.retry() }
+    }
     SwitchRow("Follow me", follow) { follow = it }
     if (isNativeLocationIndicatorAvailable) {
       SwitchRow("Native indicator", useNativeIndicator) { useNativeIndicator = it }
     }
-    LocationEngineRow(usePlayServices) { usePlayServices = it }
+    if (demoLocationEngines.size > 1) {
+      SegmentedRow(
+        label = "Location engine",
+        options = demoLocationEngines,
+        selected = engine,
+        optionLabel = { it.label },
+        onSelect = { engine = it },
+      )
+    }
   }
 }
 
 private fun LocationState.statusMessage(): String =
   when (val status = this.status) {
     LocationTrackingStatus.Stopped -> "Location is off"
-    LocationTrackingStatus.WaitingForPermission -> "Waiting for location permission"
+    LocationTrackingStatus.WaitingForPermission -> {
+      val permission = this.permission
+      if (permission is LocationPermission.NotGranted && permission.canRequest == false) {
+        "Location permission was denied; turn it on in the system settings"
+      } else {
+        "Waiting for location permission"
+      }
+    }
     LocationTrackingStatus.Starting -> "Finding your location"
     LocationTrackingStatus.Tracking -> "Tracking your location"
     is LocationTrackingStatus.Unavailable ->
