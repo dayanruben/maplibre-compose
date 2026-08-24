@@ -20,6 +20,7 @@ class DemoSettings {
   var tileLodOptions by mutableStateOf(TileLodOptions.Standard)
   var showFpsOverlay by mutableStateOf(false)
   var showCameraOverlay by mutableStateOf(false)
+  var showPointerPinDiagnostics by mutableStateOf(false)
   var useMaterial3Controls by mutableStateOf(true)
 }
 
@@ -27,7 +28,7 @@ class DemoSettings {
 
 /**
  * The rendering toggles this platform's [RenderOptions] offers — debug flags, the frame rate cap,
- * and where supported the texture-versus-surface choice — as settings list items.
+ * and on Android the texture-versus-surface choice — as settings list items.
  */
 @Composable expect fun RenderSettingsItems(settings: DemoSettings)
 

@@ -17,7 +17,14 @@ mavenPublishing {
 }
 
 kotlin {
-  android { namespace = "org.maplibre.compose" }
+  android {
+    namespace = "org.maplibre.compose"
+    optimization {
+      // The Vulkan bridge class is resolved by JNI name.
+      consumerKeepRules.publish = true
+      consumerKeepRules.files.add(project.file("consumer-rules.pro"))
+    }
+  }
 
   iosArm64()
   iosSimulatorArm64()
@@ -92,20 +99,12 @@ kotlin {
       }
     }
 
-    androidMain {
-      dependencies {
-        implementation(libs.androidx.activity.compose)
-        // The Android host presents through an EGL window surface.
-        implementation(libs.maplibre.nativeFfi.runtimeOpenGl)
-      }
-    }
-
     jvmMain.apply {
       dependencies {
         implementation(compose.desktop.currentOs)
 
-        // The AWT Compose host needs direct Vulkan/OpenGL access; the natives come from the
-        // runtime artifact the application picks.
+        // The Compose host needs direct Vulkan/OpenGL access; the natives come from the runtime
+        // artifact the application picks.
         implementation(libs.lwjgl.core)
         implementation(libs.lwjgl.opengl)
         implementation(libs.lwjgl.vulkan)
@@ -161,22 +160,27 @@ kotlin {
     // platform adapters instead of the Java ones in androidJvmTest.
     getByName("iosTest").dependsOn(maplibreNativeTest)
 
-    // Runtime dependencies belong to platform/backend adapters. One native runtime is loaded per
-    // test process; a CI matrix adds processes for additional applicable backends.
+    // One native runtime is loaded per test process; `maplibre.desktop.backend` selects which, and
+    // a CI matrix adds processes for additional applicable backends.
     val jvmTest by getting
     jvmTest.dependencies {
-      // Only the EGL interop test binds EGL directly; nothing in the library does.
+      // Only the EGL interop tests bind EGL directly; nothing in the library does.
       implementation(libs.lwjgl.egl)
     }
 
     androidHostTest.dependencies { implementation(compose.desktop.currentOs) }
 
     androidDeviceTest.dependencies {
+      implementation(libs.androidx.activity.compose)
       implementation(libs.jetbrains.compose.ui.testJunit4)
       implementation(libs.androidx.composeUi.testManifest)
+      // The shared device-test render driver targets OpenGL.
+      implementation(libs.maplibre.nativeFfi.runtimeOpenGl)
     }
   }
 }
+
+val requestedDesktopBackend = providers.gradleProperty("maplibre.desktop.backend")
 
 configurations.named("jvmTestRuntimeOnly") {
   dependencies.addAllLater(
@@ -184,7 +188,7 @@ configurations.named("jvmTestRuntimeOnly") {
       val platform = DesktopHostPlatform.current()
       platform
         .runtimeDependencies(
-          backend = platform.defaultRenderBackend,
+          backend = platform.selectedRenderBackend(requestedDesktopBackend.orNull),
           ffiVersion = libs.versions.maplibre.nativeFfi.get(),
           lwjglVersion = libs.versions.lwjgl.get(),
         )

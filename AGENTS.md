@@ -24,7 +24,8 @@ per `./gradlew` invocation. Two together can fail in ways neither does alone.
 - `mise run build:ios:device`
 - `mise run demo:desktop`
 - `mise run demo:desktop-glfw`
-- `mise run demo:android` (prompts when several devices are connected)
+- `mise run demo:android` (prompts when several devices are connected;
+  `--backend vulkan` packages the Vulkan runtime)
 - `mise run demo:ios` (pass `--device` for a connected iPhone; prompts when
   several are ready; `--release` builds the optimized framework)
 - `mise run demo:js`
@@ -94,10 +95,11 @@ For a machine with no SDK, install the pinned SDK with
 
 - **Android host:** `mise run test:android`
 - **Android device:** `mise run test:android:device [api-level]` (boots its own
-  headless emulator; `android-emulator:boot`/`:stop` drive it directly)
+  headless emulator; `android-emulator:boot` opens a window by default)
 - **iOS:** `mise run test:ios` (boots its own simulator)
 - **Web:** `mise run test:js`
-- **Desktop:** `mise run test:desktop`
+- **Desktop:** `mise run test:desktop` (add `--backend <name>` to package a
+  non-default render backend, e.g. `opengl` on Linux)
 
 Tests live in platform-specific source sets:
 

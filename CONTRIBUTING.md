@@ -128,6 +128,12 @@ launch on iOS. Every other host has a task:
 - Desktop on the compose-glfw host instead of the AWT one:
   `mise run demo:desktop-glfw`
 
+The desktop demos and test suite take `--backend <name>` to package a different
+Map render backend than the platform default, as in
+`mise run demo:desktop -- --backend=opengl`. It passes the
+`maplibre.desktop.backend` Gradle property, which swaps the packaged
+`maplibre-compose-runtime-*` artifact.
+
 ## Run the tests
 
 CI runs these same tasks, so you can reproduce a failure with the command the
@@ -150,11 +156,13 @@ You can drive the emulator on its own:
 
 ```bash
 mise run android-emulator:boot 24
+mise run android-emulator:boot 24 --headless
 mise run android-emulator:stop
 ```
 
-The AVD lives under `build/android-emulator`, so removing the build tree removes
-the device.
+The boot task opens the emulator window by default. Pass `--headless` to run it
+without a window. The AVD lives under `build/android-emulator`, so removing the
+build tree removes the device.
 
 ## Building documentation
 

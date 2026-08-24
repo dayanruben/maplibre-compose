@@ -123,10 +123,19 @@ description = "Run the Android host (JVM) test suite."
 run = "./gradlew testDebugUnitTest testAndroidHostTest"
 
 [tasks."android-emulator:boot"]
-description = "Boot a headless Android emulator and wait until it is ready."
-usage = 'arg "[api_level]" default="{{vars.android_api_level}}"'
+description = "Boot an Android emulator and wait until it is ready."
+usage = '''
+flag "--headless" help="Run the emulator without a window."
+arg "[api_level]" default="{{vars.android_api_level}}"
+'''
 tools = { "core:java" = "{{vars.java_version}}" }
-run = '.mise/bin/boot-android-emulator "$usage_api_level"'
+run = '''
+args=("$usage_api_level")
+if [[ "$usage_headless" == "true" ]]; then
+  args+=(--headless)
+fi
+.mise/bin/boot-android-emulator "${args[@]}"
+'''
 
 [tasks."android-emulator:stop"]
 description = "Stop the Android emulator started by mise."
@@ -139,7 +148,9 @@ run = ".mise/bin/capture-android-emulator-diagnostics"
 [tasks."test:android:device"]
 description = "Run the Android instrumented test suite on an emulator."
 usage = 'arg "[api_level]" default="{{vars.android_api_level}}"'
-depends = [{ task = "android-emulator:boot", args = ["{{usage.api_level}}"] }]
+depends = [
+  { task = "android-emulator:boot", args = ["{{usage.api_level}}", "--headless"] },
+]
 # One task name per Android plugin; see test:android.
 run = '.mise/bin/run-android-device-tests "$usage_api_level"'
 
@@ -164,11 +175,101 @@ run = "./gradlew jsBrowserTest"
 
 [tasks."test:desktop"]
 description = "Run the desktop (JVM) test suite against a real Vulkan or Metal device."
-run = "./gradlew jvmTest"
+usage = '''
+flag "--backend <name>" help="Map render backend to test, e.g. opengl or vulkan. Defaults to the platform's preferred backend."
+'''
+run = '''
+if [ -n "$usage_backend" ]; then
+  ./gradlew jvmTest -Pmaplibre.desktop.backend="$usage_backend"
+else
+  ./gradlew jvmTest
+fi
+'''
 
 [tasks."build:docs"]
 description = "Build the documentation site and the Dokka API reference into docs/dist."
 run = "mise run //docs:build"
+
+[tasks."build:js-app"]
+description = "Build the browser demo app for static hosting."
+run = "./gradlew :demo-app:common:jsBrowserDistribution"
+
+[tasks."build:pages"]
+description = "Build the complete GitHub Pages site into docs/dist."
+run = '''
+mise run build:docs
+mise run build:js-app
+mkdir -p docs/dist/demo
+cp -a demo-app/common/build/dist/js/productionExecutable/. docs/dist/demo/
+'''
+
+[tasks."test:pages"]
+description = "Load the browser demo from the complete GitHub Pages build."
+depends = ["build:pages"]
+run = '''
+pages_test_dir="$(mktemp -d)"
+pages_preview_pid=""
+
+cleanup() {
+  if [ -n "$pages_preview_pid" ]; then
+    kill "$pages_preview_pid" 2>/dev/null || true
+    wait "$pages_preview_pid" 2>/dev/null || true
+  fi
+  rm -rf -- "$pages_test_dir"
+}
+trap cleanup EXIT
+
+pnpm --dir docs exec astro preview --host 127.0.0.1 --port 4321 >"$pages_test_dir/preview.log" 2>&1 &
+pages_preview_pid=$!
+
+for _ in {1..30}; do
+  if curl --fail --silent --output /dev/null http://127.0.0.1:4321/maplibre-compose/demo/; then
+    break
+  fi
+  if ! kill -0 "$pages_preview_pid" 2>/dev/null; then
+    cat "$pages_test_dir/preview.log"
+    exit 1
+  fi
+  sleep 1
+done
+
+curl --fail --silent --output /dev/null http://127.0.0.1:4321/maplibre-compose/demo/
+playwright screenshot \
+  --channel chromium \
+  --save-har "$pages_test_dir/demo.har" \
+  --save-har-glob '**/composeResources/**' \
+  --timeout 30000 \
+  --wait-for-selector 'canvas[role="generic"]' \
+  http://127.0.0.1:4321/maplibre-compose/demo/ \
+  "$pages_test_dir/demo.png"
+
+node - "$pages_test_dir/demo.har" <<'NODE'
+const fs = require("node:fs");
+
+const entries = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).log.entries;
+if (entries.length === 0) {
+  throw new Error("The demo requested no Compose resources.");
+}
+
+const expectedPrefix =
+  "http://127.0.0.1:4321/maplibre-compose/demo/composeResources/";
+const misplaced = entries.filter((entry) => !entry.request.url.startsWith(expectedPrefix));
+if (misplaced.length > 0) {
+  throw new Error(
+    `Compose resources used URLs outside the demo: ${misplaced.map((entry) => entry.request.url).join(", ")}`,
+  );
+}
+
+const failed = entries.filter(
+  (entry) => entry.response.status < 200 || entry.response.status >= 400,
+);
+if (failed.length > 0) {
+  throw new Error(
+    `Compose resources failed to load: ${failed.map((entry) => `${entry.response.status} ${entry.request.url}`).join(", ")}`,
+  );
+}
+NODE
+'''
 
 [tasks."build:android-app"]
 description = "Package the demo app as a debug APK."
@@ -182,6 +283,7 @@ run = "./gradlew :demo-app:desktop:packageDistributionForCurrentOS"
 description = "Run the demo app on a connected Android device or emulator."
 usage = '''
 arg "[serial]" help="adb serial. Prompts when several devices are connected."
+flag "--backend <backend>" help="Render backend to package: opengl (default) or vulkan."
 '''
 # The device prompt needs the real terminal; mise otherwise pipes stdio.
 raw = true
@@ -189,12 +291,19 @@ run = ".mise/bin/run-android-demo"
 
 [tasks."demo:desktop"]
 description = "Run the demo app on this host."
+usage = '''
+flag "--backend <name>" help="Map render backend to run, e.g. opengl or vulkan. Defaults to the platform's preferred backend."
+'''
 run = '''
+args=""
+if [ -n "$usage_backend" ]; then
+  args="-Pmaplibre.desktop.backend=$usage_backend"
+fi
 if [ "$(uname -s)" = Darwin ]; then
   # Core Location reads the usage description from a packaged app Info.plist.
-  ./gradlew :demo-app:desktop:runDistributable
+  ./gradlew :demo-app:desktop:runDistributable $args
 else
-  ./gradlew :demo-app:desktop:run
+  ./gradlew :demo-app:desktop:run $args
 fi
 '''
 
@@ -215,21 +324,31 @@ run = '.mise/bin/run-ios-demo'
 
 [tasks."demo:desktop-glfw"]
 description = "Run the demo app on the compose-glfw desktop host instead of the AWT one."
+usage = '''
+flag "--backend <name>" help="Map render backend to run, e.g. opengl or vulkan. Defaults to the platform's preferred backend."
+'''
 run = '''
+args=""
+if [ -n "$usage_backend" ]; then
+  args="-Pmaplibre.desktop.backend=$usage_backend"
+fi
 if [ "$(uname -s)" = Darwin ]; then
   # Core Location reads the usage description from a packaged app Info.plist.
-  ./gradlew :demo-app:desktop-glfw:runDistributable
+  ./gradlew :demo-app:desktop-glfw:runDistributable $args
 else
-  ./gradlew :demo-app:desktop-glfw:run
+  ./gradlew :demo-app:desktop-glfw:run $args
 fi
 '''
 
 [tasks."publish:snapshot"]
 description = "Publish a snapshot build to Maven Central."
+# Publishing builds the Vulkan runtime AAR, which needs the pinned NDK and CMake.
+depends = ["android-sdk-packages"]
 run = ".mise/bin/gradle-with-version snapshot publishToMavenCentral"
 
 [tasks."publish:release"]
 description = "Publish and release the current tag to Maven Central."
+depends = ["android-sdk-packages"]
 run = ".mise/bin/gradle-with-version release publishAndReleaseToMavenCentral --no-configuration-cache"
 
 [tasks.version]

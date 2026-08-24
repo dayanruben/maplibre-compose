@@ -49,6 +49,7 @@ import org.maplibre.compose.mlnffi.OpenGlSurfaceTarget
 import org.maplibre.compose.mlnffi.OpenGlTextureTarget
 import org.maplibre.compose.mlnffi.VulkanContextHandles
 import org.maplibre.compose.mlnffi.VulkanImageTarget
+import org.maplibre.compose.mlnffi.VulkanSurfaceTarget
 import org.maplibre.compose.mlnffi.WglContextHandles
 import org.maplibre.compose.mlnffi.currentMlnFfiThreadName
 import org.maplibre.compose.mlnffi.withLock
@@ -75,6 +76,7 @@ import org.maplibre.nativeffi.camera.BoundOptions
 import org.maplibre.nativeffi.camera.BoundsConstraint
 import org.maplibre.nativeffi.camera.CameraFitOptions
 import org.maplibre.nativeffi.camera.CameraOptions
+import org.maplibre.nativeffi.camera.EdgeInsets
 import org.maplibre.nativeffi.error.InvalidArgumentException
 import org.maplibre.nativeffi.error.MaplibreException
 import org.maplibre.nativeffi.error.NativeErrorException
@@ -99,6 +101,7 @@ import org.maplibre.nativeffi.render.RenderResult
 import org.maplibre.nativeffi.render.RenderSessionHandle
 import org.maplibre.nativeffi.render.RenderTargetExtent
 import org.maplibre.nativeffi.render.VulkanBorrowedTextureDescriptor
+import org.maplibre.nativeffi.render.VulkanSurfaceDescriptor
 import org.maplibre.nativeffi.runtime.RuntimeEvent
 import org.maplibre.nativeffi.runtime.RuntimeEventMask
 import org.maplibre.nativeffi.runtime.RuntimeEventPayload
@@ -153,6 +156,8 @@ internal class MlnFfiMapSession(
   private val stateLock = MlnFfiLock()
 
   @Volatile private var loop: MlnFfiMapRuntimeLoop? = null
+
+  @Volatile private var cameraPadding: EdgeInsets = EdgeInsets.ZERO
 
   /** One-shot map actions accepted before this session starts. Guarded by [stateLock]. */
   private class PendingMapAction(val run: (MapHandle) -> Unit, val abandon: () -> Unit)
@@ -492,7 +497,7 @@ internal class MlnFfiMapSession(
     applyRequestedStyle(map)
     // A camera set before this map existed reaches it as a queued jump, which a loop that stopped
     // before running it has already abandoned.
-    requestedCamera?.let { map.jumpTo(it.toCameraOptions(layoutDirection)) }
+    requestedCamera?.let { map.jumpTo(it.toCameraOptions(cameraPadding)) }
   }
 
   private fun ensureAttached(map: MapHandle, frame: MlnFfiMapFrame): Boolean {
@@ -546,6 +551,7 @@ internal class MlnFfiMapSession(
   ): RenderSessionHandle =
     when (target) {
       is VulkanImageTarget -> map.attachVulkanBorrowedTexture(target.toDescriptor(extent))
+      is VulkanSurfaceTarget -> map.attachVulkanSurface(target.toDescriptor(extent))
       is MetalTextureTarget -> map.attachMetalBorrowedTexture(target.toDescriptor(extent))
       is MetalSurfaceTarget -> map.attachMetalSurface(target.toDescriptor(extent))
       is OpenGlTextureTarget -> {
@@ -564,6 +570,7 @@ internal class MlnFfiMapSession(
     try {
       when (target) {
         is VulkanImageTarget -> session.setVulkanBorrowedTextureTarget(target.toDescriptor(extent))
+        is VulkanSurfaceTarget -> session.resize(extent.width, extent.height, extent.scaleFactor)
         is MetalTextureTarget -> session.setMetalBorrowedTextureTarget(target.toDescriptor(extent))
         is MetalSurfaceTarget -> session.setMetalSurfaceTarget(target.toDescriptor(extent))
         is OpenGlTextureTarget -> {
@@ -609,6 +616,13 @@ internal class MlnFfiMapSession(
         initialLayout = initialLayout,
       )
       .also { it.finalLayout = finalLayout }
+
+  private fun VulkanSurfaceTarget.toDescriptor(extent: MapExtent) =
+    VulkanSurfaceDescriptor(
+      extent = extent.toFfiExtent(),
+      context = context.toFfi(),
+      surface = NativePointer.ofAddress(surface.address),
+    )
 
   private fun MetalTextureTarget.toDescriptor(extent: MapExtent) =
     MetalBorrowedTextureDescriptor(
@@ -850,8 +864,9 @@ internal class MlnFfiMapSession(
 
   private fun recordCamera(position: CameraPosition) {
     requestedCamera = position
+    val padding = cameraPadding
     configureMap { map ->
-      map.jumpTo(position.toCameraOptions(layoutDirection))
+      map.jumpTo(position.toCameraOptions(padding))
       snapshotViewport(map)
     }
   }
@@ -1009,6 +1024,16 @@ internal class MlnFfiMapSession(
     recordCamera(cameraPosition)
   }
 
+  override fun setCameraPadding(padding: PaddingValues) {
+    val insets = padding.toEdgeInsets(layoutDirection)
+    if (cameraPadding == insets) return
+    cameraPadding = insets
+    configureMap { map ->
+      map.jumpTo(CameraOptions().also { it.padding = insets })
+      snapshotViewport(map)
+    }
+  }
+
   override fun setCameraPosition(
     boundingBox: BoundingBox,
     bearing: Double,
@@ -1034,21 +1059,50 @@ internal class MlnFfiMapSession(
     bearing: Double,
     tilt: Double,
     padding: PaddingValues,
-  ) =
-    map.cameraForLatLngBounds(
-      bounds = boundingBox.toLatLngBounds(),
-      // The padding that comes back describes the computed fit, and must be applied verbatim.
-      fitOptions =
-        CameraFitOptions().also {
-          it.padding = padding.toEdgeInsets(layoutDirection)
-          it.bearing = bearing
-          it.pitch = tilt
-        },
+  ): CameraOptions {
+    val persistent = cameraPadding
+    val fit = padding.toEdgeInsets(layoutDirection)
+    val total = persistent + fit
+    val fitted =
+      map.cameraForLatLngBounds(
+        bounds = boundingBox.toLatLngBounds(),
+        fitOptions =
+          CameraFitOptions().also {
+            it.padding = total
+            it.bearing = bearing
+            it.pitch = tilt
+          },
+      )
+
+    // Native returns the fit padding as persistent camera state. Preserve the fitted transform
+    // while replacing it with the map's declarative padding.
+    map.createProjection().use { projection ->
+      projection.setCamera(fitted)
+      val size = map.size
+      fitted.center =
+        projection.latLngForPixel(
+          ScreenPoint(
+            x = (size.width + persistent.left - persistent.right) / 2.0,
+            y = (size.height + persistent.top - persistent.bottom) / 2.0,
+          )
+        )
+    }
+    fitted.padding = persistent
+    return fitted
+  }
+
+  private operator fun EdgeInsets.plus(other: EdgeInsets): EdgeInsets =
+    EdgeInsets(
+      top = top + other.top,
+      left = left + other.left,
+      bottom = bottom + other.bottom,
+      right = right + other.right,
     )
 
   override suspend fun animateCameraPosition(finalPosition: CameraPosition, duration: Duration) {
+    val padding = cameraPadding
     startTransitionAwaitingRelease(duration) { map, animation ->
-      map.flyTo(finalPosition.toCameraOptions(layoutDirection), animation)
+      map.flyTo(finalPosition.toCameraOptions(padding), animation)
     }
   }
 

@@ -23,6 +23,7 @@ import org.maplibre.compose.style.BaseStyle
 private const val FULL = GPU_CANVAS_SIZE
 private const val SMALL = FULL / 2
 private const val INSET = FULL / 4
+private const val FRACTIONAL_SCALE = 1.7
 
 private const val RED = "#ff0000"
 private const val BLUE = "#0000ff"
@@ -52,6 +53,45 @@ private val SPLIT_STYLE =
       "layers": [
         {"id": "bg", "type": "background", "paint": {"background-color": "#0000ff"}},
         {"id": "shape", "type": "fill", "source": "shape", "paint": {"fill-color": "#ff0000"}}
+      ]
+    }
+    """
+      .trimIndent()
+  )
+
+private val HEATMAP_STYLE =
+  BaseStyle.Json(
+    """
+    {
+      "version": 8,
+      "name": "heatmap compositing",
+      "sources": {
+        "point": {
+          "type": "geojson",
+          "data": {
+            "type": "Point",
+            "coordinates": [0, 0]
+          }
+        }
+      },
+      "layers": [
+        {"id": "bg", "type": "background", "paint": {"background-color": "#0000ff"}},
+        {
+          "id": "heatmap",
+          "type": "heatmap",
+          "source": "point",
+          "paint": {
+            "heatmap-radius": 20,
+            "heatmap-color": [
+              "interpolate",
+              ["linear"],
+              ["heatmap-density"],
+              0, "rgba(0, 0, 0, 0)",
+              0.01, "#ff0000",
+              1, "#ff0000"
+            ]
+          }
+        }
       ]
     }
     """
@@ -106,6 +146,31 @@ class BrowserCompositingTest {
   }
 
   @Test
+  fun a_heatmap_uses_the_map_target_size_instead_of_the_shared_canvas_size() = gpuTest { gpu ->
+    val gl = gpu.gl.asDynamic()
+    GlJsRenderTarget(gl, SMALL, SMALL, generation = 1).use { target ->
+      CompositedMap(HEATMAP_STYLE, scaleFactor = FRACTIONAL_SCALE).use { map ->
+        val extent = MapExtent.fromPhysical(SMALL, SMALL, FRACTIONAL_SCALE)
+        map.drawUntil(target, "the heatmap point to reach the render tree") {
+          map.rendersFeature("heatmap", extent.width / 2, extent.height / 2)
+        }
+
+        val pixels = readFramebuffer(gl, target.framebuffer, SMALL, SMALL)
+        val center = (SMALL / 2 * SMALL + SMALL / 2) * 4
+        assertTrue(
+          pixels[center].toInt() and 0xff > pixels[center + 2].toInt() and 0xff,
+          "the central heatmap point should be red rather than the blue background",
+        )
+        assertEquals(
+          FULL,
+          gl.drawingBufferWidth.unsafeCast<Int>(),
+          "the map draw should restore the shared canvas drawing buffer size",
+        )
+      }
+    }
+  }
+
+  @Test
   fun skia_draws_the_adopted_texture_into_a_gpu_surface() = gpuTest { gpu ->
     val gl = gpu.gl.asDynamic()
     GlJsRenderTarget(gl, FULL, FULL, generation = 1).use { target ->
@@ -149,6 +214,38 @@ class BrowserCompositingTest {
       } finally {
         bitmap.close()
         surface.close()
+      }
+    }
+  }
+
+  @Test
+  fun map_frames_clear_sampler_objects_left_by_the_shared_renderer() = gpuTest { gpu ->
+    val gl = gpu.gl.asDynamic()
+    GlJsRenderTarget(gl, FULL, FULL, generation = 1).use { target ->
+      CompositedMap(SPLIT_STYLE).use { map ->
+        map.drawTheWholeStyle(target)
+
+        val sampler = gl.createSampler()
+        check(sampler != null) { "WebGL did not create a sampler object" }
+        val textureUnits = gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS).unsafeCast<Int>()
+        try {
+          repeat(textureUnits) { unit -> gl.bindSampler(unit, sampler) }
+
+          assertTrue(map.drawOnce(target), "the map should have drawn with foreign GL state")
+
+          repeat(textureUnits) { unit ->
+            gl.activeTexture(gl.TEXTURE0 + unit)
+            assertEquals(
+              null,
+              gl.getParameter(gl.SAMPLER_BINDING),
+              "texture unit $unit should not retain the shared renderer's sampler",
+            )
+          }
+        } finally {
+          repeat(textureUnits) { unit -> gl.bindSampler(unit, null) }
+          gl.activeTexture(gl.TEXTURE0)
+          gl.deleteSampler(sampler)
+        }
       }
     }
   }
