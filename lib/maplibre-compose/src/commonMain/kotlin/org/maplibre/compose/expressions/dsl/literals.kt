@@ -1,6 +1,5 @@
 package org.maplibre.compose.expressions.dsl
 
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
@@ -34,6 +33,7 @@ import org.maplibre.compose.expressions.value.SymbolAnchor
 import org.maplibre.compose.expressions.value.TextUnitOffsetValue
 import org.maplibre.compose.expressions.value.TextVariableAnchorOffsetValue
 import org.maplibre.compose.expressions.value.VectorValue
+import org.maplibre.compose.util.DpPadding
 
 /** Creates a literal expression for a [String] value. */
 public fun const(string: String): StringLiteral = StringLiteral.of(string)
@@ -75,8 +75,8 @@ public fun const(offset: Offset): OffsetLiteral = OffsetLiteral.of(offset)
 /** Creates a literal expression for a [DpOffset] value. */
 public fun const(dpOffset: DpOffset): DpOffsetLiteral = DpOffsetLiteral.of(dpOffset)
 
-/** Creates a literal expression for a [PaddingValues.Absolute] value. */
-public fun const(padding: PaddingValues.Absolute): DpPaddingLiteral = DpPaddingLiteral.of(padding)
+/** Creates a literal expression for a [DpPadding] value. */
+public fun const(padding: DpPadding): DpPaddingLiteral = DpPaddingLiteral.of(padding)
 
 /** Creates a literal expression for a list. */
 public fun <T : ExpressionValue> const(list: List<Literal<T, *>>): ListLiteral<T> =
@@ -100,12 +100,14 @@ public fun const(list: List<Number>): Literal<VectorValue<Number>, *> =
  * Creates a literal expression for [TextVariableAnchorOffsetValue], used by
  * [SymbolLayer][org.maplibre.compose.layers.SymbolLayer]'s `textVariableAnchorOffset` parameter.
  *
- * The offset is measured in a multipler of the text size (EM). It's in [Offset] instead of [offset]
- * because of technical limitations in MapLibre.
+ * Each [Offset] component is measured in ems. This helper uses [Offset] instead of [offset] because
+ * MapLibre requires the offsets inside a literal array. That array cannot evaluate text-unit
+ * expressions.
  */
 public fun textVariableAnchorOffset(
   vararg pairs: Pair<SymbolAnchor, Offset>
 ): Literal<TextVariableAnchorOffsetValue, List<*>> {
+  // TODO: Replace Offset with a dedicated em offset type that makes the unit explicit.
   val elements = buildList {
     pairs.forEach { (anchor, offset) ->
       add(anchor.literal)
@@ -129,11 +131,9 @@ public fun offset(x: Dp, y: Dp): DpOffsetLiteral = DpOffsetLiteral.of(DpOffset(x
 public fun offset(x: TextUnit, y: TextUnit): Expression<TextUnitOffsetValue> =
   TextUnitOffsetCalculation.of(x, y)
 
-/** Creates a literal expression for a [PaddingValues.Absolute] value. */
+/** Creates a literal expression for a [DpPadding] value. */
 public fun padding(left: Dp, top: Dp, right: Dp, bottom: Dp): Expression<DpPaddingValue> =
-  DpPaddingLiteral.of(
-    PaddingValues.Absolute(left = left, top = top, right = right, bottom = bottom)
-  )
+  const(DpPadding(left = left, top = top, right = right, bottom = bottom))
 
 /**
  * Creates a literal expression for a `null` value.

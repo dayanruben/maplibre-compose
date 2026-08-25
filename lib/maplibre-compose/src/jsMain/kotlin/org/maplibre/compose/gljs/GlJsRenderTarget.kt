@@ -7,14 +7,17 @@ import org.jetbrains.skia.SurfaceOrigin
 
 /**
  * The texture MapLibre GL JS renders into and Compose draws from, sized in physical pixels and
- * never resized in place. Everything here is allocated in the one context skiko created.
+ * never resized in place. The texture and adopted image belong to one Emscripten and Skia renderer
+ * generation.
  */
 internal class GlJsRenderTarget(
-  val gl: dynamic,
+  val hostContext: EmscriptenGlContext,
   val widthPx: Int,
   val heightPx: Int,
   val generation: Long,
 ) : AutoCloseable {
+
+  val gl: dynamic = hostContext.webGlContext.asDynamic()
 
   private val fragmentTextureUnits =
     (gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS) as? Int)
@@ -60,8 +63,8 @@ internal class GlJsRenderTarget(
     }
 
     val context =
-      checkNotNull(SkikoGpuBridge.directContext()) {
-        "Compose's GPU context is not available: ${SkikoGpuBridge.diagnostic()}"
+      checkNotNull(SkikoGpuBridge.directContext(hostContext)) {
+        "Compose's GPU context is not available: ${SkikoGpuBridge.diagnostic(hostContext)}"
       }
     val backendTexture =
       BackendTexture.makeGL(
@@ -82,12 +85,15 @@ internal class GlJsRenderTarget(
       )
   }
 
-  /**
-   * Removes sampler objects left by Skia. A sampler object overrides the filtering and wrapping on
-   * MapLibre's textures, and MapLibre does not track sampler bindings in its WebGL state cache.
-   */
-  fun unbindSamplerObjects() {
+  /** Clears state that Skia uses but MapLibre does not track before MapLibre draws. */
+  fun prepareMapRender() {
     repeat(fragmentTextureUnits) { unit -> gl.bindSampler(unit, null) }
+    gl.disable(gl.SCISSOR_TEST)
+  }
+
+  /** Invalidates the Skia state cache for the context that adopted [image]. */
+  fun resetSkiaState() {
+    SkikoGpuBridge.resetGlState(hostContext)
   }
 
   /** The texture is not deleted here: adoption handed it to Skia. */

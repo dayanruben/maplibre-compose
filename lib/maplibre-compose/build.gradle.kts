@@ -35,6 +35,9 @@ kotlin {
     // The MapLibre GL JS declarations are @file:JsModule with no global to fall back on, which UMD
     // output rejects. Every consumer of this module's js target has to match.
     useEsModules()
+    // Compose UI browser tests need an executable binary so webpack can load the Skiko runtime
+    // (CMP-4906).
+    binaries.executable()
     // The browser platform composites MapLibre GL JS into the Compose scene, so its tests need a
     // real WebGL context; karma.config.d supplies the flags that give one to a headless browser.
     browser { testTask { useKarma { useChromeHeadless() } } }
@@ -56,6 +59,7 @@ kotlin {
       implementation(libs.htmlConverterCompose)
       api(libs.lifecycle.runtime.compose)
       api(libs.kermit)
+      implementation(libs.kotlinx.coroutines.core)
       api(libs.spatialk.geojson)
       api(libs.spatialk.units)
     }

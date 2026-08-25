@@ -42,7 +42,6 @@ import org.maplibre.compose.gljs.Point
 import org.maplibre.compose.gljs.QueryGeometry
 import org.maplibre.compose.gljs.QueryRenderedFeaturesOptions
 import org.maplibre.compose.gljs.SetStyleOptions
-import org.maplibre.compose.gljs.SkikoGpuBridge
 import org.maplibre.compose.gljs.isCameraEasing
 import org.maplibre.compose.gljs.queryBox
 import org.maplibre.compose.gljs.styleJson
@@ -178,13 +177,13 @@ internal class GlJsMapSession(
     if (composited != null) {
       // Skia drives this context between MapLibre's frames, so each renderer is told the other
       // moved the state.
-      composited.target.unbindSamplerObjects()
-      map.painter.context.setDirty()
       val mapTarget = composited.target
+      mapTarget.prepareMapRender()
+      map.painter.context.setDirty()
       GlJsRuntime.withDrawingBufferSize(mapTarget.gl, mapTarget.widthPx, mapTarget.heightPx) {
         map.redraw()
       }
-      SkikoGpuBridge.resetGlState()
+      mapTarget.resetSkiaState()
     } else {
       // GL JS runs style updates, tile loading and every camera ease from inside its own render, so
       // even a map nothing samples has to be asked to draw.

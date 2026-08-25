@@ -1,6 +1,5 @@
 package org.maplibre.compose.layers
 
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
@@ -44,6 +43,7 @@ import org.maplibre.compose.expressions.value.TextWritingMode
 import org.maplibre.compose.expressions.value.TranslateAnchor
 import org.maplibre.compose.sources.Source
 import org.maplibre.compose.sources.SourceReferenceEffect
+import org.maplibre.compose.util.DpPadding
 import org.maplibre.compose.util.FeaturesClickHandler
 import org.maplibre.compose.util.MaplibreComposable
 
@@ -145,7 +145,7 @@ private fun rememberEmCompiler(textSize: Expression<TextUnitValue>): LayerProper
  *   Ignored if not both [iconImage] and [textField] are specified.
  *
  * @param iconTextFitPadding Size of the additional area added to dimensions determined by
- *   [iconTextFit].
+ *   [iconTextFit]. A negative value shrinks that side.
  *
  *   Only applicable when if [iconTextFit] is not [IconTextFit.None]. Ignored if not both
  *   [iconImage] and [textField] are specified.
@@ -176,7 +176,7 @@ private fun rememberEmCompiler(textSize: Expression<TextUnitValue>): LayerProper
  *   Ignored if [iconImage] is not specified.
  *
  * @param iconPadding Size of additional area round the icon bounding box used for detecting symbol
- *   collisions. The expression may use feature properties.
+ *   collisions. A negative value shrinks that side. The expression may use feature properties.
  *
  *   Ignored if [iconImage] is not specified.
  *
@@ -348,31 +348,27 @@ private fun rememberEmCompiler(textSize: Expression<TextUnitValue>): LayerProper
  *   the next location+offset. Use [textJustify] = [TextJustify.Auto] to choose justification based
  *   on anchor position. The expression may use feature properties.
  *
- * Each anchor location is accompanied by a point which defines the offset when the corresponding
- * anchor location is used. Positive offset values indicate right and down, while negative values
- * indicate left and up. Anchor locations may repeat, allowing the renderer to try multiple offsets
- * to try and place a label using the same anchor.
+ * Each anchor location has an [androidx.compose.ui.geometry.Offset] in ems. Positive offset values
+ * indicate right and down, while negative values indicate left and up. Anchor locations may repeat,
+ * which lets the renderer try multiple offsets for the same anchor.
  *
  * When present, this property takes precedence over [textAnchor], [textVariableAnchor],
  * [textOffset] and [textRadialOffset].
  *
  * Example:
  * ```kt
- * listOf(
- *   SymbolAnchor.Top to Point(0, 4),
- *   SymbolAnchor.Left to Point(3, 0),
- *   SymbolAnchor.Bottom to Point(1, 1)
+ * textVariableAnchorOffset(
+ *   SymbolAnchor.Top to Offset(0f, 4f),
+ *   SymbolAnchor.Left to Offset(3f, 0f),
+ *   SymbolAnchor.Bottom to Offset(1f, 1f),
  * )
  * ```
  *
  * When the renderer chooses the top anchor, [0, 4] will be used for [textOffset]; the text will be
  * shifted down by 4 ems. When the renderer chooses the left anchor, [3, 0] will be used for
- * [textOffset]; the text will be shifted right by 3 ems. Etc.
+ * [textOffset]; the text will be shifted right by 3 ems.
  *
  * Ignored if [textField] is not specified.
- *
- * NOTE: This property is currently not usable:
- * https://github.com/maplibre/maplibre-compose/issues/143
  *
  * @param textPadding Size of the additional area in dp around the text bounding box used for
  *   detecting symbol collisions.
@@ -448,7 +444,7 @@ public fun SymbolLayer(
   iconRotationAlignment: Expression<IconRotationAlignment> = const(IconRotationAlignment.Auto),
   iconPitchAlignment: Expression<IconPitchAlignment> = const(IconPitchAlignment.Auto),
   iconTextFit: Expression<IconTextFit> = const(IconTextFit.None),
-  iconTextFitPadding: Expression<DpPaddingValue> = const(PaddingValues.Absolute(0.dp)),
+  iconTextFitPadding: Expression<DpPaddingValue> = const(DpPadding.Zero),
   iconKeepUpright: Expression<BooleanValue> = const(false),
   iconRotate: Expression<FloatValue> = const(0f),
 
@@ -457,7 +453,7 @@ public fun SymbolLayer(
   iconOffset: Expression<DpOffsetValue> = const(DpOffset.Zero),
 
   // icon collision
-  iconPadding: Expression<DpPaddingValue> = const(PaddingValues.Absolute(2.dp, 2.dp, 2.dp, 2.dp)),
+  iconPadding: Expression<DpPaddingValue> = const(DpPadding(2.dp, 2.dp, 2.dp, 2.dp)),
   iconAllowOverlap: Expression<BooleanValue> = const(false),
   iconOverlap: Expression<StringValue> = nil(),
   iconIgnorePlacement: Expression<BooleanValue> = const(false),
@@ -499,8 +495,7 @@ public fun SymbolLayer(
   textOffset: Expression<TextUnitOffsetValue> = offset(0f.em, 0f.em),
   textVariableAnchor: Expression<ListValue<SymbolAnchor>> = nil(),
   textRadialOffset: Expression<TextUnitValue> = const(0f.em),
-  //  textVariableAnchorOffset: Expression<TextVariableAnchorOffsetValue> = nil(),
-  textVariableAnchorOffset: Expression<Nothing> = nil(),
+  textVariableAnchorOffset: Expression<TextVariableAnchorOffsetValue> = nil(),
 
   // text collision
   textPadding: Expression<DpValue> = const(2.dp),
