@@ -192,6 +192,9 @@ run = "mise run //docs:build"
 
 [tasks."build:js-app"]
 description = "Build the browser demo app for static hosting."
+# The docs api task also runs Gradle; two Gradle builds in one checkout can
+# fail, so run one at a time when a docs task schedules both.
+wait_for = ["//docs:api"]
 run = "./gradlew :demo-app:common:jsBrowserDistribution"
 
 [tasks."build:pages"]
@@ -201,10 +204,21 @@ mise run build:docs
 mise run build:js-app
 mkdir -p docs/dist/demo
 cp -a demo-app/common/build/dist/js/productionExecutable/. docs/dist/demo/
+mise run package:cloudflare-pages
+'''
+
+[tasks."package:cloudflare-pages"]
+description = "Package the complete site for Cloudflare Pages."
+run = '''
+test -d docs/dist
+rm -rf build/cloudflare-pages
+mkdir -p build/cloudflare-pages/maplibre-compose
+cp -a docs/dist/. build/cloudflare-pages/maplibre-compose/
+cp docs/cloudflare-pages/_redirects build/cloudflare-pages/_redirects
 '''
 
 [tasks."test:pages"]
-description = "Load the browser demo from the complete GitHub Pages build."
+description = "Load the browser demo from the packaged Cloudflare Pages site."
 depends = ["build:pages"]
 run = '''
 pages_test_dir="$(mktemp -d)"
@@ -219,7 +233,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-pnpm --dir docs exec astro preview --host 127.0.0.1 --port 4321 >"$pages_test_dir/preview.log" 2>&1 &
+grep --fixed-strings --line-regexp --quiet \
+  "/ /maplibre-compose/ 302" \
+  build/cloudflare-pages/_redirects
+
+python -m http.server 4321 \
+  --bind 127.0.0.1 \
+  --directory build/cloudflare-pages \
+  >"$pages_test_dir/preview.log" 2>&1 &
 pages_preview_pid=$!
 
 for _ in {1..30}; do
@@ -338,6 +359,19 @@ if [ "$(uname -s)" = Darwin ]; then
 else
   ./gradlew :demo-app:desktop-glfw:run $args
 fi
+'''
+
+[tasks."demo:desktop-nucleus"]
+description = "Run the demo app on the Nucleus Tao desktop host instead of the AWT one."
+usage = '''
+flag "--backend <name>" help="Map render backend to run, e.g. opengl or vulkan. Defaults to the platform's preferred backend."
+'''
+run = '''
+args=""
+if [ -n "$usage_backend" ]; then
+  args="-Pmaplibre.desktop.backend=$usage_backend"
+fi
+./gradlew :demo-app:desktop-nucleus:run $args
 '''
 
 [tasks."publish:snapshot"]

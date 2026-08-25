@@ -24,6 +24,7 @@ per `./gradlew` invocation. Two together can fail in ways neither does alone.
 - `mise run build:ios:device`
 - `mise run demo:desktop`
 - `mise run demo:desktop-glfw`
+- `mise run demo:desktop-nucleus`
 - `mise run demo:android` (prompts when several devices are connected;
   `--backend vulkan` packages the Vulkan runtime)
 - `mise run demo:ios` (pass `--device` for a connected iPhone; prompts when
@@ -148,16 +149,16 @@ rendering interactive maps across Android, iOS, Desktop, and Web platforms.
   - `maplibre-compose`: Main map composables and core functionality
   - `maplibre-compose-material3`: Material 3 themed UI components
   - `location`: Location and orientation providers, usable without a map
-  - `location-runtime-gms|linux|macos|windows`: Location backends that
-    `ServiceLoader` discovers; gms upgrades the Android defaults to Google Play
-    services, and the desktop backends supply the only desktop implementations
+  - `location-runtime-gms|hms|linux|macos|windows`: Location backends that
+    `ServiceLoader` discovers; gms upgrades Android location and orientation
+    through Google Play services, hms upgrades Android location through HMS
+    Core, and the desktop backends supply the only desktop implementations
 - **`demo-app/`**: Multiplatform demo application
   - `common`: Every line of the app, and the only Kotlin Multiplatform module
   - `android`: An Android application that launches `common`
   - `desktop`: A JVM application that launches `common` on the AWT host
-  - `desktop-glfw`: The same JVM application on the compose-glfw host. A module
-    of its own so that its `MainDispatcherFactory`, which outranks
-    `kotlinx-coroutines-swing`, stays off the AWT runtime classpath.
+  - `desktop-glfw`: The same JVM application on the compose-glfw host.
+  - `desktop-nucleus`: The same JVM application on the Nucleus Tao host.
   - `ios`: An Xcode project that embeds the framework `common` produces
 
   The browser app has no module of its own. Its entry point and page live in

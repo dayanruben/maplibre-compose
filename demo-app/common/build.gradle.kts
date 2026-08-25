@@ -87,6 +87,7 @@ kotlin {
         implementation(libs.kotlinx.coroutines.android)
         implementation(libs.ktor.client.okhttp)
         implementation(project(":lib:location-runtime-gms"))
+        implementation(project(":lib:location-runtime-hms"))
       }
     }
 
@@ -103,6 +104,8 @@ kotlin {
       implementation(libs.kotlin.wrappers.js)
       implementation(libs.ktor.client.js)
       implementation(npm("fflate", libs.versions.fflate.get()))
+      // IANA zone rules for kotlinx-datetime TimeZone.of on Kotlin/JS.
+      implementation(npm("@js-joda/timezone", libs.versions.jsJodaTimezone.get()))
     }
 
     commonTest.dependencies { implementation(kotlin("test")) }
