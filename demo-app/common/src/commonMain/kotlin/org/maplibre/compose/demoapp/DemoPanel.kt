@@ -2,7 +2,6 @@ package org.maplibre.compose.demoapp
 
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -11,20 +10,14 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenuAnchorType
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -35,18 +28,21 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.vectorResource
+import org.maplibre.compose.demoapp.design.DropdownRow
 import org.maplibre.compose.demoapp.design.SectionHeader
+import org.maplibre.compose.demoapp.design.SegmentedRow
 import org.maplibre.compose.demoapp.design.SwitchRow
 import org.maplibre.compose.demoapp.generated.Res
 import org.maplibre.compose.demoapp.generated.arrow_back_24px
@@ -58,15 +54,19 @@ import org.maplibre.compose.demoapp.generated.speed_24px
 fun DemoPanel(
   state: DemoAppState,
   modifier: Modifier = Modifier,
-  revealMap: suspend () -> Unit = {},
+  collapsePanel: suspend () -> Unit = {},
+  collapseOnSelection: Boolean = true,
 ) {
   val navController = rememberNavController()
   val scope = rememberCoroutineScope()
+  val appliedStyle = state.appliedStyle
+  var flightJob by remember { mutableStateOf<Job?>(null) }
   val route = navController.currentBackStackEntryAsState().value?.destination?.route
   // selectedDemo drives the map overlay. Keep it aligned with this destination so
   // system and predictive back clear the overlay too.
   LaunchedEffect(route) {
     if (route == "demos") {
+      flightJob?.cancel()
       state.selectedDemo = null
       state.shell = DemoShell.Demos
       state.benchmark.abandonRun()
@@ -82,21 +82,24 @@ fun DemoPanel(
     exitTransition = { sharedAxisExit(-slideDistance) },
     popEnterTransition = { sharedAxisEnter(-slideDistance) },
     popExitTransition = { sharedAxisExit(slideDistance) },
-    // Report the incoming destination's size while the outgoing screen is still
-    // composed, so a wrap-content parent (the bottom sheet) shrinks in time
-    // with the shared axis instead of waiting for the exit to finish.
-    sizeTransform = { sharedAxisSizeTransform },
   ) {
     composable("demos") {
       DemosScreen(
         state,
         onOpenSettings = { navController.navigate("settings") },
         onOpenDemo = { demo ->
-          scope.launch {
-            revealMap()
-            demo.preferredStyle?.let { state.selectedStyle = it }
+          flightJob?.cancel()
+          flightJob = scope.launch {
+            val newBase = demo.preferredStyle?.base?.takeIf { it != appliedStyle.base }
+            val styleLoadsSeen = state.lastStyleLoad.count
             state.selectedDemo = demo
             navController.navigate("demo")
+            if (collapseOnSelection) {
+              collapsePanel()
+              // One frame so the settled viewport insets reach the camera before the flight.
+              withFrameNanos {}
+            }
+            if (newBase != null) state.awaitStyleLoad(seen = styleLoadsSeen, base = newBase)
             state.cameraState.flyTo(demo.destination)
           }
         },
@@ -109,10 +112,7 @@ fun DemoPanel(
     }
     composable("demo") {
       val demo = state.selectedDemo ?: return@composable
-      SettingsSubScreen(
-        demo.name,
-        onBack = { navController.popBackStack() },
-      ) {
+      SettingsSubScreen(demo.name, onBack = { navController.popBackStack() }) {
         Text(
           text = demo.description,
           style = MaterialTheme.typography.bodyMedium,
@@ -126,22 +126,29 @@ fun DemoPanel(
       BenchmarksScreen(
         onBack = { navController.popBackStack() },
         onOpenScenario = { scenario ->
-          scope.launch {
-            revealMap()
-            state.selectedScenario = scenario
-            navController.navigate("benchmark")
-          }
+          state.selectedScenario = scenario
+          navController.navigate("benchmark")
         },
       )
     }
     composable("benchmark") {
       val scenario = state.selectedScenario
       SettingsSubScreen(scenario.title, onBack = { navController.popBackStack() }) {
-        BenchmarkScenarioPanel(state)
+        BenchmarkScenarioPanel(
+          state,
+          onRun = {
+            scope.launch {
+              // On compact windows the panel covers the map, so reveal the run.
+              if (collapseOnSelection) collapsePanel()
+              state.benchmark.requestRun()
+            }
+          },
+        )
       }
     }
     composable("settings") {
       SettingsScreen(
+        state,
         onBack = { navController.popBackStack() },
         onOpen = { navController.navigate("settings/$it") },
       )
@@ -157,9 +164,9 @@ fun DemoPanel(
         RenderSettingsItems(state.settings)
       }
     }
-    composable("settings/interface") {
-      SettingsSubScreen("Interface", onBack = { navController.popBackStack() }) {
-        InterfaceSettingsItems(state.settings)
+    composable("settings/controls") {
+      SettingsSubScreen("Controls", onBack = { navController.popBackStack() }) {
+        ControlSettingsItems(state.settings)
       }
     }
   }
@@ -178,10 +185,6 @@ private fun sharedAxisExit(slideDistance: Int): ExitTransition =
   slideOutHorizontally(tween(AxisDurationMillis, easing = StandardEasing)) { slideDistance } +
     fadeOut(tween(AxisDurationMillis * 3 / 10, easing = AccelerateEasing))
 
-private val sharedAxisSizeSpec = tween<IntSize>(AxisDurationMillis, easing = StandardEasing)
-
-private val sharedAxisSizeTransform = SizeTransform(clip = false) { _, _ -> sharedAxisSizeSpec }
-
 @Composable
 private fun DemosScreen(
   state: DemoAppState,
@@ -191,7 +194,7 @@ private fun DemosScreen(
 ) {
   Column {
     TopAppBar(
-      title = { Text("MapLibre Compose") },
+      title = { Text("Demos") },
       actions = {
         IconButton(onClick = onOpenBenchmarks) {
           Icon(vectorResource(Res.drawable.speed_24px), contentDescription = "Benchmarks")
@@ -203,9 +206,6 @@ private fun DemosScreen(
       colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
     )
     Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
-      StyleSelector(state)
-
-      SectionHeader("Demos")
       allDemos.forEach { demo ->
         SubmenuRow(demo.name, demo.description) { onOpenDemo(demo) }
       }
@@ -214,42 +214,47 @@ private fun DemosScreen(
 }
 
 @Composable
-private fun StyleSelector(state: DemoAppState) {
-  var expanded by remember { mutableStateOf(false) }
-  ExposedDropdownMenuBox(
-    expanded = expanded,
-    onExpandedChange = { expanded = it },
-    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-  ) {
-    OutlinedTextField(
-      value = state.selectedStyle.displayName,
-      onValueChange = {},
-      readOnly = true,
-      label = { Text("Map style") },
-      trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-      modifier =
-        Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-    )
-    ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-      DemoStyle.all.forEach { style ->
-        DropdownMenuItem(
-          text = { Text(style.displayName) },
-          onClick = {
-            state.selectedStyle = style
-            expanded = false
-          },
-        )
-      }
-    }
-  }
-}
-
-@Composable
-private fun SettingsScreen(onBack: () -> Unit, onOpen: (route: String) -> Unit) {
+private fun SettingsScreen(
+  state: DemoAppState,
+  onBack: () -> Unit,
+  onOpen: (route: String) -> Unit,
+) {
   SettingsSubScreen("Settings", onBack) {
+    SectionHeader("Map style")
+    SegmentedRow(
+      options = MapStyleMode.entries,
+      selected = state.settings.mapStyleMode,
+      optionLabel = { it.name },
+      onSelect = { state.settings.mapStyleMode = it },
+    )
+    DropdownRow(
+      label = "Light style",
+      options = allDemoStyles.filter { !it.isDark },
+      selected = state.chosenLightStyle,
+      optionLabel = { it.displayName },
+      onSelect = { state.chosenLightStyle = it },
+    )
+    DropdownRow(
+      label = "Dark style",
+      options = allDemoStyles.filter { it.isDark },
+      selected = state.chosenDarkStyle,
+      optionLabel = { it.displayName },
+      onSelect = { state.chosenDarkStyle = it },
+    )
+
+    SectionHeader("Material theme")
+    DropdownRow(
+      label = "Palette",
+      options = paletteModeOptions,
+      selected = state.settings.paletteMode,
+      optionLabel = { it.name },
+      onSelect = { state.settings.paletteMode = it },
+    )
+
+    SectionHeader("Options")
     SubmenuRow("Gestures", "Which inputs move the camera") { onOpen("gestures") }
     SubmenuRow("Rendering", "Frame rate cap, tile detail, and debug views") { onOpen("rendering") }
-    SubmenuRow("Interface", "Map controls and diagnostic overlays") { onOpen("interface") }
+    SubmenuRow("Controls", "Map controls and diagnostic overlays") { onOpen("controls") }
   }
 }
 
@@ -264,7 +269,7 @@ internal fun SubmenuRow(label: String, description: String, onClick: () -> Unit)
 }
 
 @Composable
-private fun InterfaceSettingsItems(settings: DemoSettings) {
+private fun ControlSettingsItems(settings: DemoSettings) {
   SectionHeader("Map controls")
   SwitchRow("Material 3 controls", settings.useMaterial3Controls) {
     settings.useMaterial3Controls = it

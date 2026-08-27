@@ -4,7 +4,21 @@ import org.maplibre.compose.demoapp.generated.Res
 import org.maplibre.compose.layers.Anchor
 import org.maplibre.compose.style.BaseStyle
 
-/** The styles the user can pick from anywhere, independent of the selected demo. */
+/**
+ * The demo key for api.protomaps.com, shared by the Protomaps styles and MaterialStyleDemo.
+ * Protomaps tiles are free for light use — if you copy any of this code, please get your own key at
+ * https://app.protomaps.com/ rather than reusing this one.
+ */
+internal const val PROTOMAPS_API_KEY = "73c45a97eddd43fb"
+
+/**
+ * A base map style plus the metadata a demo needs to draw on it.
+ *
+ * The enums in this file are the styles the user can pick from the settings, independent of the
+ * selected demo. A demo can instead define its own private implementation and apply it with
+ * [Demo.preferredStyle]; it then stays out of the pickers, which is the right call when the style
+ * is meaningless without the demo's layers. See MaterialStyleDemo for an example.
+ */
 interface DemoStyle {
   val displayName: String
   val base: BaseStyle
@@ -19,14 +33,17 @@ interface DemoStyle {
 
   /** An anchor that keeps a demo's layers below the style's labels. */
   val anchorBelowSymbols: Anchor
-
-  companion object {
-    val Default: DemoStyle = OpenFreeMap.Liberty
-
-    val all: List<DemoStyle> =
-      OpenFreeMap.entries + Protomaps.entries + Versatiles.entries + OtherStyles.entries
-  }
 }
+
+/**
+ * The styles the user can pick from, in picker order.
+ *
+ * Top-level rather than on [DemoStyle] because a list of implementors must not live on the type
+ * they implement: initializing an enum entry first initializes the interface, and reading `entries`
+ * there would re-enter the enum before its entries array is assigned.
+ */
+val allDemoStyles: List<DemoStyle> =
+  OpenFreeMap.entries + Protomaps.entries + Versatiles.entries + OtherStyles.entries
 
 enum class OpenFreeMap(override val isDark: Boolean = false) : DemoStyle {
   Bright,
@@ -51,7 +68,7 @@ enum class Protomaps(override val isDark: Boolean = false) : DemoStyle {
 
   override val base =
     BaseStyle.Uri(
-      "https://api.protomaps.com/styles/v5/${name.lowercase()}/en.json?key=73c45a97eddd43fb"
+      "https://api.protomaps.com/styles/v5/${name.lowercase()}/en.json?key=$PROTOMAPS_API_KEY"
     )
 
   override val anchorBelowSymbols = Anchor.Below("address_label")

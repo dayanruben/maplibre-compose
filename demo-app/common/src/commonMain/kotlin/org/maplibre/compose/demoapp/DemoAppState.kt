@@ -1,17 +1,21 @@
 package org.maplibre.compose.demoapp
 
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.camera.rememberCameraState
 import org.maplibre.compose.demoapp.benchmark.BenchmarkScenario
 import org.maplibre.compose.demoapp.benchmark.BenchmarkUiState
 import org.maplibre.compose.demoapp.benchmark.allBenchmarkScenarios
+import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.StyleState
 import org.maplibre.compose.style.rememberStyleState
 import org.maplibre.spatialk.geojson.Position
@@ -35,11 +39,53 @@ class DemoAppState(
   val frameRateState: FrameRateState,
 ) {
   var selectedDemo by mutableStateOf<Demo?>(null)
-  var selectedStyle by mutableStateOf(DemoStyle.Default)
+
+  /** The style applied when [MapStyleMode] resolves to light. */
+  var chosenLightStyle by mutableStateOf<DemoStyle>(Protomaps.Light)
+
+  /** The style applied when [MapStyleMode] resolves to dark. */
+  var chosenDarkStyle by mutableStateOf<DemoStyle>(Protomaps.Dark)
+
+  /**
+   * The style applied to the map: the selected demo's if it provides one, else the chosen style for
+   * the current [MapStyleMode].
+   */
+  val appliedStyle: DemoStyle
+    @Composable
+    get() {
+      selectedDemo?.preferredStyle?.let {
+        return it
+      }
+      val systemDark = isSystemInDarkTheme()
+      return when (settings.mapStyleMode) {
+        MapStyleMode.System -> if (systemDark) chosenDarkStyle else chosenLightStyle
+        MapStyleMode.Light -> chosenLightStyle
+        MapStyleMode.Dark -> chosenDarkStyle
+      }
+    }
+
   var shell by mutableStateOf(DemoShell.Demos)
   var selectedScenario by mutableStateOf<BenchmarkScenario>(allBenchmarkScenarios.first())
   val benchmark = BenchmarkUiState()
+
+  /** The most recent base style load to finish or fail. Read its count before a reload. */
+  internal var lastStyleLoad by mutableStateOf(StyleLoad(count = 0, base = null))
+    private set
+
+  internal fun noteStyleLoad(base: BaseStyle) {
+    lastStyleLoad = StyleLoad(lastStyleLoad.count + 1, base)
+  }
+
+  /**
+   * Suspends until a load of [base] completes beyond the count captured in [seen]. The base match
+   * keeps a stale in-flight load from releasing a newer selection's wait.
+   */
+  internal suspend fun awaitStyleLoad(seen: Int, base: BaseStyle) {
+    snapshotFlow { lastStyleLoad }.first { it.count > seen && it.base == base }
+  }
 }
+
+internal data class StyleLoad(val count: Int, val base: BaseStyle?)
 
 @Composable
 fun rememberDemoAppState(): DemoAppState {

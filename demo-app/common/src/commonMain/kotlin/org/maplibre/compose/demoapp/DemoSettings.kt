@@ -6,15 +6,46 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import org.maplibre.compose.demoapp.design.DropdownRow
 import org.maplibre.compose.demoapp.design.SectionHeader
-import org.maplibre.compose.demoapp.design.SegmentedRow
 import org.maplibre.compose.map.GestureOptions
 import org.maplibre.compose.map.RenderOptions
 import org.maplibre.compose.map.TileLodOptions
 
+/**
+ * Which of the two chosen map styles applies: the system's light or dark choice, or a forced light
+ * or dark style.
+ */
+enum class MapStyleMode {
+  System,
+  Light,
+  Dark,
+}
+
+/**
+ * How the Material 3 chrome colors are generated: Android Material You, or a MapLibre brand palette
+ * style.
+ */
+enum class PaletteMode {
+  System,
+  Tonal,
+  Neutral,
+  Vibrant,
+  Expressive,
+}
+
+/** The palette choices this platform shows in settings. */
+expect val paletteModeOptions: List<PaletteMode>
+
+/** The first choice in [paletteModeOptions]: System on Android, Tonal elsewhere. */
+val defaultPaletteMode: PaletteMode
+  get() = paletteModeOptions.first()
+
 /** App-wide diagnostics and toggles, available regardless of which demo is open. */
 @Stable
 class DemoSettings {
+  var mapStyleMode by mutableStateOf(MapStyleMode.System)
+  var paletteMode by mutableStateOf(defaultPaletteMode)
   var gestureOptions by mutableStateOf(GestureOptions.Standard)
   var renderOptions by mutableStateOf(RenderOptions.Standard)
   var tileLodOptions by mutableStateOf(TileLodOptions.Standard)
@@ -36,7 +67,7 @@ class DemoSettings {
 @Composable
 fun TileLodSettingsItems(settings: DemoSettings) {
   SectionHeader("Tile level of detail")
-  SegmentedRow(
+  DropdownRow(
     label = "When the camera is pitched",
     options =
       listOf(TileLodOptions.Standard, TileLodOptions.Performance, TileLodOptions.HighDetail),
@@ -44,8 +75,8 @@ fun TileLodSettingsItems(settings: DemoSettings) {
     optionLabel = {
       when (it) {
         TileLodOptions.Standard -> "Standard"
-        TileLodOptions.Performance -> "Fewer"
-        TileLodOptions.HighDetail -> "More"
+        TileLodOptions.Performance -> "Fewer tiles"
+        TileLodOptions.HighDetail -> "More detail"
         else -> "Custom"
       }
     },
