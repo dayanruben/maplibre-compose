@@ -3,7 +3,6 @@ package org.maplibre.compose.mlnffi
 import androidx.compose.foundation.Canvas
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -12,10 +11,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntSize
 import co.touchlab.kermit.Logger
+import kotlin.math.roundToInt
 import kotlin.time.TimeSource
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.util.rethrowIfFatal
@@ -32,12 +29,6 @@ internal fun MlnFfiMapSurface(
   logger: Logger? = null,
   presentFrames: Boolean = true,
 ) {
-  val density = LocalDensity.current.density.toDouble()
-  var physicalSize by remember { mutableStateOf(IntSize.Zero) }
-  val extent =
-    remember(physicalSize, density) {
-      MapExtent.fromPhysical(physicalSize.width, physicalSize.height, density)
-    }
   var frameRequest by remember { mutableLongStateOf(0L) }
   var failed by remember(renderer, hostResult) { mutableStateOf(false) }
   val drawState = remember(renderer, hostResult) { MlnFfiMapDrawState() }
@@ -76,46 +67,66 @@ internal fun MlnFfiMapSurface(
     }
   }
 
-  // Hosts release a replaced target on a later draw, so resizing while hidden would pile up
-  // full-size targets.
-  LaunchedEffect(extent, host, renderer, failed, presentFrames) {
-    if (!presentFrames || host == null || extent.isEmpty || failed) return@LaunchedEffect
-    try {
-      host.resize(extent)
-      renderer.onSurfaceChanged(extent)
-      session?.requestFrame()
-    } catch (error: Throwable) {
-      rethrowIfFatal(error)
-      failed = true
-      logger?.e(error) { "Map host failed to resize to ${extent.width}x${extent.height}" }
-      drawState.closeRenderer(renderer, logger)
-    }
-  }
-
-  Canvas(modifier = modifier.onSizeChanged { physicalSize = it }) {
+  Canvas(modifier = modifier) {
     // Load-bearing read: it is what makes requestFrame() reschedule this Canvas.
     frameRequest
+    // The draw scope supplies the current physical size and density. Use one extent for surface
+    // configuration, rendering, and presentation.
+    val frameExtent =
+      MapExtent.fromPhysical(
+        physicalWidth = size.width.roundToInt(),
+        physicalHeight = size.height.roundToInt(),
+        scaleFactor = this.density.toDouble(),
+      )
 
     var drew = false
-    if (presentFrames && host != null && session != null && !extent.isEmpty && !failed) {
+    if (presentFrames && host != null && session != null && !frameExtent.isEmpty && !failed) {
       val frameId = drawState.nextFrameId()
       val nowNanos = frameClockOrigin.elapsedNow().inWholeNanoseconds
       try {
-        when (val acquisition = host.acquireFrame(frameId, extent, nowNanos)) {
-          MlnFfiMapFrameAcquisition.NotReady -> session.requestFrame()
+        if (drawState.configuredExtent != frameExtent) {
+          host.resize(frameExtent)
+          renderer.onSurfaceChanged(frameExtent)
+          drawState.configuredExtent = frameExtent
+          session.requestFrame()
+        }
+
+        fun presentLastCompletedTarget() {
+          val completed = drawState.lastCompletedPresentation ?: return
+          val destinationAnchor = drawState.presentationAnchor(frameExtent)
+          val destination =
+            presentationDestination(
+              extent = completed.target.extent,
+              sourceAnchor = completed.anchor,
+              destinationAnchor = destinationAnchor,
+            )
+          drew = host.draw(this, completed.target, destination)
+        }
+
+        when (val acquisition = host.acquireFrame(frameId, frameExtent, nowNanos)) {
+          MlnFfiMapFrameAcquisition.NotReady -> {
+            session.requestFrame()
+            presentLastCompletedTarget()
+          }
           is MlnFfiMapFrameAcquisition.Acquired -> {
             val frame = acquisition.frame
             var rendered = false
             try {
-              when (host.withProducerAccess(frame) { renderer.render(frame) }) {
+              val (result, anchor) =
+                host.withProducerAccess(frame) {
+                  renderer.render(frame) to renderer.presentationAnchor(frame.extent)
+                }
+              drawState.recordPresentationAnchor(frame.extent, anchor)
+              when (result) {
                 MlnFfiFrameResult.RENDERED -> {
                   host.completeProducerAccess(frame)
-                  drawState.lastCompletedTarget = frame.target
+                  drawState.lastCompletedPresentation =
+                    MlnFfiMapCompletedPresentation(frame.target, anchor)
                   rendered = true
                 }
                 MlnFfiFrameResult.SKIPPED -> Unit
               }
-              drawState.lastCompletedTarget?.let { drew = host.draw(this, it) }
+              presentLastCompletedTarget()
             } finally {
               runCatching { host.releaseFrame(frame) }
                 .onFailure { logger?.e(it) { "Map host failed to release frame $frameId" } }
@@ -164,7 +175,7 @@ private fun recoverFromFrameFailure(
     "Map frame $frameId failed; rebuilding the render session " +
       "(attempt $attempt of $MAX_FRAME_RECOVERY_ATTEMPTS)"
   }
-  drawState.lastCompletedTarget = null
+  drawState.lastCompletedPresentation = null
   try {
     renderer.onSurfaceLost()
   } catch (releaseError: Throwable) {
@@ -188,7 +199,10 @@ private class MlnFfiMapDrawState {
   private var nextFrameId = 1L
   private var rendererClosed = false
 
-  var lastCompletedTarget: MlnFfiRenderTarget? = null
+  var lastCompletedPresentation: MlnFfiMapCompletedPresentation? = null
+  var configuredExtent: MapExtent = MapExtent.Empty
+  private var presentationExtent: MapExtent = MapExtent.Empty
+  private var currentPresentationAnchor: MlnFfiMapPresentationAnchor? = null
 
   var frameFailures: Int = 0
     private set
@@ -208,11 +222,28 @@ private class MlnFfiMapDrawState {
   }
 
   fun reset() {
-    lastCompletedTarget = null
+    lastCompletedPresentation = null
+    configuredExtent = MapExtent.Empty
+    presentationExtent = MapExtent.Empty
+    currentPresentationAnchor = null
     frameFailures = 0
     rendererClosed = false
   }
+
+  fun recordPresentationAnchor(extent: MapExtent, anchor: MlnFfiMapPresentationAnchor) {
+    presentationExtent = extent
+    currentPresentationAnchor = anchor
+  }
+
+  fun presentationAnchor(extent: MapExtent): MlnFfiMapPresentationAnchor =
+    currentPresentationAnchor?.takeIf { presentationExtent == extent }
+      ?: extent.centerPresentationAnchor()
 }
+
+private data class MlnFfiMapCompletedPresentation(
+  val target: MlnFfiRenderTarget,
+  val anchor: MlnFfiMapPresentationAnchor,
+)
 
 private class MlnFfiMapHostSessionImpl(
   private val host: MlnFfiMapHost,

@@ -26,6 +26,7 @@ import org.lwjgl.opengl.GL30.glFramebufferTexture2D
 import org.lwjgl.opengl.GL30.glGenFramebuffers
 import org.lwjgl.opengl.GL30.glGetInteger
 import org.maplibre.compose.mlnffi.MlnFfiHostException
+import org.maplibre.compose.mlnffi.MlnFfiMapDestination
 import org.maplibre.compose.mlnffi.OpenGlTextureTarget
 import org.maplibre.compose.mlnffi.TextureOrigin
 
@@ -43,6 +44,7 @@ internal class OpenGlPresenter private constructor(private val backend: OpenGlPr
     scope: DrawScope,
     skiaContext: DirectContext,
     target: OpenGlTextureTarget,
+    destination: MlnFfiMapDestination,
     completion: ComposeFrameCompletion,
   ): Boolean {
     var drew = false
@@ -56,8 +58,7 @@ internal class OpenGlPresenter private constructor(private val backend: OpenGlPr
         composeCanvas.skiaCanvas,
         skiaContext,
         target,
-        scope.size.width,
-        scope.size.height,
+        destination,
       )
       completion.frameRecorded(presenter::preserveFrame)
       drew = true
@@ -98,8 +99,7 @@ internal class OpenGlPresenter private constructor(private val backend: OpenGlPr
       canvas: Canvas,
       context: DirectContext,
       target: OpenGlTextureTarget,
-      destinationWidth: Float,
-      destinationHeight: Float,
+      destination: MlnFfiMapDestination,
     ) {
       ensureSurface(context, target)
       val currentSurface =
@@ -108,7 +108,7 @@ internal class OpenGlPresenter private constructor(private val backend: OpenGlPr
       // MapLibre leaves arbitrary GL state behind. Skia must refresh its cached view of that state.
       context.resetGLAll()
       currentSurface.notifyContentWillChange(ContentChangeMode.DISCARD)
-      backend.draw(currentSurface, canvas, width, height, destinationWidth, destinationHeight)
+      backend.draw(currentSurface, canvas, destination)
     }
 
     fun preserveFrame() {
@@ -205,10 +205,7 @@ private interface OpenGlPresenterBackend {
   fun draw(
     surface: Surface,
     canvas: Canvas,
-    sourceWidth: Int,
-    sourceHeight: Int,
-    destinationWidth: Float,
-    destinationHeight: Float,
+    destination: MlnFfiMapDestination,
   )
 }
 
@@ -253,16 +250,19 @@ private object DesktopOpenGlPresenterBackend : OpenGlPresenterBackend {
   override fun draw(
     surface: Surface,
     canvas: Canvas,
-    sourceWidth: Int,
-    sourceHeight: Int,
-    destinationWidth: Float,
-    destinationHeight: Float,
+    destination: MlnFfiMapDestination,
   ) {
     surface.makeImageSnapshot().use { image ->
       canvas.drawImageRect(
         image = image,
         src = Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
-        dst = Rect.makeWH(destinationWidth, destinationHeight),
+        dst =
+          Rect.makeLTRB(
+            destination.left.toFloat(),
+            destination.top.toFloat(),
+            destination.right.toFloat(),
+            destination.bottom.toFloat(),
+          ),
         samplingMode = SamplingMode.LINEAR,
         paint = null,
         strict = true,
@@ -312,17 +312,17 @@ private object AngleOpenGlPresenterBackend : OpenGlPresenterBackend {
   override fun draw(
     surface: Surface,
     canvas: Canvas,
-    sourceWidth: Int,
-    sourceHeight: Int,
-    destinationWidth: Float,
-    destinationHeight: Float,
+    destination: MlnFfiMapDestination,
   ) {
-    val scaleX = if (sourceWidth == 0) 1f else destinationWidth / sourceWidth.toFloat()
-    val scaleY = if (sourceHeight == 0) 1f else destinationHeight / sourceHeight.toFloat()
     canvas.save()
     try {
-      canvas.scale(scaleX, scaleY)
-      surface.draw(canvas, 0, 0, SamplingMode.LINEAR, null)
+      surface.draw(
+        canvas,
+        destination.left,
+        destination.top,
+        SamplingMode.LINEAR,
+        null,
+      )
     } finally {
       canvas.restore()
     }

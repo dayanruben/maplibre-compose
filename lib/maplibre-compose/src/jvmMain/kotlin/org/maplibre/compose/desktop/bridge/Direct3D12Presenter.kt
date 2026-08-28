@@ -13,6 +13,7 @@ import org.jetbrains.skia.SurfaceColorFormat
 import org.maplibre.compose.desktop.ComposeMapHost
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.mlnffi.MlnFfiHostException
+import org.maplibre.compose.mlnffi.MlnFfiMapDestination
 import org.maplibre.compose.mlnffi.NativeHandle
 import org.maplibre.compose.mlnffi.TextureOrigin
 
@@ -44,6 +45,7 @@ internal class Direct3D12Presenter(private val gpuHost: ComposeMapHost) : AutoCl
     scope: DrawScope,
     skiaContext: DirectContext,
     target: Direct3DTextureTarget,
+    destination: MlnFfiMapDestination,
     completion: ComposeFrameCompletion,
   ): Boolean {
     var drew = false
@@ -54,8 +56,7 @@ internal class Direct3D12Presenter(private val gpuHost: ComposeMapHost) : AutoCl
         composeCanvas.skiaCanvas,
         skiaContext,
         target,
-        scope.size.width,
-        scope.size.height,
+        destination,
       )
       completion.frameRecorded(presenter::preserveFrame)
       drew = true
@@ -94,8 +95,7 @@ internal class Direct3D12Presenter(private val gpuHost: ComposeMapHost) : AutoCl
       canvas: org.jetbrains.skia.Canvas,
       context: DirectContext,
       target: Direct3DTextureTarget,
-      destinationWidth: Float,
-      destinationHeight: Float,
+      destination: MlnFfiMapDestination,
     ) {
       ensureSurface(context, target)
       val currentSurface =
@@ -107,7 +107,13 @@ internal class Direct3D12Presenter(private val gpuHost: ComposeMapHost) : AutoCl
         canvas.drawImageRect(
           image = image,
           src = Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
-          dst = Rect.makeWH(destinationWidth, destinationHeight),
+          dst =
+            Rect.makeLTRB(
+              destination.left.toFloat(),
+              destination.top.toFloat(),
+              destination.right.toFloat(),
+              destination.bottom.toFloat(),
+            ),
           samplingMode = SamplingMode.LINEAR,
           paint = null,
           strict = true,

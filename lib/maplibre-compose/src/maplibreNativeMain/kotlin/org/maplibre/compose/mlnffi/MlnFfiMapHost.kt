@@ -3,6 +3,34 @@ package org.maplibre.compose.mlnffi
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import org.maplibre.compose.map.MapExtent
 
+/** Pixel-aligned destination for a completed render target in a Compose draw scope. */
+internal data class MlnFfiMapDestination(
+  val left: Int,
+  val top: Int,
+  val width: Int,
+  val height: Int,
+) {
+  val right: Int
+    get() = left + width
+
+  val bottom: Int
+    get() = top + height
+}
+
+/** Aligns [sourceAnchor] with [destinationAnchor] without scaling [extent]. */
+internal fun presentationDestination(
+  extent: MapExtent,
+  sourceAnchor: MlnFfiMapPresentationAnchor,
+  destinationAnchor: MlnFfiMapPresentationAnchor,
+): MlnFfiMapDestination {
+  return MlnFfiMapDestination(
+    left = destinationAnchor.x - sourceAnchor.x,
+    top = destinationAnchor.y - sourceAnchor.y,
+    width = extent.physicalWidth,
+    height = extent.physicalHeight,
+  )
+}
+
 /**
  * One renderable frame produced by a [MlnFfiMapHost].
  *
@@ -108,12 +136,17 @@ internal interface MlnFfiMapHost : AutoCloseable {
   }
 
   /**
-   * Draws [target] into the Compose scene, returning whether anything was drawn.
+   * Draws [target] at [destination], clipped in the Compose scene, and returns whether anything was
+   * drawn.
    *
    * [target] is the most recently completed target, which may be from an earlier frame if the
    * renderer skipped this one.
    */
-  fun draw(scope: DrawScope, target: MlnFfiRenderTarget): Boolean
+  fun draw(
+    scope: DrawScope,
+    target: MlnFfiRenderTarget,
+    destination: MlnFfiMapDestination,
+  ): Boolean
 }
 
 /** Creates the [MlnFfiMapHost] that backs a map. */

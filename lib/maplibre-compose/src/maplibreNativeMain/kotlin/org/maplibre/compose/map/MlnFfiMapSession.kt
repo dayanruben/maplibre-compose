@@ -41,6 +41,7 @@ import org.maplibre.compose.mlnffi.MlnFfiFrameResult
 import org.maplibre.compose.mlnffi.MlnFfiLock
 import org.maplibre.compose.mlnffi.MlnFfiMapFrame
 import org.maplibre.compose.mlnffi.MlnFfiMapHostSession
+import org.maplibre.compose.mlnffi.MlnFfiMapPresentationAnchor
 import org.maplibre.compose.mlnffi.MlnFfiMapRenderer
 import org.maplibre.compose.mlnffi.MlnFfiRecoverableFrameException
 import org.maplibre.compose.mlnffi.MlnFfiRenderTarget
@@ -56,6 +57,7 @@ import org.maplibre.compose.mlnffi.withLock
 import org.maplibre.compose.resource.MlnFfiResourceProvider
 import org.maplibre.compose.resource.MlnFfiResourceProviderFactory
 import org.maplibre.compose.sources.MlnFfiFeatureStateStore
+import org.maplibre.compose.sources.MlnFfiTileCoordinatorStore
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.MlnFfiStyle
 import org.maplibre.compose.style.MlnFfiStyleBinding
@@ -72,7 +74,6 @@ import org.maplibre.compose.util.toLatLngBounds
 import org.maplibre.compose.util.toPosition
 import org.maplibre.compose.util.toScreenPoint
 import org.maplibre.nativeffi.camera.AnimationOptions
-import org.maplibre.nativeffi.camera.BoundOptions
 import org.maplibre.nativeffi.camera.BoundsConstraint
 import org.maplibre.nativeffi.camera.CameraFitOptions
 import org.maplibre.nativeffi.camera.CameraOptions
@@ -158,6 +159,8 @@ internal class MlnFfiMapSession(
   @Volatile private var loop: MlnFfiMapRuntimeLoop? = null
 
   @Volatile private var cameraPadding: EdgeInsets = EdgeInsets.ZERO
+  @Volatile private var appliedCameraPadding: EdgeInsets = EdgeInsets.ZERO
+  @Volatile private var renderedCameraPadding: EdgeInsets = EdgeInsets.ZERO
 
   /** One-shot map actions accepted before this session starts. Guarded by [stateLock]. */
   private class PendingMapAction(val run: (MapHandle) -> Unit, val abandon: () -> Unit)
@@ -257,6 +260,8 @@ internal class MlnFfiMapSession(
 
     override val featureStateStore = MlnFfiFeatureStateStore()
 
+    override val tileCoordinators = MlnFfiTileCoordinatorStore()
+
     override val isLoaded: Boolean
       get() = loaded && !closed
 
@@ -328,6 +333,7 @@ internal class MlnFfiMapSession(
   }
 
   @Volatile private var maximumFps: Int? = null
+  private var cameraConstraints: CameraConstraints? = null
   private var tileLodOptions: TileLodOptions = TileLodOptions.Standard
   private var lastRenderTime = TimeSource.Monotonic.markNow()
 
@@ -375,6 +381,7 @@ internal class MlnFfiMapSession(
     }
 
     val map = loop.map ?: return MlnFfiFrameResult.SKIPPED
+    renderedCameraPadding = appliedCameraPadding
 
     if (!ensureAttached(map, frame)) return MlnFfiFrameResult.SKIPPED
     // Consumed before rendering, so an update published during the render below is not discarded.
@@ -422,6 +429,18 @@ internal class MlnFfiMapSession(
     lastRenderTime = renderStart
     reportFrameRate()
     return MlnFfiFrameResult.RENDERED
+  }
+
+  override fun presentationAnchor(extent: MapExtent): MlnFfiMapPresentationAnchor {
+    val padding = renderedCameraPadding
+    return MlnFfiMapPresentationAnchor(
+      x =
+        ((extent.physicalWidth + (padding.left - padding.right) * extent.scaleFactor) / 2.0)
+          .toInt(),
+      y =
+        ((extent.physicalHeight + (padding.top - padding.bottom) * extent.scaleFactor) / 2.0)
+          .toInt(),
+    )
   }
 
   override fun close() {
@@ -1056,6 +1075,7 @@ internal class MlnFfiMapSession(
     cameraPadding = insets
     configureMap { map ->
       map.jumpTo(CameraOptions().also { it.padding = insets })
+      appliedCameraPadding = insets
       snapshotViewport(map)
     }
   }
@@ -1230,25 +1250,23 @@ internal class MlnFfiMapSession(
     waiters.forEach { waiter -> runCatching { waiter.resume(Unit) } }
   }
 
-  override fun setCameraBoundingBox(boundingBox: BoundingBox?) = setBounds {
-    // Unbounded is not world bounds: world bounds clamp longitude to ±180 and stop the map
-    // panning across the antimeridian.
-    it.bounds =
-      boundingBox?.let { box -> BoundsConstraint.Bounded(box.toLatLngBounds()) }
-        ?: BoundsConstraint.Unbounded
-  }
-
-  override fun setMaxZoom(maxZoom: Double) = setBounds { it.maxZoom = maxZoom }
-
-  override fun setMinZoom(minZoom: Double) = setBounds { it.minZoom = minZoom }
-
-  override fun setMinPitch(minPitch: Double) = setBounds { it.minPitch = minPitch }
-
-  override fun setMaxPitch(maxPitch: Double) = setBounds { it.maxPitch = maxPitch }
-
-  /** `BoundOptions` is a field mask, so only the field [update] touches changes. */
-  private fun setBounds(update: (BoundOptions) -> Unit) {
-    configureMap { map -> map.bounds = map.bounds.also(update) }
+  override fun setCameraConstraints(value: CameraConstraints) {
+    if (value == cameraConstraints) return
+    cameraConstraints = value
+    configureMap { map ->
+      map.bounds =
+        map.bounds.copy {
+          // Unbounded is not world bounds: world bounds clamp longitude to ±180 and stop the map
+          // panning across the antimeridian.
+          bounds =
+            value.boundingBox?.let { box -> BoundsConstraint.Bounded(box.toLatLngBounds()) }
+              ?: BoundsConstraint.Unbounded
+          minZoom = value.minZoom
+          maxZoom = value.maxZoom
+          minPitch = value.minPitch
+          maxPitch = value.maxPitch
+        }
+    }
   }
 
   override fun getVisibleBoundingBox(): BoundingBox = mirroredViewport.boundingBox

@@ -32,23 +32,24 @@ fflate = "0.8.3"
 jsJodaTimezone = "2.22.0"
 htmlConverterCompose = "1.1.1"
 hms-location = "6.12.0.300"
-nucleus = "2.4.7"
+nucleus = "2.5.4"
 kermit = "2.1.0"
 kotlin-dsv = "0.4.0"
 kotlin-wrappers = "2026.8.3"
 kotlinx-coroutines = "1.11.0"
 kotlinx-io = "0.9.1"
+kotlinx-serialization = "1.11.0"
 ktor = "3.5.2"
 lifecycleRuntimeCompose = "2.11.0"
 # compose-glfw generates callbacks against this version's internal ABI.
 lwjgl = "3.4.2"
 materialKolor = "5.0.0"
-maplibre-js = "6.2.0"
+maplibre-js = "6.6.0"
 maplibre-nativeFfi = "0.202608.3"
 # The style-spec release the parity catalog reads; ci/style_spec_parity.py
 # fetches v8.json at this tag. Follow the maplibre-gl release's own
 # @maplibre/maplibre-gl-style-spec dependency when bumping maplibre-js.
-maplibre-styleSpec = "26.2.1"
+maplibre-styleSpec = "26.3.0"
 mobilityData = "0.4.0"
 playServices-location = "21.4.0"
 spatialk = "0.7.0"
@@ -89,6 +90,7 @@ dbus-java-transport-native-unixsocket = { module = "com.github.hypfvieh:dbus-jav
 htmlConverterCompose = { module = "be.digitalia.compose.htmlconverter:htmlconverter", version.ref = "htmlConverterCompose" }
 hms-location = { module = "com.huawei.hms:location", version.ref = "hms-location" }
 nucleus-application = { module = "dev.nucleusframework:nucleus.nucleus-application", version.ref = "nucleus" }
+nucleus-decoratedWindowMaterial3 = { module = "dev.nucleusframework:nucleus.decorated-window-material3", version.ref = "nucleus" }
 nucleus-decoratedWindowTao = { module = "dev.nucleusframework:nucleus.decorated-window-tao", version.ref = "nucleus" }
 kermit = { group = "co.touchlab", name = "kermit", version.ref = "kermit" }
 kotlin-dsv = { module = "dev.sargunv.kotlin-dsv:kotlin-dsv", version.ref = "kotlin-dsv" }
@@ -100,11 +102,14 @@ kotlinx-coroutines-playServices = { module = "org.jetbrains.kotlinx:kotlinx-coro
 kotlinx-coroutines-swing = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-swing", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
 kotlinx-io-core = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "kotlinx-io" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 ktor-client-core = { module = "io.ktor:ktor-client-core", version.ref = "ktor" }
 ktor-client-darwin = { module = "io.ktor:ktor-client-darwin", version.ref = "ktor" }
 ktor-client-js = { module = "io.ktor:ktor-client-js", version.ref = "ktor" }
 ktor-client-okhttp = { module = "io.ktor:ktor-client-okhttp", version.ref = "ktor" }
 ktor-client-contentNegotiation = { module = "io.ktor:ktor-client-content-negotiation", version.ref = "ktor" }
+ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }
+ktor-server-statusPages = { module = "io.ktor:ktor-server-status-pages", version.ref = "ktor" }
 ktor-serialization-kotlinxJson = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 lifecycle-runtime = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime", version.ref = "lifecycleRuntimeCompose" }
 lifecycle-runtime-compose = { module = "org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycleRuntimeCompose" }
