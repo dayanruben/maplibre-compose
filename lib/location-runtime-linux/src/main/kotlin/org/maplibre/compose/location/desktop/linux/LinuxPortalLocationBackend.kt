@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import org.maplibre.compose.location.DesktopLocationBackend
 import org.maplibre.compose.location.DesktopLocationProvider
+import org.maplibre.compose.location.LocationAccuracy
 import org.maplibre.compose.location.LocationAccuracyAuthorization
 import org.maplibre.compose.location.LocationBackendAvailability
 import org.maplibre.compose.location.LocationEvent
@@ -33,10 +34,10 @@ public class LinuxPortalLocationBackend : DesktopLocationBackend {
     LinuxPortalLocationProvider(window)
 }
 
-// TODO: Add a Linux orientation backend when an independent heading API is available.
+// TODO: Add a Linux heading backend when an independent heading API is available.
 // iio-sensor-proxy restricts its compass interface to GeoClue. GeoClue folds that reading into the
-// location Heading field, which can instead contain source-provided or derived course, so it cannot
-// be mapped reliably to Orientation.
+// GeoClue location's `Heading` field, which can instead contain source-provided or derived course,
+// so it cannot reliably produce a device-facing Heading measurement.
 
 internal suspend fun <T> XdgPortalWindow?.withPortalParentWindow(action: suspend (String) -> T): T =
   when (val window = this) {

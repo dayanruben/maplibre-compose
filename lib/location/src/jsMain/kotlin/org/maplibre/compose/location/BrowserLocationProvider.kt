@@ -2,11 +2,9 @@ package org.maplibre.compose.location
 
 import js.objects.unsafeJso
 import kotlin.coroutines.resume
-import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
-import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -109,7 +107,7 @@ internal constructor(
               current.capturedAt - previous!!.capturedAt >= request.minimumInterval
           ) {
             previous = current
-            trySend(LocationEvent.Fix(current.asLocation()))
+            trySend(LocationEvent.Update(current.asLocationReading()))
           }
         }
         is BrowserResult.Error -> {
@@ -142,8 +140,13 @@ internal constructor(
  *
  * [BrowserLocationProvider] delegates [LocationProvider.permission] and
  * [LocationProvider.requestPermission] to an instance of this class. Construct one with a
- * [CoroutineScope] to back a custom [LocationProvider], or use
- * [rememberBrowserLocationPermissionRequester] to bind permission observation to the composition.
+ * [CoroutineScope] to back a custom [LocationProvider].
+ *
+ * [`PermissionStatus.state`](https://developer.mozilla.org/en-US/docs/Web/API/PermissionStatus/state)
+ * maps `granted` to [LocationPermission.Granted], `prompt` to [LocationPermission.NotGranted] with
+ * `canRequest = true`, and `denied` to `canRequest = false`. A browser without the Permissions API
+ * reports `canRequest = null` until an explicit request determines the result. A missing
+ * Geolocation API maps [backendAvailability] to [LocationBackendAvailability.Unsupported].
  */
 public class BrowserLocationPermissionRequester
 internal constructor(
@@ -231,14 +234,8 @@ internal constructor(
 }
 
 /**
- * Creates and remembers the browser geolocation permission requester.
- *
- * [`PermissionStatus.state`](https://developer.mozilla.org/en-US/docs/Web/API/PermissionStatus/state)
- * maps `granted` to [LocationPermission.Granted], `prompt` to [LocationPermission.NotGranted] with
- * `canRequest = true`, and `denied` to `canRequest = false`. A browser without the Permissions API
- * reports `canRequest = null` until an explicit request determines the result. A missing
- * Geolocation API maps [BrowserLocationPermissionRequester.backendAvailability] to
- * [LocationBackendAvailability.Unsupported].
+ * Browser Permissions API states that [BrowserLocationPermissionRequester] maps to
+ * [LocationPermission].
  */
 internal enum class BrowserPermission {
   Unknown,
@@ -395,22 +392,14 @@ private fun GeolocationPositionError.toValue(): BrowserError =
     GeolocationPositionError.TIMEOUT -> BrowserError.Timeout
   }
 
-private fun BrowserPosition.asLocation(): Location =
-  Location(
-    position =
-      PositionWithAccuracy(
-        Position(longitude, latitude, altitude),
-        horizontalAccuracyMeters.meters,
-      ),
-    altitudeAccuracy = altitudeAccuracyMeters?.meters,
-    speed = speedMetersPerSecond?.let { SpeedWithAccuracy(it.meters, accuracy = null) },
-    course =
-      headingDegrees
-        ?.takeIf { it.isFinite() }
-        ?.let { BearingWithAccuracy(Bearing.North + it.degrees, accuracy = null) },
-    timestamp =
-      TimeSource.Monotonic.markNow() -
-        (Clock.System.now() - capturedAt).coerceAtLeast(Duration.ZERO),
+private fun BrowserPosition.asLocationReading(): LocationReading =
+  LocationReading(
+    position = Position(longitude, latitude, altitude),
+    horizontalAccuracy = horizontalAccuracyMeters.meters,
+    altitudeAccuracy = if (altitude != null) altitudeAccuracyMeters?.meters else null,
+    speed = speedMetersPerSecond?.meters,
+    course = headingDegrees?.takeIf { it.isFinite() }?.let { Bearing.North + it.degrees },
+    measuredAt = capturedAt,
   )
 
 private fun BrowserError.asUnavailableReason(): LocationUnavailableReason =

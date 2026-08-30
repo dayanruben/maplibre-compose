@@ -11,6 +11,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.promise
 import org.khronos.webgl.Uint8Array
 import org.khronos.webgl.get
+import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.gljs.GlJsFrameTarget
 import org.maplibre.compose.gljs.GlJsRuntime
 import org.maplibre.compose.gljs.GlJsSurfaceSession
@@ -20,8 +21,11 @@ import org.maplibre.compose.map.GestureTarget
 import org.maplibre.compose.map.GlJsMapSession
 import org.maplibre.compose.map.MapAdapter
 import org.maplibre.compose.map.MapExtent
+import org.maplibre.compose.map.MapPresentation
+import org.maplibre.compose.map.mapRuntimeForTest
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.Style
+import org.maplibre.compose.style.DesiredStyleRevision
+import org.maplibre.compose.style.StyleBinding
 
 /** A [GlJsMapSession] on a canvas of its own, with no Compose or skiko, never composited. */
 internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
@@ -31,13 +35,24 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
   private val glJsSession =
     GlJsMapSession(recorder, Logger.withTag("gljs-map"), LayoutDirection.Ltr)
 
+  private val runtime = mapRuntimeForTest()
+  private val state =
+    runtime.createMapState(
+      initialCameraPosition = CameraPosition(zoom = 0.0),
+      initialBaseStyle = BaseStyle.Empty,
+    )
+  private val token = state.reservePresentation()
+
   override val session: MapAdapter
     get() = glJsSession
+
+  override val presentation: MapPresentation
+    get() = requireNotNull(state.presentation)
 
   override val gestures: GestureTarget
     get() = glJsSession
 
-  override val style: Style?
+  override val style: StyleBinding?
     get() = recorder.style
 
   override val events: MutableList<String>
@@ -53,6 +68,7 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
   private var frameRequested = true
 
   init {
+    glJsSession.start()
     glJsSession.onSurfaceAvailable(
       object : GlJsSurfaceSession {
         override fun requestFrame() {
@@ -60,16 +76,30 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
         }
       }
     )
+    state.publishPresentation(token, glJsSession)
+    recorder.presentation = requireNotNull(state.presentation)
   }
 
   private fun frame(): Boolean {
     frameRequested = false
-    return glJsSession.render(GlJsFrameTarget.Detached, extent).also { if (it) hasRendered = true }
+    val rendered = glJsSession.render(GlJsFrameTarget.Detached, extent)
+    glJsSession.markPresentationStateReplayed()
+    return rendered.also { if (it) hasRendered = true }
   }
 
   override suspend fun loadStyle(style: BaseStyle, timeout: Duration) {
+    val styleLoadsBefore = events.count { it == MapFixture.STYLE_LOADED }
     glJsSession.setBaseStyle(style)
-    pumpUntil("style $style to load", timeout) { events.contains(MapFixture.STYLE_LOADED) }
+    if (recorder.style?.isLoaded != true) {
+      pumpUntil("style $style to load", timeout) {
+        events.count { it == MapFixture.STYLE_LOADED } > styleLoadsBefore
+      }
+    }
+    glJsSession.reconcileStyleRevision(DesiredStyleRevision.Empty)
+  }
+
+  internal fun fireStyleError(message: String) {
+    glJsSession.fireStyleErrorForTest(message)
   }
 
   override suspend fun awaitMapReady(timeout: Duration) {
@@ -136,11 +166,12 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
   }
 
   override fun closeSession() {
-    glJsSession.close()
+    state.close()
   }
 
   override fun close() {
     // Every map holds a WebGL context, and browsers cap how many may live at once.
+    runtime.close()
     glJsSession.close()
   }
 }

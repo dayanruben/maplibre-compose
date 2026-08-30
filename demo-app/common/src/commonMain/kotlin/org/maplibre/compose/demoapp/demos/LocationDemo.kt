@@ -14,7 +14,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
-import org.maplibre.compose.camera.CameraState
 import org.maplibre.compose.demoapp.Demo
 import org.maplibre.compose.demoapp.DemoAppState
 import org.maplibre.compose.demoapp.DemoDestination
@@ -29,10 +28,10 @@ import org.maplibre.compose.location.LocationState
 import org.maplibre.compose.location.LocationTrackingEffect
 import org.maplibre.compose.location.LocationTrackingStatus
 import org.maplibre.compose.location.LocationUnavailableReason
-import org.maplibre.compose.location.mostAccurateBearing
 import org.maplibre.compose.location.rememberLocationState
 import org.maplibre.compose.location.rememberSystemSettingsLauncher
 import org.maplibre.compose.location.updateCamera
+import org.maplibre.compose.map.MapState
 import org.maplibre.compose.material3.LocationPuckDefaults
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Position
@@ -44,7 +43,7 @@ object LocationDemo : Demo {
   override val destination = DemoDestination.None
 
   override val pointerPin: DemoPointerPin?
-    get() = lastFix?.let { position ->
+    get() = lastReading?.let { position ->
       val delta = 0.005
       val bounds =
         BoundingBox(
@@ -58,18 +57,18 @@ object LocationDemo : Demo {
 
   private var follow by mutableStateOf(true)
   private var engine by mutableStateOf(demoLocationEngines.first())
-  private var useNativeIndicator by mutableStateOf(false)
-  private var lastFix by mutableStateOf<Position?>(null)
+  private var lastReading by mutableStateOf<Position?>(null)
   private var panelLocationState by mutableStateOf<LocationState?>(null)
   private var panelLocationBackendId by mutableStateOf<String?>(null)
 
   @Composable
-  override fun MapContent(cameraState: CameraState) {
+  override fun MapContent(mapState: MapState) {
+    val presentation = mapState.presentation
     val locationProvider = engine.rememberLocationProvider()
     val locationState =
       rememberLocationState(
         provider = locationProvider,
-        orientationProvider = engine.rememberOrientationProvider(),
+        headingProvider = engine.rememberHeadingProvider(),
       )
     DisposableEffect(locationState, locationProvider) {
       panelLocationState = locationState
@@ -83,9 +82,9 @@ object LocationDemo : Demo {
     }
     LaunchedEffect(locationState) { locationState.requestPermission() }
 
-    LaunchedEffect(cameraState) {
-      var previous = cameraState.moveReason
-      snapshotFlow { cameraState.moveReason }
+    LaunchedEffect(presentation) {
+      var previous = presentation?.cameraMoveReason ?: CameraMoveReason.NONE
+      snapshotFlow { presentation?.cameraMoveReason ?: CameraMoveReason.NONE }
         .collect { reason ->
           // Follow moves the camera programmatically; a pan is the GESTURE that interrupts it.
           if (previous != CameraMoveReason.GESTURE && reason == CameraMoveReason.GESTURE) {
@@ -95,31 +94,26 @@ object LocationDemo : Demo {
         }
     }
 
-    val location = locationState.location
-    LaunchedEffect(location) { location?.position?.value?.let { lastFix = it } }
+    val location = locationState.lastReading
+    LaunchedEffect(location) { location?.position?.let { lastReading = it } }
 
     LocationTrackingEffect(locationState = locationState, enabled = follow) {
-      if (previousLocation == null) {
-        cameraState.animateTo(
-          CameraPosition(target = currentLocation.position.value, zoom = 16.0),
+      if (previousReading == null) {
+        presentation?.animateCameraPosition(
+          CameraPosition(target = currentReading.position, zoom = 16.0),
           duration = DemoFlightDuration,
         )
       } else {
-        updateCamera(cameraState)
+        presentation?.let { updateCamera(mapState, it) }
       }
     }
 
-    if (useNativeIndicator) {
-      NativeLocationIndicator(location = location, bearing = locationState.mostAccurateBearing())
-    } else {
-      LocationPuck(
-        idPrefix = "user",
-        location = location,
-        bearing = locationState.mostAccurateBearing(),
-        cameraState = cameraState,
-        colors = LocationPuckDefaults.colors(),
-      )
-    }
+    LocationPuck(
+      idPrefix = "user",
+      locationState = locationState,
+      presentation = presentation,
+      colors = LocationPuckDefaults.colors(),
+    )
   }
 
   @Composable
@@ -150,9 +144,6 @@ object LocationDemo : Demo {
       ButtonRow("Retry") { panelLocationState?.retry() }
     }
     SwitchRow("Follow me", follow) { follow = it }
-    if (isNativeLocationIndicatorAvailable) {
-      SwitchRow("Native indicator", useNativeIndicator) { useNativeIndicator = it }
-    }
     if (demoLocationEngines.size > 1) {
       SegmentedRow(
         label = "Location engine",

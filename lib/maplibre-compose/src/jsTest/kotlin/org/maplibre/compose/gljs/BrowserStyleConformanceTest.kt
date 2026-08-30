@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -22,13 +23,16 @@ import org.maplibre.compose.layers.FillLayer
 import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.layers.UnknownLayer
 import org.maplibre.compose.map.MaplibreMap
+import org.maplibre.compose.map.StyleLoadState
+import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.TileSetOptions
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.sources.rememberVectorSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.LocalStyleNode
-import org.maplibre.compose.style.Style
+import org.maplibre.compose.style.StyleBinding
+import org.maplibre.compose.style.StyleComposition
 import org.maplibre.compose.util.MaplibreComposable
 
 @OptIn(ExperimentalTestApi::class)
@@ -162,7 +166,7 @@ class BrowserStyleConformanceTest {
   fun changing_a_source_layer_recreates_the_layer_and_keeps_its_anchor() = runBrowserMapTest {
     var sourceLayer by mutableStateOf("places")
     var showLayer by mutableStateOf(true)
-    var style by mutableStateOf<Style?>(null)
+    var style by mutableStateOf<StyleBinding?>(null)
     val failures = mutableListOf<String>()
 
     fun liveSourceLayer(): String? =
@@ -173,7 +177,7 @@ class BrowserStyleConformanceTest {
         ?.content
 
     setBrowserMapContent {
-      MaplibreMap(
+      TestMap(
         modifier = Modifier,
         baseStyle = baseStyle,
         onMapLoadFailed = { failures += it.orEmpty() },
@@ -223,12 +227,12 @@ class BrowserStyleConformanceTest {
 
   private fun runStyleTest(
     content: @Composable @MaplibreComposable () -> Unit = {},
-    assertions: (Style) -> Unit,
+    assertions: (StyleBinding) -> Unit,
   ): Promise<*> = runBrowserMapTest {
-    var style by mutableStateOf<Style?>(null)
+    var style by mutableStateOf<StyleBinding?>(null)
     val failures = mutableListOf<String>()
     setBrowserMapContent {
-      MaplibreMap(
+      TestMap(
         modifier = Modifier,
         baseStyle = baseStyle,
         onMapLoadFailed = { failures += it.orEmpty() },
@@ -244,8 +248,24 @@ class BrowserStyleConformanceTest {
 
   @Composable
   @MaplibreComposable
-  private fun CaptureStyle(onStyle: (Style) -> Unit) {
+  private fun CaptureStyle(onStyle: (StyleBinding) -> Unit) {
     val node = LocalStyleNode.current
     LaunchedEffect(node) { onStyle(node.style) }
+  }
+
+  @Composable
+  private fun TestMap(
+    baseStyle: BaseStyle,
+    modifier: Modifier = Modifier,
+    onMapLoadFailed: (String?) -> Unit = {},
+    content: @Composable @MaplibreComposable () -> Unit = {},
+  ) {
+    val state = rememberMapState(initialBaseStyle = baseStyle)
+    val composition = remember(content) { StyleComposition(content) }
+    val loadState = state.style.loadState
+    LaunchedEffect(loadState) {
+      if (loadState is StyleLoadState.Failed) onMapLoadFailed(loadState.reason)
+    }
+    MaplibreMap(state = state, styleComposition = composition, modifier = modifier)
   }
 }

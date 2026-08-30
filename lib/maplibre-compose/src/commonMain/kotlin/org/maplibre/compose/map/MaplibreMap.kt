@@ -7,30 +7,33 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import co.touchlab.kermit.Logger
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraState
-import org.maplibre.compose.camera.rememberCameraState
 import org.maplibre.compose.overlay.MapOverlay
 import org.maplibre.compose.overlay.MapOverlayHost
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.LayerNode
-import org.maplibre.compose.style.SafeStyle
-import org.maplibre.compose.style.Style
+import org.maplibre.compose.style.DesiredStyleLayer
+import org.maplibre.compose.style.DesiredStyleRevision
+import org.maplibre.compose.style.StyleBinding
+import org.maplibre.compose.style.StyleComposition
 import org.maplibre.compose.style.StyleState
 import org.maplibre.compose.style.rememberStyleComposition
 import org.maplibre.compose.style.rememberStyleState
@@ -40,90 +43,123 @@ import org.maplibre.compose.util.MaplibreComposable
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Position
 
+private class MapStateAttachment(
+  val state: MapState,
+  private val token: MapPresentationToken,
+) {
+  val runtime: RuntimeImplementation
+    get() = state.runtime
+
+  fun publish(map: MapAdapter, options: MapPresentationOptions) {
+    state.publishPresentation(token, map, options)
+  }
+
+  fun currentPresentation(map: MapAdapter): MapPresentation? =
+    state.presentation?.takeIf { it.adapter === map }
+
+  fun release(map: MapAdapter? = null) {
+    state.releasePresentation(token, map)
+  }
+
+  fun markStyleReady(map: MapAdapter) {
+    state.markStyleReady(map)
+  }
+
+  fun markStyleFailed(map: MapAdapter, reason: String?) {
+    state.markStyleFailed(map, reason)
+  }
+
+  suspend fun reconcileStyleRevision(map: MapAdapter, revision: DesiredStyleRevision) {
+    state.beginStyleRevision(map, revision)
+    try {
+      if (map.reconcileStyleRevision(revision)) state.markStyleReady(map)
+    } catch (error: CancellationException) {
+      throw error
+    } catch (error: Throwable) {
+      state.markStyleFailed(map, error.message)
+    }
+  }
+}
+
+private val LocalMapStateAttachment = staticCompositionLocalOf<MapStateAttachment?> { null }
+private val LocalStyleComposition = staticCompositionLocalOf<StyleComposition?> { null }
+
 /**
- * Displays a MapLibre based map.
+ * Displays [state] through one temporary presentation.
  *
- * The map has no intrinsic size and will expand to fill its container by default. If placed in a
- * scrollable container or other layout that doesn't provide constraints, you must specify an
- * explicit size using modifiers like [Modifier.size][androidx.compose.foundation.layout.size].
- *
- * @param modifier The modifier to be applied to the layout.
- * @param baseStyle The URI or JSON of the map style to use. See
- *   [MapLibre Style](https://maplibre.org/maplibre-style-spec/).
- * @param cameraState The camera state specifies what position of the map is rendered, at what zoom,
- *   at what tilt, etc.
- * @param cameraPadding Insets that shift the camera center. A bounds move adds its padding to these
- *   insets.
- * @param zoomRange The allowable camera zoom range.
- * @param pitchRange The allowable camera pitch range.
- * @param boundingBox The allowable bounds for the camera position. On iOS and Web, it prevents the
- *   camera **edges** from going out of bounds. If null is provided, the bounds are reset. On
- *   Android, it prevents the camera **center** from going out of bounds. See
- *   [this GH Issue](https://github.com/maplibre/maplibre-native/issues/3128).
- * @param onMapClick Invoked when the map is clicked. A click callback can be defined per layer,
- *   too, see e.g. the `onClick` parameter for [LineLayer][org.maplibre.compose.layers.LineLayer].
- *   However, this callback is always called first and can thus prevent subsequent callbacks to be
- *   invoked by consuming the event.
- * @param onMapLongClick Invoked when the map is long-clicked. See [onMapClick].
- * @param onFrame Invoked on every rendered frame.
- * @param logger kermit logger to use.
- * @param onMapLoadFailed Invoked when the map failed to load.
- * @param onMapLoadFinished Invoked when the map finished loading.
- * @param contentWindowInsets Insets applied to [overlay]. Defaults to safe drawing insets.
- * @param overlay Controls drawn on top of the map. [MapOverlay.Default] draws the MapLibre logo and
- *   an attribution button; [MapOverlay.None] draws the map alone.
- *   [Modifier.placedAt][org.maplibre.compose.overlay.MapOverlayScope.placedAt] in the overlay pins
- *   Compose UI to a geographic position.
- * @param content The map content additional to what is already part of the map as defined in the
- *   base map style linked in [baseStyle].
- *
- * Additional [sources](https://maplibre.org/maplibre-style-spec/sources/) can be added via:
- * - [rememberGeoJsonSource][org.maplibre.compose.sources.rememberGeoJsonSource] (see
- *   [GeoJsonSource][org.maplibre.compose.sources.GeoJsonSource]),
- * - [rememberVectorSource][org.maplibre.compose.sources.rememberVectorSource] (see
- *   [VectorSource][org.maplibre.compose.sources.VectorSource]),
- * - [rememberCustomGeometrySource][org.maplibre.compose.sources.rememberCustomGeometrySource] (see
- *   [CustomGeometrySource][org.maplibre.compose.sources.CustomGeometrySource]),
- * - [rememberCustomVectorSource][org.maplibre.compose.sources.rememberCustomVectorSource] (see
- *   [CustomVectorSource][org.maplibre.compose.sources.CustomVectorSource]),
- * - [rememberRasterSource][org.maplibre.compose.sources.rememberRasterSource] (see
- *   [RasterSource][org.maplibre.compose.sources.RasterSource])
- * - [rememberRasterDemSource][org.maplibre.compose.sources.rememberRasterDemSource] (see
- *   [RasterDemSource][org.maplibre.compose.sources.RasterDemSource])
- *
- * A source that is already defined in the base map style can be referenced via
- * [getBaseSource][org.maplibre.compose.sources.getBaseSource].
- *
- * The data from a source can then be used in
- * [layer](https://maplibre.org/maplibre-style-spec/layers/) definition(s), which define how that
- * data is rendered, see:
- * - [BackgroundLayer][org.maplibre.compose.layers.BackgroundLayer]
- * - [ColorReliefLayer][org.maplibre.compose.layers.ColorReliefLayer]
- * - [LineLayer][org.maplibre.compose.layers.LineLayer]
- * - [FillExtrusionLayer][org.maplibre.compose.layers.FillExtrusionLayer]
- * - [FillLayer][org.maplibre.compose.layers.FillLayer]
- * - [HeatmapLayer][org.maplibre.compose.layers.HeatmapLayer]
- * - [HillshadeLayer][org.maplibre.compose.layers.HillshadeLayer]
- * - [LineLayer][org.maplibre.compose.layers.LineLayer]
- * - [RasterLayer][org.maplibre.compose.layers.RasterLayer]
- * - [SymbolLayer][org.maplibre.compose.layers.SymbolLayer]
- *
- * By default, the layers defined in this scope are put on top of the layers from the base style, in
- * the order they are defined. Alternatively, it is possible to anchor layers at certain layers from
- * the base style. This is done, for example, in order to add a layer just below the first symbol
- * layer from the base style so that it isn't above labels. See:
- * - [Anchor.Top][org.maplibre.compose.layers.Anchor.Companion.Top],
- * - [Anchor.Bottom][org.maplibre.compose.layers.Anchor.Companion.Bottom],
- * - [Anchor.Above][org.maplibre.compose.layers.Anchor.Companion.Above],
- * - [Anchor.Below][org.maplibre.compose.layers.Anchor.Companion.Below],
- * - [Anchor.Replace][org.maplibre.compose.layers.Anchor.Companion.Replace],
- * - [Anchor.At][org.maplibre.compose.layers.Anchor.Companion.At]
+ * The caller keeps [state] alive. This composable creates only the current presentation and
+ * releases it when the call leaves composition.
  */
 @Composable
 public fun MaplibreMap(
+  state: MapState = rememberMapState(),
+  styleComposition: StyleComposition = StyleComposition.Empty,
+  modifier: Modifier = Modifier,
+  presentationOptions: MapPresentationOptions = MapPresentationOptions(),
+  callbacks: MapPresentationCallbacks = MapPresentationCallbacks(),
+  contentWindowInsets: WindowInsets = WindowInsets.safeDrawing,
+  overlay: MapOverlay = MapOverlay.Default,
+) {
+  val presentationHostIdentity = mapPresentationHostIdentity()
+  val presentationOwner = remember(state) { MapPresentationOwnerToken() }
+  key(state, presentationHostIdentity) {
+    PresentedMaplibreMap(
+      state = state,
+      presentationOwner = presentationOwner,
+      styleComposition = styleComposition,
+      modifier = modifier,
+      presentationOptions = presentationOptions,
+      callbacks = callbacks,
+      contentWindowInsets = contentWindowInsets,
+      overlay = overlay,
+    )
+  }
+}
+
+@Composable
+private fun PresentedMaplibreMap(
+  state: MapState,
+  presentationOwner: MapPresentationOwnerToken,
+  styleComposition: StyleComposition,
+  modifier: Modifier,
+  presentationOptions: MapPresentationOptions,
+  callbacks: MapPresentationCallbacks,
+  contentWindowInsets: WindowInsets,
+  overlay: MapOverlay,
+) {
+  val token = remember(state, presentationOwner) { state.reservePresentation(presentationOwner) }
+  val attachment = remember(state, token) { MapStateAttachment(state, token) }
+  DisposableEffect(attachment) { onDispose { attachment.release() } }
+  CompositionLocalProvider(
+    LocalMapStateAttachment provides attachment,
+    LocalStyleComposition provides styleComposition,
+  ) {
+    MaplibreMapPresentation(
+      modifier = modifier,
+      baseStyle = state.style.baseStyle,
+      cameraState = state.cameraState,
+      styleState = state.compatibilityStyleState,
+      cameraPadding = presentationOptions.cameraPadding,
+      zoomRange = presentationOptions.zoomRange,
+      pitchRange = presentationOptions.pitchRange,
+      boundingBox = presentationOptions.boundingBox,
+      onMapClick = callbacks.onClick,
+      onMapLongClick = callbacks.onLongClick,
+      onFrame = callbacks.onFrame,
+      options = presentationOptions,
+      logger = state.runtime.logger,
+      contentWindowInsets = contentWindowInsets,
+      overlay = overlay,
+    )
+  }
+}
+
+/** Internal host for the current map presentation while callers migrate through [MaplibreMap]. */
+@Composable
+private fun MaplibreMapPresentation(
   modifier: Modifier = Modifier,
   baseStyle: BaseStyle = BaseStyle.Demo,
-  cameraState: CameraState = rememberCameraState(),
+  cameraState: CameraState,
   cameraPadding: PaddingValues = PaddingValues(0.dp),
   zoomRange: ClosedRange<Float> = 0f..20f,
   pitchRange: ClosedRange<Float> = 0f..60f,
@@ -132,7 +168,7 @@ public fun MaplibreMap(
   onMapClick: MapClickHandler = { _, _ -> ClickResult.Pass },
   onMapLongClick: MapClickHandler = { _, _ -> ClickResult.Pass },
   onFrame: (framesPerSecond: Double) -> Unit = {},
-  options: MapOptions = MapOptions(),
+  options: MapPresentationOptions = MapPresentationOptions(),
   logger: Logger? = remember { Logger.withTag("maplibre-compose") },
   onMapLoadFailed: (reason: String?) -> Unit = {},
   onMapLoadFinished: () -> Unit = {},
@@ -146,30 +182,86 @@ public fun MaplibreMap(
     return
   }
 
-  var rememberedStyle by remember { mutableStateOf<SafeStyle?>(null) }
-  val currentLogger by rememberUpdatedState(logger)
-  val styleComposition by rememberStyleComposition(styleState, rememberedStyle, logger, content)
-  SideEffect { rememberedStyle?.logger = currentLogger }
+  val stateAttachment = LocalMapStateAttachment.current
+  val suppliedStyleComposition = LocalStyleComposition.current
+  var rememberedStyle by remember { mutableStateOf<StyleBinding?>(null) }
+  val legacyStyleComposition = remember(content) { StyleComposition(content) }
+  val evaluatedComposition = suppliedStyleComposition ?: legacyStyleComposition
+  val desiredRevision by
+    rememberStyleComposition(
+      composition = evaluatedComposition,
+      maybeStyle = rememberedStyle,
+      replaceableSourceIds =
+        stateAttachment?.state?.desiredStyleRevision?.sources?.mapTo(mutableSetOf()) { it.id }
+          ?: emptySet(),
+      replaceableLayerIds =
+        stateAttachment?.state?.desiredStyleRevision?.layers?.mapTo(mutableSetOf()) {
+          it.definition.id
+        } ?: emptySet(),
+      styleState = styleState,
+    )
   val mapClickScope = rememberCoroutineScope()
+  val presentation = stateAttachment?.state?.presentation
+  var retainedRevisionReplayed by
+    remember(rememberedStyle, presentation) { mutableStateOf(stateAttachment == null) }
 
-  val density = LocalDensity.current
-  SideEffect { cameraState.density = density }
+  LaunchedEffect(rememberedStyle, presentation, stateAttachment) {
+    val attachment = stateAttachment ?: return@LaunchedEffect
+    val map = presentation?.adapter ?: return@LaunchedEffect
+    if (rememberedStyle == null) return@LaunchedEffect
+    try {
+      map.replayStyleRevision(attachment.state.desiredStyleRevision)
+    } catch (error: CancellationException) {
+      throw error
+    } catch (error: Throwable) {
+      logger?.w(error) { "Could not replay the retained style revision" }
+    } finally {
+      retainedRevisionReplayed = true
+    }
+  }
 
-  val callbacks =
-    remember(cameraState, styleState, styleComposition, mapClickScope) {
+  LaunchedEffect(rememberedStyle, desiredRevision, presentation, retainedRevisionReplayed) {
+    if (!retainedRevisionReplayed) return@LaunchedEffect
+    val map = presentation?.adapter ?: cameraState.map ?: return@LaunchedEffect
+    val revision = desiredRevision ?: return@LaunchedEffect
+    stateAttachment?.reconcileStyleRevision(map, revision) ?: map.reconcileStyleRevision(revision)
+    styleState.refreshSources()
+  }
+
+  val adapterCallbacks =
+    remember(
+      cameraState,
+      styleState,
+      desiredRevision,
+      mapClickScope,
+      stateAttachment,
+      presentation,
+      options,
+    ) {
       object : MapAdapter.Callbacks {
-        override fun onStyleChanged(map: MapAdapter, style: Style?) {
-          rememberedStyle?.unload()
-          val safeStyle = style?.let { SafeStyle(it, currentLogger) }
-          rememberedStyle = safeStyle
-          if (cameraState.map === map) cameraState.viewportState.value = map.getViewport()
+        private fun currentPresentation(map: MapAdapter): MapPresentation? =
+          stateAttachment?.currentPresentation(map) ?: presentation?.takeIf { it.adapter === map }
+
+        private fun synchronizeCamera(map: MapAdapter): MapPresentation? {
+          if (cameraState.map !== map) return null
+          val viewport = map.getViewport()
+          cameraState.positionState.value = map.getCameraPosition()
+          if (viewport == null) return null
+          return currentPresentation(map)?.also { it.cameraMoved(viewport) }
         }
 
-        override fun onMapFailLoading(reason: String?) {
+        override fun onStyleChanged(map: MapAdapter, style: StyleBinding?) {
+          rememberedStyle = style
+          synchronizeCamera(map)
+        }
+
+        override fun onMapFailLoading(map: MapAdapter, reason: String?) {
+          stateAttachment?.markStyleFailed(map, reason)
           onMapLoadFailed(reason)
         }
 
         override fun onMapFinishedLoading(map: MapAdapter) {
+          stateAttachment?.markStyleReady(map)
           styleState.refreshSources()
           onMapLoadFinished()
         }
@@ -180,32 +272,25 @@ public fun MaplibreMap(
 
         override fun onCameraMoveStarted(map: MapAdapter, reason: CameraMoveReason) {
           if (cameraState.map !== map) return
-          cameraState.moveReasonState.value = reason
-          cameraState.isCameraMovingState.value = true
+          currentPresentation(map)?.cameraMoveStarted(reason)
         }
 
         override fun onCameraMoved(map: MapAdapter) {
-          if (cameraState.map !== map) return
-          cameraState.positionState.value = map.getCameraPosition()
-          // A new instance so a composition that reads CameraState.viewport redraws when the
-          // transform changes without the camera position changing, which is what a resize does.
-          cameraState.viewportState.value = map.getViewport()
+          synchronizeCamera(map)
         }
 
         override fun onCameraMoveEnded(map: MapAdapter) {
-          if (cameraState.map !== map) return
-          cameraState.isCameraMovingState.value = false
+          synchronizeCamera(map)?.cameraMoveEnded()
         }
 
-        private fun layerNodesInOrder(): List<LayerNode<*>> {
-          val layerNodes =
-            (styleComposition?.children?.filterIsInstance<LayerNode<*>>() ?: emptyList())
-              .associateBy { node -> node.layer.id }
-          val layers = styleComposition?.style?.getLayers() ?: emptyList()
+        private fun layerNodesInOrder(): List<DesiredStyleLayer> {
+          val layerNodes = desiredRevision?.layers?.associateBy { it.definition.id }.orEmpty()
+          val layers = rememberedStyle?.getLayers().orEmpty()
           return layers.asReversed().mapNotNull { layer -> layerNodes[layer.id] }
         }
 
         override fun onClick(map: MapAdapter, latLng: Position, offset: DpOffset) {
+          if (currentPresentation(map) == null) return
           if (onMapClick(latLng, offset).consumed) return
           mapClickScope.launch {
             for (node in layerNodesInOrder()) {
@@ -213,14 +298,14 @@ public fun MaplibreMap(
               val features =
                 map.queryRenderedFeatures(
                   offset = offset,
-                  layerIds = setOf(node.layer.id),
+                  layerIds = setOf(node.definition.id),
                   predicate = null,
                 )
               // Recomposition may replace or remove the node while the query is suspended. A
               // removed node never receives the click; a replaced one answers with the handler
               // it has now.
               val currentHandle =
-                layerNodesInOrder().firstOrNull { it.layer.id == node.layer.id }?.onClick
+                layerNodesInOrder().firstOrNull { it.definition.id == node.definition.id }?.onClick
                   ?: continue
               if (features.isNotEmpty() && currentHandle(features).consumed) break
             }
@@ -228,6 +313,7 @@ public fun MaplibreMap(
         }
 
         override fun onLongClick(map: MapAdapter, latLng: Position, offset: DpOffset) {
+          if (currentPresentation(map) == null) return
           if (onMapLongClick(latLng, offset).consumed) return
           mapClickScope.launch {
             for (node in layerNodesInOrder()) {
@@ -235,21 +321,25 @@ public fun MaplibreMap(
               val features =
                 map.queryRenderedFeatures(
                   offset = offset,
-                  layerIds = setOf(node.layer.id),
+                  layerIds = setOf(node.definition.id),
                   predicate = null,
                 )
               // Recomposition may replace or remove the node while the query is suspended. A
               // removed node never receives the click; a replaced one answers with the handler
               // it has now.
               val currentHandle =
-                layerNodesInOrder().firstOrNull { it.layer.id == node.layer.id }?.onLongClick
-                  ?: continue
+                layerNodesInOrder()
+                  .firstOrNull { it.definition.id == node.definition.id }
+                  ?.onLongClick ?: continue
               if (features.isNotEmpty() && currentHandle(features).consumed) break
             }
           }
         }
 
         override fun onFrame(fps: Double) {
+          val map = cameraState.map ?: return
+          if (currentPresentation(map) == null) return
+          synchronizeCamera(map)
           onFrame(fps)
         }
       }
@@ -258,10 +348,11 @@ public fun MaplibreMap(
   Box(modifier.fillMaxSize()) {
     ComposableMapView(
       modifier = Modifier.fillMaxSize(),
+      runtime = stateAttachment?.runtime,
+      state = stateAttachment?.state,
       style = baseStyle,
       update = { map ->
         map.setCameraPadding(cameraPadding)
-        cameraState.map = map
         map.setCameraConstraints(
           CameraConstraints(
             minZoom = zoomRange.start.toDouble(),
@@ -274,23 +365,29 @@ public fun MaplibreMap(
         map.setRenderSettings(options.renderOptions)
         map.setGestureSettings(options.gestureOptions)
         map.setTileLodSettings(options.tileLodOptions)
+        cameraState.map = map
+        stateAttachment?.publish(map, options)
       },
       onReset = {
+        stateAttachment?.release(cameraState.map)
         cameraState.map = null
         rememberedStyle = null
       },
       logger = logger,
-      callbacks = callbacks,
+      callbacks = adapterCallbacks,
       rememberedStyle = rememberedStyle,
       options = options,
     )
 
-    MapOverlayHost(
-      overlay = overlay,
-      cameraState = cameraState,
-      styleState = styleState,
-      contentWindowInsets = contentWindowInsets,
-      modifier = Modifier.matchParentSize(),
-    )
+    stateAttachment?.state?.let { state ->
+      MapOverlayHost(
+        overlay = overlay,
+        mapState = state,
+        presentation = presentation,
+        styleState = styleState,
+        contentWindowInsets = contentWindowInsets,
+        modifier = Modifier.matchParentSize(),
+      )
+    }
   }
 }

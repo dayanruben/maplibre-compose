@@ -15,18 +15,22 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import co.touchlab.kermit.Logger
 import org.maplibre.compose.gljs.GlJsMapSurface
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.SafeStyle
+import org.maplibre.compose.style.StyleBinding
+
+@Composable internal actual fun mapPresentationHostIdentity(): Any = Unit
 
 @Composable
 internal actual fun ComposableMapView(
   modifier: Modifier,
+  runtime: RuntimeImplementation?,
+  state: MapState?,
   style: BaseStyle,
-  rememberedStyle: SafeStyle?,
+  rememberedStyle: StyleBinding?,
   update: (map: MapAdapter) -> Unit,
   onReset: () -> Unit,
   logger: Logger?,
   callbacks: MapAdapter.Callbacks,
-  options: MapOptions,
+  options: MapPresentationOptions,
 ) {
   val density = LocalDensity.current
   val layoutDirection = LocalLayoutDirection.current
@@ -34,7 +38,11 @@ internal actual fun ComposableMapView(
 
   val session =
     remember(scaleFactor) {
-      GlJsMapSession(callbacks = callbacks, logger = logger, layoutDirection = layoutDirection)
+      GlJsMapSession(
+        callbacks = callbacks,
+        logger = logger,
+        layoutDirection = layoutDirection,
+      )
     }
 
   session.callbacks = callbacks
@@ -45,8 +53,14 @@ internal actual fun ComposableMapView(
   // Must run in the apply phase, not from a coroutine: the unload has to precede the content
   // subcomposition inserting layers, or a style switch crashes on anchor validation (see #269).
   SideEffect { session.setBaseStyle(style) }
+  if (session.hasUsableViewport) {
+    SideEffect {
+      update(session)
+      session.markPresentationStateReplayed()
+    }
+  }
 
-  LaunchedEffect(session, options, update) { update(session) }
+  LaunchedEffect(session) { session.start() }
 
   DisposableEffect(session) {
     onDispose {
@@ -66,7 +80,7 @@ internal actual fun ComposableMapView(
       modifier =
         modifier.mapInput(session, options.gestureOptions, density, focusRequester, continuation),
       logger = logger,
-      presentFrames = session.hasLoadedFirstStyle,
+      presentFrames = session.canPresentFrames,
     )
   }
 }

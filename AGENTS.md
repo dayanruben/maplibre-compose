@@ -5,6 +5,28 @@ When you open a pull request, adhere to the
 draft mode. The user is responsible for additional details and marking ready for
 review.
 
+## Agent skills
+
+### Issue tracker
+
+Agent-facing implementation specs and issues use local Markdown under
+`.agents/scratch/<feature>/`. GitHub Issues remains the human-facing project
+tracker. See `.agents/docs/issue-tracker.md`.
+
+### Triage labels
+
+Local agent-facing issues use the canonical triage status vocabulary. See
+`.agents/docs/triage-labels.md`.
+
+### Domain docs
+
+This repository uses the single-context domain-document layout. See
+`.agents/docs/domain.md`.
+
+Use `.agents/CONTEXT.md` for the glossary and `.agents/docs/adr/` for
+architectural decisions. These repository paths override skill defaults. Do not
+create `CONTEXT.md`, `docs/adr/`, or `docs/agents/`.
+
 ## Development commands
 
 Mise defines the tasks you run locally, pins every tool in `mise.toml`, and
@@ -148,11 +170,11 @@ rendering interactive maps across Android, iOS, Desktop, and Web platforms.
 - **`lib/`**: Core library modules
   - `maplibre-compose`: Main map composables and core functionality
   - `maplibre-compose-material3`: Material 3 themed UI components
-  - `location`: Location and orientation providers, usable without a map
+  - `location`: Location and heading providers, usable without a map
   - `location-runtime-gms|hms|linux|macos|windows`: Location backends that
-    `ServiceLoader` discovers; gms upgrades Android location and orientation
-    through Google Play services, hms upgrades Android location through HMS
-    Core, and the desktop backends supply the only desktop implementations
+    `ServiceLoader` discovers; gms upgrades Android location and heading through
+    Google Play services, hms upgrades Android location through HMS Core, and
+    the desktop backends supply the only desktop implementations
 - **`demo-app/`**: Multiplatform demo application
   - `common`: Every line of the app, and the only Kotlin Multiplatform module
   - `android`: An Android application that launches `common`

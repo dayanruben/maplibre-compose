@@ -12,9 +12,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.files.Path
 import org.maplibre.compose.map.MapExtent
+import org.maplibre.compose.map.MapPresentation
 import org.maplibre.compose.map.MlnFfiMapSession
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.Style
+import org.maplibre.compose.style.StyleBinding
 import org.maplibre.compose.testing.MapFixture
 import org.maplibre.compose.testing.RecordingMapCallbacks
 import org.maplibre.compose.testing.RgbaPixel
@@ -42,7 +43,7 @@ private constructor(
     get() = recorder.errors
 
   /** The live style, once one has loaded. */
-  val style: Style?
+  val style: StyleBinding?
     get() = recorder.style
 
   private var frameId = 0L
@@ -57,6 +58,10 @@ private constructor(
       layoutDirection = LayoutDirection.Ltr,
       cacheFile = cacheFile,
     )
+
+  fun bindPresentation(presentation: MapPresentation) {
+    recorder.presentation = presentation
+  }
 
   private val hostSession =
     object : MlnFfiMapHostSession {
@@ -218,8 +223,10 @@ private constructor(
   ) {
     val styleLoadsBefore = events.count { it == STYLE_LOADED }
     session.setBaseStyle(style)
-    pumpUntil("style $style to load", timeout, extent) {
-      events.count { it == STYLE_LOADED } > styleLoadsBefore && this.style != null
+    if (this.style?.isLoaded != true) {
+      pumpUntil("style $style to load", timeout, extent) {
+        events.count { it == STYLE_LOADED } > styleLoadsBefore && this.style != null
+      }
     }
   }
 
@@ -239,7 +246,10 @@ private constructor(
   }
 
   override fun close() {
-    runCatching { session.close() }
+    runCatching {
+      session.close()
+      runBlocking { session.awaitClosed() }
+    }
     runCatching { driver.close() }
     FfiTestPlatform.deleteCacheFile(cacheFile)
   }

@@ -4,26 +4,33 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import co.touchlab.kermit.Logger
 import org.maplibre.compose.mlnffi.AndroidMapSurfaceKind
+import org.maplibre.compose.mlnffi.AndroidMlnFfiPlatform
 import org.maplibre.compose.mlnffi.AndroidMlnFfiSurface
 import org.maplibre.compose.mlnffi.EnsureMlnFfiConfigured
 import org.maplibre.compose.mlnffi.MapRenderBackend
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.SafeStyle
+import org.maplibre.compose.style.StyleBinding
+
+@Composable internal actual fun mapPresentationHostIdentity(): Any = Unit
 
 @Composable
 internal actual fun ComposableMapView(
   modifier: Modifier,
+  runtime: RuntimeImplementation?,
+  state: MapState?,
   style: BaseStyle,
-  rememberedStyle: SafeStyle?,
+  rememberedStyle: StyleBinding?,
   update: (map: MapAdapter) -> Unit,
   onReset: () -> Unit,
   logger: Logger?,
   callbacks: MapAdapter.Callbacks,
-  options: MapOptions,
+  options: MapPresentationOptions,
 ) {
-  EnsureMlnFfiConfigured()
+  if (runtime == null) EnsureMlnFfiConfigured()
+  else AndroidMlnFfiPlatform.initialize(LocalContext.current)
   val runtimeBackends = remember { loadRuntimeBackends(logger) }
   val renderBackend =
     remember(runtimeBackends) { runtimeBackends.firstOrNull() ?: MapRenderBackend.OPENGL }
@@ -48,6 +55,8 @@ internal actual fun ComposableMapView(
         )
       },
       modifier = modifier,
+      state = state,
+      runtimeOptions = runtime?.nativeRuntimeOptions,
       style = style,
       update = update,
       onReset = onReset,

@@ -11,7 +11,8 @@ import org.maplibre.compose.camera.Viewport
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.value.BooleanValue
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.Style
+import org.maplibre.compose.style.DesiredStyleRevision
+import org.maplibre.compose.style.StyleBinding
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Feature
@@ -19,6 +20,27 @@ import org.maplibre.spatialk.geojson.Geometry
 import org.maplibre.spatialk.geojson.Position
 
 internal interface MapAdapter {
+  /** Whether the engine remains alive after its current presentation detaches. */
+  val retainsEngineBetweenPresentations: Boolean
+    get() = false
+
+  /** Identifies the presentation properties that constrain engine reuse. */
+  val presentationCompatibilityKey: Any?
+    get() = null
+
+  /** Attaches this engine to its current presentation host. */
+  suspend fun attachPresentation() = Unit
+
+  /** Detaches this engine from its current presentation host. */
+  suspend fun detachPresentation() {
+    close()
+    awaitClosed()
+  }
+
+  fun close()
+
+  suspend fun awaitClosed()
+
   suspend fun animateCameraPosition(finalPosition: CameraPosition, duration: Duration)
 
   suspend fun animateCameraPosition(
@@ -30,6 +52,12 @@ internal interface MapAdapter {
   )
 
   fun setBaseStyle(style: BaseStyle)
+
+  /** Applies one complete style-composition revision and reports whether it is ready to present. */
+  suspend fun reconcileStyleRevision(revision: DesiredStyleRevision): Boolean
+
+  /** Restores a retained revision before the current composition is evaluated. */
+  suspend fun replayStyleRevision(revision: DesiredStyleRevision)
 
   fun getCameraPosition(): CameraPosition
 
@@ -84,14 +112,14 @@ internal interface MapAdapter {
   fun metersPerDpAtLatitude(latitude: Double): Double
 
   interface Callbacks {
-    fun onStyleChanged(map: MapAdapter, style: Style?)
+    fun onStyleChanged(map: MapAdapter, style: StyleBinding?)
 
     fun onMapFinishedLoading(map: MapAdapter)
 
     /** A null [sourceId] means that the adapter cannot identify the changed source. */
     fun onSourceChanged(map: MapAdapter, sourceId: String?)
 
-    fun onMapFailLoading(reason: String?)
+    fun onMapFailLoading(map: MapAdapter, reason: String?)
 
     fun onCameraMoveStarted(map: MapAdapter, reason: CameraMoveReason)
 

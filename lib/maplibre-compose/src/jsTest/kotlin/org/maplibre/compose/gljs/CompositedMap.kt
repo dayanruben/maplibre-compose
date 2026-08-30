@@ -4,13 +4,17 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.js.Date
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.map.GlJsMapSession
 import org.maplibre.compose.map.MapAdapter
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.map.RenderOptions
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.Style
+import org.maplibre.compose.style.DesiredStyleRevision
+import org.maplibre.compose.style.StyleBinding
 import org.maplibre.spatialk.geojson.Position
 
 private const val RENDER_TIMEOUT_MS = 30_000
@@ -20,6 +24,7 @@ internal class CompositedMap(style: BaseStyle, private val scaleFactor: Double =
 
   private var loadFailure: String? = null
   private var styleLoaded = false
+  private val scope = MainScope()
 
   var frameRequests: Int = 0
     private set
@@ -27,6 +32,7 @@ internal class CompositedMap(style: BaseStyle, private val scaleFactor: Double =
   private val session = GlJsMapSession(Callbacks(), logger = null, LayoutDirection.Ltr)
 
   init {
+    session.start()
     session.onSurfaceAvailable(
       object : GlJsSurfaceSession {
         override fun requestFrame() {
@@ -38,8 +44,11 @@ internal class CompositedMap(style: BaseStyle, private val scaleFactor: Double =
   }
 
   /** Synchronous, so a caller can bracket it with GL of its own. */
-  fun drawOnce(target: GlJsRenderTarget): Boolean =
-    session.render(GlJsFrameTarget.Composited(target), extentOf(target))
+  fun drawOnce(target: GlJsRenderTarget): Boolean {
+    val rendered = session.render(GlJsFrameTarget.Composited(target), extentOf(target))
+    session.markPresentationStateReplayed()
+    return rendered
+  }
 
   fun setOverdrawInspector(enabled: Boolean) {
     session.setRenderSettings(RenderOptions(isOverdrawInspectorEnabled = enabled))
@@ -63,13 +72,20 @@ internal class CompositedMap(style: BaseStyle, private val scaleFactor: Double =
   suspend fun rendersFeature(layerId: String, x: Int, y: Int): Boolean =
     styleLoaded && session.queryRenderedFeatures(DpOffset(x.dp, y.dp), setOf(layerId)).isNotEmpty()
 
-  override fun close() = session.close()
+  override fun close() {
+    scope.cancel()
+    session.close()
+  }
 
   private fun extentOf(target: GlJsRenderTarget) =
     MapExtent.fromPhysical(target.widthPx, target.heightPx, scaleFactor)
 
   private inner class Callbacks : MapAdapter.Callbacks {
-    override fun onStyleChanged(map: MapAdapter, style: Style?) = Unit
+    override fun onStyleChanged(map: MapAdapter, style: StyleBinding?) {
+      if (style != null) {
+        scope.launch { session.reconcileStyleRevision(DesiredStyleRevision.Empty) }
+      }
+    }
 
     override fun onMapFinishedLoading(map: MapAdapter) {
       styleLoaded = true
@@ -77,7 +93,7 @@ internal class CompositedMap(style: BaseStyle, private val scaleFactor: Double =
 
     override fun onSourceChanged(map: MapAdapter, sourceId: String?) = Unit
 
-    override fun onMapFailLoading(reason: String?) {
+    override fun onMapFailLoading(map: MapAdapter, reason: String?) {
       loadFailure = reason ?: "unknown"
     }
 

@@ -38,12 +38,14 @@ internal const val MAP_LOAD_PLACEHOLDER_TAG = "maplibre-map-load-placeholder"
 internal fun MlnFfiMapView(
   hostFactory: MlnFfiMapHostFactory,
   modifier: Modifier,
+  state: MapState?,
+  runtimeOptions: org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions? = null,
   style: BaseStyle,
   update: (map: MapAdapter) -> Unit,
   onReset: () -> Unit,
   logger: Logger?,
   callbacks: MapAdapter.Callbacks,
-  options: MapOptions,
+  options: MapPresentationOptions,
 ) {
   val density = LocalDensity.current
 
@@ -65,6 +67,8 @@ internal fun MlnFfiMapView(
       )
     },
     modifier = modifier,
+    state = state,
+    runtimeOptions = runtimeOptions,
     style = style,
     update = update,
     onReset = onReset,
@@ -80,31 +84,40 @@ internal fun MlnFfiMapView(
   renderBackend: MapRenderBackend,
   surface: @Composable (MlnFfiMapRenderer, Modifier, Logger?, Boolean) -> Unit,
   modifier: Modifier,
+  state: MapState?,
+  runtimeOptions: org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions? = null,
   style: BaseStyle,
   update: (map: MapAdapter) -> Unit,
   onReset: () -> Unit,
   logger: Logger?,
   callbacks: MapAdapter.Callbacks,
-  options: MapOptions,
+  options: MapPresentationOptions,
 ) {
-  EnsureMlnFfiConfigured()
-  val applicationOptions = MlnFfiApplication.options
+  if (runtimeOptions == null) EnsureMlnFfiConfigured()
+  val applicationOptions = runtimeOptions ?: MlnFfiApplication.options
   val layoutDirection = LocalLayoutDirection.current
   val density = LocalDensity.current
   val scaleFactor = density.density.toDouble()
-
-  val session =
-    remember(renderBackend, scaleFactor, applicationOptions) {
-      MlnFfiMapSession(
-        callbacks = callbacks,
-        logger = logger,
-        renderBackend = renderBackend,
-        scaleFactor = scaleFactor,
-        layoutDirection = layoutDirection,
-        cacheFile = applicationOptions.cacheFile,
-        resourceProviderFactory = applicationOptions.resourceProviderFactory,
-      )
+  val compatibility =
+    remember(renderBackend, scaleFactor) {
+      NativeEngineCompatibility(renderBackend = renderBackend, scaleFactor = scaleFactor)
     }
+  val retainedSession = state?.retainedAdapter(compatibility) as? MlnFfiMapSession
+
+  val unpreparedSession =
+    retainedSession
+      ?: remember(renderBackend, scaleFactor, applicationOptions, state) {
+        MlnFfiMapSession(
+          callbacks = callbacks,
+          logger = logger,
+          renderBackend = renderBackend,
+          scaleFactor = scaleFactor,
+          layoutDirection = layoutDirection,
+          cacheFile = applicationOptions.cacheFile,
+          resourceProviderFactory = applicationOptions.resourceProviderFactory,
+        )
+      }
+  val session = remember(unpreparedSession) { unpreparedSession.apply { preparePresentation() } }
 
   session.callbacks = callbacks
   session.logger = logger
@@ -114,16 +127,14 @@ internal fun MlnFfiMapView(
   // Must run in the apply phase, not from a coroutine: the unload has to precede the content
   // subcomposition inserting layers, or a style switch fails anchor validation (see #269).
   SideEffect { session.setBaseStyle(style) }
+  // Publish the adapter before another thread can close a runtime whose composition has applied.
+  SideEffect { update(session) }
 
-  LaunchedEffect(session, options, update) {
-    // Attach deferred state before native events can report the map's default state to Compose.
-    update(session)
-    session.start()
-  }
+  LaunchedEffect(session) { session.attachPresentation() }
 
   DisposableEffect(session) {
     onDispose {
-      session.close()
+      if (state == null) session.close()
       currentOnReset.value()
     }
   }
