@@ -16,6 +16,7 @@ import org.maplibre.compose.sources.Source
 import org.maplibre.compose.sources.TileCoordinate
 import org.maplibre.compose.sources.VectorTileProvider
 import org.maplibre.compose.sources.putGeoJsonOptions
+import org.maplibre.compose.sources.rasterDemSourceJson
 import org.maplibre.compose.sources.toDataJson
 import org.maplibre.compose.util.ImageStretch
 import org.maplibre.spatialk.geojson.BoundingBox
@@ -40,6 +41,12 @@ internal interface StyleBinding {
 
   fun requireCurrent() {
     check(isLoaded) {
+      "Style operation belongs to a stale loaded-style identity"
+    }
+  }
+
+  fun requireCurrent(expectedIdentity: StyleIdentity) {
+    check(identity === expectedIdentity && isLoaded) {
       "Style operation belongs to a stale loaded-style identity"
     }
   }
@@ -147,8 +154,13 @@ internal interface StyleBinding {
       is SourceDefinition.RasterDem ->
         addSource(
           definition.id,
-          definition.createJson(
-            RasterDemCapabilities(supportsCustomDemEncoding, supportsRasterDemScheme)
+          rasterDemSourceJson(
+            tiles = definition.tiles,
+            options = definition.options,
+            tileSize = definition.tileSize,
+            demEncoding = definition.demEncoding,
+            capabilities =
+              RasterDemCapabilities(supportsCustomDemEncoding, supportsRasterDemScheme),
           ),
         )
     }
@@ -215,13 +227,20 @@ internal interface StyleBinding {
    */
   fun prepareGeoJson(data: GeoJsonData, options: GeoJsonOptions): PreparedGeoJson
 
+  /** Prepares an update with the options currently applied to [sourceId]. */
+  fun prepareGeoJsonUpdate(
+    sourceId: String,
+    data: GeoJsonData,
+    fallbackOptions: GeoJsonOptions,
+  ): PreparedGeoJson = prepareGeoJson(data, fallbackOptions)
+
   /**
    * Installs [prepared] on a live GeoJSON source when [claim] answers true.
    *
-   * [claim] runs where this engine serializes installs, so overlapping installs resolve their order
-   * in one place. It runs even when the style has unloaded or the install is dropped, so the live
-   * handle records the applied data. Returns after the install has run or been dropped, so the
-   * caller may close [prepared].
+   * [claim] runs where this engine serializes installs. Overlapping installs resolve their order in
+   * one place. It runs even when the style has unloaded or the install is dropped. The live handle
+   * records the applied data. This function returns after the install has run or been dropped. The
+   * caller may then close [prepared].
    */
   fun setGeoJsonSourceData(sourceId: String, prepared: PreparedGeoJson, claim: () -> Boolean)
 

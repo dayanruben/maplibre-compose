@@ -15,9 +15,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import co.touchlab.kermit.Logger
-import org.maplibre.compose.mlnffi.EnsureMlnFfiConfigured
+import kotlinx.coroutines.CancellationException
 import org.maplibre.compose.mlnffi.MapRenderBackend
-import org.maplibre.compose.mlnffi.MlnFfiApplication
 import org.maplibre.compose.mlnffi.MlnFfiMapHostFactory
 import org.maplibre.compose.mlnffi.MlnFfiMapHostResult
 import org.maplibre.compose.mlnffi.MlnFfiMapRenderer
@@ -38,8 +37,7 @@ internal const val MAP_LOAD_PLACEHOLDER_TAG = "maplibre-map-load-placeholder"
 internal fun MlnFfiMapView(
   hostFactory: MlnFfiMapHostFactory,
   modifier: Modifier,
-  state: MapState?,
-  runtimeOptions: org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions? = null,
+  state: MapState,
   style: BaseStyle,
   update: (map: MapAdapter) -> Unit,
   onReset: () -> Unit,
@@ -68,7 +66,6 @@ internal fun MlnFfiMapView(
     },
     modifier = modifier,
     state = state,
-    runtimeOptions = runtimeOptions,
     style = style,
     update = update,
     onReset = onReset,
@@ -84,8 +81,7 @@ internal fun MlnFfiMapView(
   renderBackend: MapRenderBackend,
   surface: @Composable (MlnFfiMapRenderer, Modifier, Logger?, Boolean) -> Unit,
   modifier: Modifier,
-  state: MapState?,
-  runtimeOptions: org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions? = null,
+  state: MapState,
   style: BaseStyle,
   update: (map: MapAdapter) -> Unit,
   onReset: () -> Unit,
@@ -93,8 +89,7 @@ internal fun MlnFfiMapView(
   callbacks: MapAdapter.Callbacks,
   options: MapPresentationOptions,
 ) {
-  if (runtimeOptions == null) EnsureMlnFfiConfigured()
-  val applicationOptions = runtimeOptions ?: MlnFfiApplication.options
+  val applicationOptions = state.runtime.nativeRuntimeOptions
   val layoutDirection = LocalLayoutDirection.current
   val density = LocalDensity.current
   val scaleFactor = density.density.toDouble()
@@ -102,12 +97,13 @@ internal fun MlnFfiMapView(
     remember(renderBackend, scaleFactor) {
       NativeEngineCompatibility(renderBackend = renderBackend, scaleFactor = scaleFactor)
     }
-  val retainedSession = state?.retainedAdapter(compatibility) as? MlnFfiMapSession
+  val retainedSession = state.retainedAdapter(compatibility) as? MlnFfiMapSession
 
   val unpreparedSession =
     retainedSession
       ?: remember(renderBackend, scaleFactor, applicationOptions, state) {
         MlnFfiMapSession(
+          lifecycleAuthority = state.lifecycle,
           callbacks = callbacks,
           logger = logger,
           renderBackend = renderBackend,
@@ -119,6 +115,7 @@ internal fun MlnFfiMapView(
       }
   val session = remember(unpreparedSession) { unpreparedSession.apply { preparePresentation() } }
 
+  session.durableCallbacks = state.durableStyleCallbacks()
   session.callbacks = callbacks
   session.logger = logger
   session.layoutDirection = layoutDirection
@@ -127,14 +124,32 @@ internal fun MlnFfiMapView(
   // Must run in the apply phase, not from a coroutine: the unload has to precede the content
   // subcomposition inserting layers, or a style switch fails anchor validation (see #269).
   SideEffect { session.setBaseStyle(style) }
-  // Publish the adapter before another thread can close a runtime whose composition has applied.
-  SideEffect { update(session) }
-
-  LaunchedEffect(session) { session.attachPresentation() }
+  SideEffect {
+    if (session.beginPresentationAttachment()) {
+      update(session)
+      if (!session.isPresentationPublished) session.markPresentationPublished()
+    }
+  }
+  LaunchedEffect(session) {
+    try {
+      session.attachPresentation()
+      if (!session.isPresentationPublished) {
+        update(session)
+        session.markPresentationPublished()
+      }
+    } catch (error: CancellationException) {
+      throw error
+    } catch (_: MapClosedException) {
+      // A still-mounted UI on a closed map is inert.
+    } catch (_: MapLeaseInvalidatedException) {
+      // Detach or close won before attach finished.
+    } catch (error: Throwable) {
+      callbacks.onMapFailLoading(session, error.message)
+    }
+  }
 
   DisposableEffect(session) {
     onDispose {
-      if (state == null) session.close()
       currentOnReset.value()
     }
   }

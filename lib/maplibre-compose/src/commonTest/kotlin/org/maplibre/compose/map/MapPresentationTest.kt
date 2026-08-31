@@ -9,7 +9,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
@@ -20,17 +22,34 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.Viewport
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.value.BooleanValue
+import org.maplibre.compose.layers.BackgroundLayer
+import org.maplibre.compose.layers.LayerHandle
+import org.maplibre.compose.sources.GeoJsonData
+import org.maplibre.compose.sources.GeoJsonOptions
+import org.maplibre.compose.sources.GeoJsonSource
+import org.maplibre.compose.sources.GeoJsonSourceHandle
+import org.maplibre.compose.sources.TileSetOptions
+import org.maplibre.compose.sources.VectorSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.DesiredStyleRevision
+import org.maplibre.compose.style.RecordingStyleBinding
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.Geometry
+import org.maplibre.spatialk.geojson.Point
 import org.maplibre.spatialk.geojson.Position
+import org.maplibre.spatialk.geojson.dsl.addFeature
+import org.maplibre.spatialk.geojson.dsl.buildFeatureCollection
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MapPresentationTest {
@@ -49,6 +68,187 @@ class MapPresentationTest {
   }
 
   @Test
+  fun closing_map_state_closes_a_bound_session_before_it_is_published() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState()
+    val session = BoundLifecycleSession()
+    session.lifecycle = state.lifecycle.bind(session)
+    session.lifecycle.attach()
+
+    state.close()
+    state.awaitClosed()
+
+    assertEquals(
+      listOf("create", "attach", "detach", "destroy", "close resources"),
+      session.commands,
+    )
+    runtime.close()
+  }
+
+  @Test
+  fun a_session_that_closes_itself_is_retired_and_its_failure_reaches_map_closure() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState()
+    val finishCleanup = CompletableDeferred<Unit>()
+    val session = BoundLifecycleSession(failOnClose = true, finishCleanup = finishCleanup)
+    session.lifecycle = state.lifecycle.bind(session)
+    session.lifecycle.attach()
+    val token = state.reservePresentation()
+    state.publishPresentation(token, session)
+    assertSame(session, state.presentation?.adapter)
+    assertTrue(state.markStyleReady(session))
+    assertEquals(StyleLoadState.Ready, state.style.loadState)
+
+    session.close()
+
+    assertNull(state.presentation)
+    assertNull(state.retainedAdapter(session.presentationCompatibilityKey))
+    assertFalse(state.acceptsPresentationEvent(session))
+    assertEquals(StyleLoadState.Pending, state.style.loadState)
+    assertFalse(session.lifecycle.state == MapLifecycleState.Closed)
+    finishCleanup.complete(Unit)
+    assertFailsWith<MapLifecycleCleanupException> { session.awaitClosed() }
+    testScheduler.runCurrent()
+
+    state.durableStyleCallbacks().onMapFailLoading(session, "stale callback")
+    assertFalse(state.style.loadState is StyleLoadState.Failed)
+
+    val replacement = PresentationTestAdapter()
+    val replacementToken = state.reservePresentation()
+    state.publishPresentation(replacementToken, replacement)
+    assertSame(replacement, state.presentation?.adapter)
+
+    state.close()
+    val failure = assertFailsWith<MapStateCleanupException> { state.awaitClosed() }
+    assertTrue(
+      generateSequence(failure as Throwable) { it.cause }
+        .any { it.message.orEmpty().contains("bound session cleanup failed") }
+    )
+    runtime.close()
+  }
+
+  @Test
+  fun a_detached_retained_session_that_closes_itself_invalidates_its_style() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState()
+    val finishCleanup = CompletableDeferred<Unit>()
+    val session = BoundLifecycleSession(finishCleanup = finishCleanup)
+    session.lifecycle = state.lifecycle.bind(session)
+    session.lifecycle.attach()
+    val token = state.reservePresentation()
+    state.publishPresentation(token, session)
+    assertTrue(state.markStyleReady(session))
+
+    state.releasePresentation(token, session)
+    testScheduler.runCurrent()
+    assertNull(state.presentation)
+    assertSame(session, state.retainedAdapter(session.presentationCompatibilityKey))
+    assertEquals(StyleLoadState.Ready, state.style.loadState)
+
+    session.close()
+
+    assertNull(state.retainedAdapter(session.presentationCompatibilityKey))
+    assertEquals(StyleLoadState.Pending, state.style.loadState)
+    assertFalse(session.lifecycle.state == MapLifecycleState.Closed)
+    finishCleanup.complete(Unit)
+    session.awaitClosed()
+    state.close()
+    state.awaitClosed()
+    runtime.close()
+  }
+
+  @Test
+  fun a_new_presentation_can_reserve_while_the_previous_one_is_still_detaching() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState()
+    val first = BlockingDetachAdapter()
+    val firstToken = state.reservePresentation(MapPresentationOwnerToken())
+    state.publishPresentation(firstToken, first)
+
+    state.releasePresentation(firstToken, first)
+    first.detachStarted.await()
+    assertNull(state.presentation)
+
+    val replacement = PresentationTestAdapter()
+    val replacementToken = state.reservePresentation(MapPresentationOwnerToken())
+    state.publishPresentation(replacementToken, replacement)
+    assertSame(replacement, state.presentation?.adapter)
+
+    first.finishDetach.complete(Unit)
+    testScheduler.runCurrent()
+    assertSame(replacement, state.presentation?.adapter)
+    state.close()
+    state.awaitClosed()
+    runtime.close()
+  }
+
+  @Test
+  fun closure_reports_a_superseded_presentations_in_flight_detach_failure() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState()
+    val first = BlockingDetachAdapter(failOnDetach = true)
+    val firstToken = state.reservePresentation(MapPresentationOwnerToken())
+    state.publishPresentation(firstToken, first)
+    state.releasePresentation(firstToken, first)
+    first.detachStarted.await()
+
+    val replacement = PresentationTestAdapter()
+    val replacementToken = state.reservePresentation(MapPresentationOwnerToken())
+    state.publishPresentation(replacementToken, replacement)
+    state.close()
+
+    first.finishDetach.complete(Unit)
+    val failure = assertFailsWith<MapStateCleanupException> { state.awaitClosed() }
+    assertTrue(
+      generateSequence(failure as Throwable) { it.cause }.any { it.message == "detach failed" }
+    )
+    runtime.close()
+  }
+
+  @Test
+  fun closure_reports_an_in_flight_session_detach_failure_once() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState()
+    val finishDetach = CompletableDeferred<Unit>()
+    val detachStarted = CompletableDeferred<Unit>()
+    val session =
+      BoundLifecycleSession(
+        failOnDetach = true,
+        finishDetach = finishDetach,
+        detachStarted = detachStarted,
+      )
+    session.lifecycle = state.lifecycle.bind(session)
+    session.lifecycle.attach()
+    val token = state.reservePresentation()
+    state.publishPresentation(token, session)
+
+    state.releasePresentation(token, session)
+    detachStarted.await()
+    state.close()
+    finishDetach.complete(Unit)
+
+    val failure = assertFailsWith<MapStateCleanupException> { state.awaitClosed() }
+    assertEquals("Map state cleanup failed in 1 resource(s)", failure.message)
+    assertEquals("detach failed", failure.cause?.message)
+    runtime.close()
+  }
+
+  @Test
+  fun closure_during_presentation_configuration_makes_publication_inert() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState()
+    val token = state.reservePresentation()
+    val adapter = ClosingDuringConfigurationAdapter(state::close)
+
+    state.publishPresentation(token, adapter)
+
+    assertTrue(state.isClosed)
+    assertNull(state.presentation)
+    state.awaitClosed()
+    runtime.close()
+  }
+
+  @Test
   fun an_accepted_camera_set_updates_the_durable_map_position() {
     val fixture = presentationFixture()
     val position = CameraPosition(target = Position(12.0, 34.0), zoom = 8.0)
@@ -61,13 +261,18 @@ class MapPresentationTest {
   }
 
   @Test
-  fun a_cached_presentation_fails_immediately_after_detachment() {
+  fun a_departed_presentation_rejects_cached_operations_and_delayed_camera_events() {
     val fixture = presentationFixture()
     fixture.state.releasePresentation(fixture.token, fixture.adapter)
 
     assertFailsWith<MapPresentationDetachedException> {
       fixture.presentation.setCameraPosition(CameraPosition(zoom = 4.0))
     }
+    val viewportReads = fixture.adapter.viewportReads
+    fixture.adapter.lastCameraPosition = CameraPosition(zoom = 7.0)
+    assertNull(fixture.state.synchronizeCamera(fixture.adapter))
+    assertEquals(viewportReads, fixture.adapter.viewportReads)
+    assertEquals(CameraPosition(), fixture.state.cameraPosition)
     fixture.close()
   }
 
@@ -83,15 +288,267 @@ class MapPresentationTest {
   }
 
   @Test
-  fun publication_happens_after_the_adapter_accepts_initial_map_state() {
+  fun publishing_into_a_closed_state_is_inert() {
+    val fixture = presentationFixture()
+    fixture.state.close()
+
+    fixture.state.publishPresentation(fixture.token, fixture.adapter)
+
+    assertTrue(fixture.state.isClosed)
+    assertNull(fixture.state.presentation)
+    fixture.runtime.close()
+  }
+
+  @Test
+  fun replacement_cleanup_failures_are_reported_on_close() = runTest {
     val runtime = mapRuntimeForTest()
     val state = runtime.createMapState()
+    val firstToken = state.reservePresentation()
+    val first = RetainedAdapter(failOnClose = true)
+    state.publishPresentation(firstToken, first)
+    state.releasePresentation(firstToken, first)
+    testScheduler.advanceUntilIdle()
+
+    val secondToken = state.reservePresentation()
+    val second = RetainedAdapter(failOnClose = false)
+    state.publishPresentation(secondToken, second)
+    testScheduler.advanceUntilIdle()
+
+    state.close()
+    val failure = assertFailsWith<MapStateCleanupException> { state.awaitClosed() }
+    assertTrue(failure.message.orEmpty().contains("cleanup failed"))
+    runtime.close()
+  }
+
+  @Test
+  fun a_durable_callback_updates_style_load_state_after_the_presentation_leaves() = runTest {
+    val runtime = mapRuntimeForTest()
+    val state = runtime.createMapState()
+    val token = state.reservePresentation()
+    val adapter = RetainedAdapter(failOnClose = false)
+    state.publishPresentation(token, adapter)
+    state.releasePresentation(token, adapter)
+    testScheduler.advanceUntilIdle()
+
+    state.durableStyleCallbacks().onMapFailLoading(adapter, "style refused")
+
+    assertTrue(state.style.loadState is StyleLoadState.Failed)
+    state.close()
+    runtime.close()
+  }
+
+  @Test
+  fun a_durable_source_change_refreshes_sources_after_the_presentation_leaves() = runTest {
+    val runtime = mapRuntimeForTest()
+    val state = runtime.createMapState()
+    val token = state.reservePresentation()
+    val adapter = RetainedAdapter(failOnClose = false)
+    state.publishPresentation(token, adapter)
+    val style = RecordingStyleBinding(sources = listOf(attributedVectorSource()))
+    val callbacks = state.durableStyleCallbacks()
+    callbacks.onStyleChanged(adapter, style)
+    callbacks.onMapFinishedLoading(adapter)
+    state.releasePresentation(token, adapter)
+    testScheduler.advanceUntilIdle()
+
+    style.removeSource("tiles")
+    callbacks.onSourceChanged(adapter, "tiles")
+
+    assertTrue(state.style.sources.isEmpty())
+    state.close()
+    runtime.close()
+  }
+
+  @Test
+  fun a_live_source_handle_is_ready_bound_and_cannot_target_a_replacement_style() {
+    val fixture = presentationFixture()
+    val firstStyle =
+      RecordingStyleBinding(
+        sources =
+          listOf(
+            GeoJsonSource(
+              id = "points",
+              data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
+              options = GeoJsonOptions(),
+            )
+          )
+      )
+
+    assertNull(fixture.state.style.source("points"))
+    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, firstStyle)
+    assertNull(fixture.state.style.source("points"))
+    fixture.state.durableStyleCallbacks().onMapFinishedLoading(fixture.adapter)
+
+    val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.source("points"))
+    assertNull(fixture.state.style.source("missing"))
+    handle.setFeatureState("7", buildJsonObject { put("selected", true) })
+    assertEquals(
+      true,
+      firstStyle.featureState("points", null, "7")["selected"]?.jsonPrimitive?.boolean,
+    )
+
+    fixture.state.style.baseStyle = BaseStyle.Json("replacement")
+    assertFailsWith<IllegalStateException> {
+      handle.setFeatureState("7", buildJsonObject { put("stale", true) })
+    }
+    val replacement =
+      RecordingStyleBinding(
+        sources =
+          listOf(
+            GeoJsonSource(
+              id = "points",
+              data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
+              options = GeoJsonOptions(),
+            )
+          )
+      )
+    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, replacement)
+    fixture.state.durableStyleCallbacks().onMapFinishedLoading(fixture.adapter)
+
+    assertFailsWith<IllegalStateException> {
+      handle.setFeatureState("7", buildJsonObject { put("stale", true) })
+    }
+    assertEquals(JsonObject(emptyMap()), replacement.featureState("points", null, "7"))
+    fixture.close()
+  }
+
+  @Test
+  fun a_typed_source_handle_rejects_a_same_id_source_type_replacement() {
+    val fixture = presentationFixture()
+    val geoJson =
+      GeoJsonSource(
+        id = "shared",
+        data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
+        options = GeoJsonOptions(),
+      )
+    fixture.state.desiredStyleRevision =
+      DesiredStyleRevision(
+        sources = listOf(geoJson.definition()),
+        layers = emptyList(),
+        images = emptyList(),
+      )
+    val loadedStyle = RecordingStyleBinding(sources = listOf(geoJson))
+    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, loadedStyle)
+    fixture.state.durableStyleCallbacks().onMapFinishedLoading(fixture.adapter)
+    val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.source("shared"))
+    val vector = VectorSource("shared", "https://example.com/tiles.json")
+
+    fixture.state.beginStyleRevision(
+      fixture.adapter,
+      DesiredStyleRevision(
+        sources = listOf(vector.definition()),
+        layers = emptyList(),
+        images = emptyList(),
+      ),
+    )
+    assertFailsWith<IllegalStateException> {
+      handle.setFeatureState("7", buildJsonObject { put("stale", true) })
+    }
+    assertEquals(JsonObject(emptyMap()), loadedStyle.featureState("shared", null, "7"))
+
+    loadedStyle.replaceSource(vector)
+    fixture.state.markStyleReady(fixture.adapter)
+
+    assertFailsWith<IllegalStateException> { handle.getFeatureState("7") }
+    assertEquals(JsonObject(emptyMap()), loadedStyle.featureState("shared", null, "7"))
+    fixture.close()
+  }
+
+  @Test
+  fun geojson_cluster_queries_have_empty_fallbacks_for_a_non_cluster_feature() = runTest {
+    val fixture = presentationFixture()
+    val loadedStyle =
+      RecordingStyleBinding(
+        sources =
+          listOf(
+            GeoJsonSource(
+              id = "points",
+              data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
+              options = GeoJsonOptions(),
+            )
+          )
+      )
+    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, loadedStyle)
+    fixture.state.durableStyleCallbacks().onMapFinishedLoading(fixture.adapter)
+    val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.source("points"))
+    val point =
+      buildFeatureCollection<Geometry, JsonObject?> {
+          addFeature(geometry = Point(Position(0.0, 0.0)))
+        }
+        .features
+        .single()
+
+    assertFalse(handle.isCluster(point))
+    assertEquals(0.0, handle.getClusterExpansionZoom(point))
+    assertTrue(handle.getClusterChildren(point).features.isEmpty())
+    assertTrue(handle.getClusterLeaves(point, limit = 1, offset = 0).features.isEmpty())
+    fixture.close()
+  }
+
+  @Test
+  fun replacing_a_retained_engine_invalidates_its_style_handles_before_publication() = runTest {
+    val runtime = mapRuntimeForTest()
+    val state = runtime.createMapState()
+    val firstToken = state.reservePresentation()
+    val first = RetainedAdapter(failOnClose = false)
+    state.publishPresentation(firstToken, first)
+    val firstStyle =
+      RecordingStyleBinding(
+        sources =
+          listOf(
+            GeoJsonSource(
+              id = "points",
+              data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
+              options = GeoJsonOptions(),
+            )
+          )
+      )
+    state.durableStyleCallbacks().onStyleChanged(first, firstStyle)
+    state.durableStyleCallbacks().onMapFinishedLoading(first)
+    val handle = assertIs<GeoJsonSourceHandle>(state.style.source("points"))
+    state.releasePresentation(firstToken, first)
+    testScheduler.advanceUntilIdle()
+
+    val secondToken = state.reservePresentation()
+    state.publishPresentation(secondToken, RetainedAdapter(failOnClose = false))
+
+    assertFailsWith<IllegalStateException> {
+      handle.setFeatureState("7", buildJsonObject { put("stale", true) })
+    }
+    assertEquals(JsonObject(emptyMap()), firstStyle.featureState("points", null, "7"))
+    state.close()
+    runtime.close()
+  }
+
+  @Test
+  fun a_live_layer_handle_reads_and_writes_only_its_loaded_style() {
+    val fixture = presentationFixture()
+    val loadedStyle = RecordingStyleBinding(layers = listOf(BackgroundLayer("background")))
+    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, loadedStyle)
+    fixture.state.durableStyleCallbacks().onMapFinishedLoading(fixture.adapter)
+
+    val handle = assertIs<LayerHandle>(fixture.state.style.layer("background"))
+    assertNull(fixture.state.style.layer("missing"))
+    handle.setPaintProperty("background-opacity", JsonPrimitive(0.5))
+    assertEquals(JsonPrimitive(0.5), handle.getProperty("background-opacity"))
+
+    loadedStyle.invalidate()
+    assertFailsWith<IllegalStateException> { handle.getProperty("background-opacity") }
+    fixture.close()
+  }
+
+  @Test
+  fun publication_happens_after_the_adapter_accepts_initial_map_state() {
+    val runtime = mapRuntimeForTest()
+    val initialCamera = CameraPosition(target = Position(12.0, 34.0), zoom = 8.0)
+    val state = runtime.createMapState(initialCameraPosition = initialCamera)
     val token = state.reservePresentation()
     val adapter = PresentationTestAdapter { state.presentation }
 
     state.publishPresentation(token, adapter)
 
     assertFalse(adapter.presentationWasVisibleWhileConfiguring)
+    assertEquals(initialCamera, adapter.lastCameraPosition)
     assertTrue(state.presentation != null)
     state.close()
     runtime.close()
@@ -162,6 +619,13 @@ class MapPresentationTest {
   }
 }
 
+private fun attributedVectorSource(): VectorSource =
+  VectorSource(
+    id = "tiles",
+    tiles = listOf("https://example.com/{z}/{x}/{y}.pbf"),
+    options = TileSetOptions(attributionHtml = "attribution"),
+  )
+
 private data class PresentationFixture(
   val runtime: MapRuntime,
   val state: MapState,
@@ -184,18 +648,103 @@ private fun presentationFixture(): PresentationFixture {
   return PresentationFixture(runtime, state, token, adapter, requireNotNull(state.presentation))
 }
 
-private class PresentationTestAdapter(
+private class RetainedAdapter(private val failOnClose: Boolean) : PresentationTestAdapter() {
+  override val retainsEngineBetweenPresentations: Boolean = true
+
+  override suspend fun detachPresentation() = Unit
+
+  override suspend fun awaitClosed() {
+    if (failOnClose) error("cleanup failed")
+  }
+}
+
+private class BlockingDetachAdapter(private val failOnDetach: Boolean = false) :
+  PresentationTestAdapter() {
+  val detachStarted = CompletableDeferred<Unit>()
+  val finishDetach = CompletableDeferred<Unit>()
+
+  override suspend fun detachPresentation() {
+    detachStarted.complete(Unit)
+    finishDetach.await()
+    if (failOnDetach) error("detach failed")
+  }
+}
+
+private class BoundLifecycleSession(
+  private val failOnClose: Boolean = false,
+  private val finishCleanup: CompletableDeferred<Unit>? = null,
+  private val failOnDetach: Boolean = false,
+  private val finishDetach: CompletableDeferred<Unit>? = null,
+  private val detachStarted: CompletableDeferred<Unit>? = null,
+) : PresentationTestAdapter(), MapLifecycleSession {
+  lateinit var lifecycle: MapLifecycleBinding
+  val commands = mutableListOf<String>()
+
+  override val retainsEngineBetweenPresentations = true
+  override val presentationCompatibilityKey: Any = Any()
+
+  override val engineRetention: EngineRetention = EngineRetention.RETAIN
+
+  override suspend fun createEngine(identity: EngineMapIdentity) {
+    commands += "create"
+  }
+
+  override suspend fun attach(identity: EngineMapIdentity, lease: RenderLease) {
+    commands += "attach"
+  }
+
+  override suspend fun detach(identity: EngineMapIdentity, lease: RenderLease) {
+    commands += "detach"
+    detachStarted?.complete(Unit)
+    finishDetach?.await()
+    if (failOnDetach) error("detach failed")
+  }
+
+  override suspend fun destroyEngine(identity: EngineMapIdentity) {
+    commands += "destroy"
+  }
+
+  override suspend fun closeResources() {
+    commands += "close resources"
+    finishCleanup?.await()
+    if (failOnClose) error("bound session cleanup failed")
+  }
+
+  override suspend fun detachPresentation() {
+    lifecycle.detachCurrentPresentation()
+  }
+
+  override fun close() = lifecycle.close()
+
+  override suspend fun awaitClosed() = lifecycle.awaitClosed()
+}
+
+private class ClosingDuringConfigurationAdapter(private val closeState: () -> Unit) :
+  PresentationTestAdapter() {
+  private var closed = false
+
+  override fun setCameraPosition(cameraPosition: CameraPosition) {
+    super.setCameraPosition(cameraPosition)
+    if (!closed) {
+      closed = true
+      closeState()
+    }
+  }
+}
+
+internal open class PresentationTestAdapter(
   private val currentPresentation: () -> MapPresentation? = { null }
 ) : MapAdapter {
   var lastCameraPosition = CameraPosition()
   var presentationWasVisibleWhileConfiguring = false
+  var viewportReads = 0
   val queryStarted = CompletableDeferred<Unit>()
   val animationStarted = CompletableDeferred<Unit>()
   val finishAnimation = CompletableDeferred<Unit>()
 
-  override fun close() = Unit
+  open override fun close() = Unit
 
-  override suspend fun awaitClosed() = Unit
+  open override suspend fun awaitClosed() = Unit
 
   override suspend fun animateCameraPosition(finalPosition: CameraPosition, duration: Duration) {
     animationStarted.complete(Unit)
@@ -249,7 +798,10 @@ private class PresentationTestAdapter(
       nearRight = Position(1.0, -1.0),
     )
 
-  override fun getViewport(): Viewport? = null
+  override fun getViewport(): Viewport? {
+    viewportReads++
+    return null
+  }
 
   override fun setRenderSettings(value: RenderOptions) = Unit
 

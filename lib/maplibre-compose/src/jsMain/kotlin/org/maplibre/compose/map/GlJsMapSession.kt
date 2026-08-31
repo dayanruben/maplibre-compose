@@ -87,17 +87,18 @@ private const val FRAME_INTERVAL_SLACK = 0.1
  * calls before then are queued and reads answer from what was last asked for.
  */
 internal class GlJsMapSession(
+  private val lifecycleAuthority: MapLifecycleAuthority,
   callbacks: MapAdapter.Callbacks,
   internal var logger: Logger?,
   internal var layoutDirection: LayoutDirection,
-) : MapAdapter, GlJsMapRenderer, GestureTarget, MapLifecyclePlatformAdapter {
+) : MapLifecycleSession, GlJsMapRenderer, GestureTarget {
 
   init {
     createdCount += 1
   }
 
   internal var callbacks: MapAdapter.Callbacks = callbacks
-  private val lifecycle = MapLifecycleAuthority(this)
+  private val lifecycle = lifecycleAuthority.bind(this)
   private val lifecycleCallbacks = MapLifecycleCallbacks(lifecycle) { this.callbacks }
   private var lifecycleEngineIdentity: EngineMapIdentity? = null
   private var lifecycleRenderLease: RenderLease? = null
@@ -190,6 +191,7 @@ internal class GlJsMapSession(
         endCameraMove(engine, lease)
       } finally {
         surface = null
+        invalidateStyleBinding()
         lifecycle.beginEngineReplacement(engine, lease)
       }
     } else {
@@ -368,9 +370,7 @@ internal class GlJsMapSession(
     hasReconciledStyle = false
     hasUsableViewport = false
     hasReplayedPresentationState = false
-    callbacks.onStyleChanged(this, null)
-    styleBinding?.invalidate()
-    styleBinding = null
+    invalidateStyleBinding()
     styleLoadSubscription?.cancel()
     styleLoadSubscription = null
     styleErrorSubscription?.cancel()
@@ -396,6 +396,12 @@ internal class GlJsMapSession(
     container?.let { runCatching { it.remove() } }
     container = null
     resumeStrandedTransitions()
+  }
+
+  private fun invalidateStyleBinding() {
+    callbacks.onStyleChanged(this, null)
+    styleBinding?.invalidate()
+    styleBinding = null
   }
 
   private fun applyExtent(map: MaplibreMap, extent: MapExtent) {
@@ -629,10 +635,11 @@ internal class GlJsMapSession(
 
   private fun applyRequestedStyle(map: MaplibreMap) {
     val style = requestedStyle ?: return
-    if (style == appliedStyle) return
     if (styleLoadPending) return
+    val tracker = styleLoadTracker ?: return
+    val trackerRequest = tracker.beginLoading()
+    if (!tracker.shouldApplyToEngine(appliedStyleRequest)) return
     appliedStyle = style
-    val trackerRequest = styleLoadTracker?.beginLoading() ?: return
     appliedStyleRequest = trackerRequest
     styleLoadPending = true
     val engine = lifecycleEngineIdentity ?: return
