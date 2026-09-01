@@ -37,7 +37,6 @@ import org.maplibre.compose.gljs.GlJsRuntime
 import org.maplibre.compose.gljs.GlJsSubscription
 import org.maplibre.compose.gljs.GlJsSurfaceSession
 import org.maplibre.compose.gljs.JumpToOptions
-import org.maplibre.compose.gljs.MapEvent
 import org.maplibre.compose.gljs.MapOptions
 import org.maplibre.compose.gljs.MaplibreMap
 import org.maplibre.compose.gljs.PaddingOptions
@@ -46,6 +45,7 @@ import org.maplibre.compose.gljs.QueryGeometry
 import org.maplibre.compose.gljs.QueryRenderedFeaturesOptions
 import org.maplibre.compose.gljs.SetStyleOptions
 import org.maplibre.compose.gljs.isCameraEasing
+import org.maplibre.compose.gljs.isTerminalStyleLoadFailure
 import org.maplibre.compose.gljs.queryBox
 import org.maplibre.compose.gljs.queryPoint
 import org.maplibre.compose.gljs.styleJson
@@ -98,8 +98,8 @@ internal class GlJsMapSession(
   }
 
   internal var callbacks: MapAdapter.Callbacks = callbacks
-  private val lifecycle = lifecycleAuthority.bind(this)
-  private val lifecycleCallbacks = MapLifecycleCallbacks(lifecycle) { this.callbacks }
+  private val lifecycle by lazy { lifecycleAuthority.bind(this) }
+  private val lifecycleCallbacks by lazy { MapLifecycleCallbacks(lifecycle) { this.callbacks } }
   private var lifecycleEngineIdentity: EngineMapIdentity? = null
   private var lifecycleRenderLease: RenderLease? = null
   private var lifecycleStyleRequestIdentity: StyleRequestIdentity? = null
@@ -125,6 +125,9 @@ internal class GlJsMapSession(
 
   /** Actions accepted before Compose supplies the context used to construct the map. */
   private val pendingMapActions = mutableListOf<PendingMapAction>()
+
+  /** Platform-access callbacks waiting for this render lease's engine map. */
+  private val pendingPlatformMapAccess = mutableListOf<PendingMapAction>()
 
   /** Transitions MapLibre would cancel while applying the first style's camera. */
   private val pendingInitialStyleActions = mutableListOf<PendingMapAction>()
@@ -267,11 +270,7 @@ internal class GlJsMapSession(
   }
 
   fun start() {
-    when (lifecycle.state) {
-      is MapLifecycleState.Attaching,
-      is MapLifecycleState.Attached -> return
-      else -> lifecycle.beginAttach()
-    }
+    lifecycle.beginAttachIfOpen()
   }
 
   override suspend fun createEngine(identity: EngineMapIdentity) {
@@ -293,6 +292,7 @@ internal class GlJsMapSession(
       lifecycleStyleRequestIdentity = null
       lifecycleStyleIdentity = null
     }
+    abandonPending(pendingPlatformMapAccess)
     destroyMap()
   }
 
@@ -300,6 +300,7 @@ internal class GlJsMapSession(
     isGestureInProgress = false
     abandonPending(pendingMapActions)
     abandonPending(pendingInitialStyleActions)
+    abandonPending(pendingPlatformMapAccess)
     surface = null
   }
 
@@ -313,6 +314,7 @@ internal class GlJsMapSession(
       return it
     }
     if (!lifecycle.acceptsWork) return null
+    if (!lifecycleAuthority.selectAdapterForPresentation(this)) return null
 
     val host = document.createElement("div").unsafeCast<HTMLElement>()
     host.style.cssText = OFFSCREEN_CONTAINER_STYLE
@@ -360,7 +362,8 @@ internal class GlJsMapSession(
     appliedExtent = MapExtent.Empty
     cameraConstraints?.let { applyCameraConstraints(created, it) }
     runPending(pendingMapActions, created)
-    return created
+    runPending(pendingPlatformMapAccess, created)
+    return created.takeIf { lifecycle.acceptsWork && map === created }
   }
 
   private fun destroyMap() {
@@ -415,7 +418,9 @@ internal class GlJsMapSession(
     map.resize()
     hasUsableViewport = true
     // resize() may also fire `move`; a second onCameraMoved is how overlays learn the viewport
-    // changed when the camera position did not.
+    // changed when the camera position did not. Seed here too: the first resize can land before
+    // the lease is Attached, and acceptPresentationEvent then drops that callback.
+    lifecycleAuthority.seedCurrentPresentationViewport(this)
     withLifecyclePresentation { engine, lease ->
       lifecycleCallbacks.onCameraMoved(engine, lease, this)
     }
@@ -431,6 +436,57 @@ internal class GlJsMapSession(
 
   /** The current GL JS engine-map instance, exposed only to browser boundary tests. */
   internal fun engineMapForTest(): MaplibreMap? = map
+
+  internal suspend fun <T> withPlatformMap(block: PlatformMapScope.() -> T): T {
+    val engine =
+      lifecycle.engineIdentity
+        ?: throw IllegalStateException("The Web platform map changed before access could begin")
+    val lease =
+      lifecycle.renderLease
+        ?: throw IllegalStateException("The Web platform map changed before access could begin")
+    return suspendCancellableCoroutine { continuation ->
+      val invocation = PlatformMapInvocation(continuation)
+      lateinit var action: PendingMapAction
+      action =
+        PendingMapAction(
+          run = { map ->
+            invocation.execute {
+              var result: Result<T>? = null
+              val presentationAccepted =
+                lifecycle.acceptPresentationEvent(engine, lease) {
+                  val authorityAccepted =
+                    lifecycleAuthority.acceptPresentationPlatformAccess(this) {
+                      result = runCatching { PlatformMapScope(map).block() }
+                    }
+                  if (!authorityAccepted) {
+                    throw IllegalStateException(
+                      "The Web platform map changed before access could begin"
+                    )
+                  }
+                }
+              if (!presentationAccepted) {
+                throw IllegalStateException(
+                  "The Web platform map changed before access could begin"
+                )
+              }
+              checkNotNull(result).getOrThrow()
+            }
+          },
+          abandon = {
+            invocation.fail(
+              IllegalStateException("The Web platform map changed before access could begin")
+            )
+          },
+        )
+      continuation.invokeOnCancellation {
+        invocation.cancel()
+        pendingPlatformMapAccess.remove(action)
+      }
+      val current = map
+      if (current != null) action.run(current)
+      else if (invocation.isQueued) pendingPlatformMapAccess += action
+    }
+  }
 
   private fun maxTextureSize(gl: dynamic): Array<Double> {
     val size = (gl.getParameter(gl.MAX_TEXTURE_SIZE) as? Int)?.toDouble() ?: 4096.0
@@ -752,16 +808,6 @@ internal class GlJsMapSession(
       }
       if (!hasLoadedInitialStyle) abandonPending(pendingInitialStyleActions)
     }
-  }
-
-  /**
-   * MapLibre sends style-request, source, sprite, tile, and API errors through one event. A
-   * terminal style-request error has no active request and occurs before MapLibre marks the style
-   * as loaded. The pinned MapLibre version exposes these fields on its internal `Style` object.
-   */
-  private fun MapEvent.isTerminalStyleLoadFailure(): Boolean {
-    val style = asDynamic().style ?: return false
-    return style._loaded != true && style._loadStyleRequest == null && style._frameRequest == null
   }
 
   internal fun fireStyleErrorForTest(message: String) {
@@ -1251,7 +1297,8 @@ internal class GlJsMapSession(
 
   internal companion object {
     const val OFFSCREEN_CONTAINER_STYLE =
-      "position:absolute;left:-10000px;top:0;visibility:hidden;pointer-events:none;"
+      "all:initial;position:absolute;display:block;left:-10000px;top:0;" +
+        "visibility:hidden;pointer-events:none;"
 
     var createdCount: Int = 0
       private set

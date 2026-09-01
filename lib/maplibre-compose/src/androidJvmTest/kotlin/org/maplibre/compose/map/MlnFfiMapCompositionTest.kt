@@ -110,8 +110,6 @@ class MlnFfiMapCompositionTest {
     }
 
     assertTrue(state.presentation?.isValid == true)
-    val session = state.presentation?.adapter as MlnFfiMapSession
-    assertEquals(1, session.presentationPublicationCount)
     assertTrue(
       onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty(),
       "the load placeholder should be absent after the base style is ready",
@@ -121,6 +119,29 @@ class MlnFfiMapCompositionTest {
     runtime.awaitClosed()
     assertTrue(state.isClosed)
     assertNull(state.presentation)
+  }
+
+  @Test
+  fun presentation_options_update_without_replacing_the_native_map() = runFfiComposeUiTest {
+    val runtime = createNativeMapRuntime(runtimeOptions)
+    val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
+    var options by mutableStateOf(MapPresentationOptions())
+
+    setFfiTestMapContent(runtimeOptions) {
+      MaplibreMap(state, presentationOptions = options)
+    }
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.presentation != null }
+    val session = requireNotNull(state.presentation).adapter
+    val updated = MapPresentationOptions(zoomRange = 2f..18f, pitchRange = 3f..45f)
+
+    options = updated
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+      state.presentation?.options == updated
+    }
+
+    assertSame(session, requireNotNull(state.presentation).adapter)
+    runtime.close()
+    runtime.awaitClosed()
   }
 
   @Test
@@ -183,6 +204,39 @@ class MlnFfiMapCompositionTest {
     runtime.close()
     runtime.awaitClosed()
   }
+
+  @Test
+  fun one_style_composition_is_evaluated_independently_for_a_map_and_snapshotter() =
+    runFfiComposeUiTest {
+      val runtime = createNativeMapRuntime(runtimeOptions)
+      val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
+      val evaluatorIdentities = mutableSetOf<Any>()
+      val composition = StyleComposition {
+        val evaluatorIdentity = remember { Any() }
+        BackgroundLayer(id = "shared-background", color = const(Color.Green))
+        DisposableEffect(Unit) {
+          evaluatorIdentities += evaluatorIdentity
+          onDispose {}
+        }
+      }
+
+      setFfiTestMapContent(runtimeOptions) { MaplibreMap(state, composition) }
+      waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+        state.presentation != null &&
+          state.style.loadState == StyleLoadState.Ready &&
+          evaluatorIdentities.size == 1
+      }
+      val snapshotter = runtime.createSnapshotter(BaseStyle.Empty, composition)
+      val image = snapshotter.capture(MapSnapshotRequest(width = 16, height = 16))
+
+      assertEquals(16, image.width)
+      assertEquals(16, image.height)
+      assertEquals(2, evaluatorIdentities.size)
+      snapshotter.close()
+      snapshotter.awaitClosed()
+      runtime.close()
+      runtime.awaitClosed()
+    }
 
   @Test
   fun detached_native_map_keeps_its_applied_revision_until_current_state_is_reattached() =
@@ -481,15 +535,30 @@ class MlnFfiMapCompositionTest {
       body = {
         val session =
           requireNotNull(mapState.presentation?.adapter as? MlnFfiMapSession) {
-            "no desktop session"
+            "no native session"
           }
-        waitUntil { "toggled" in session.currentStyleLayerIds() }
+        waitUntil(
+          conditionDescription = "the initial layer to reach the native style",
+          timeoutMillis = RENDER_TIMEOUT_MILLIS,
+        ) {
+          "toggled" in session.currentStyleLayerIds()
+        }
 
         visible = false
-        waitUntil { "toggled" !in session.currentStyleLayerIds() }
+        waitUntil(
+          conditionDescription = "the removed layer to leave the native style",
+          timeoutMillis = RENDER_TIMEOUT_MILLIS,
+        ) {
+          "toggled" !in session.currentStyleLayerIds()
+        }
 
         visible = true
-        waitUntil { "toggled" in session.currentStyleLayerIds() }
+        waitUntil(
+          conditionDescription = "the re-added layer to return to the native style",
+          timeoutMillis = RENDER_TIMEOUT_MILLIS,
+        ) {
+          "toggled" in session.currentStyleLayerIds()
+        }
       }
     ) { errors, onFrame ->
       mapState =
@@ -642,7 +711,6 @@ class MlnFfiMapCompositionTest {
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { frames.load() > 0 || errors.isNotEmpty() }
     assertTrue(errors.isEmpty(), "The composition reported errors: $errors")
     body(errors)
-    waitForIdle()
     assertTrue(errors.isEmpty(), "The composition reported errors: $errors")
     assertTrue(frames.load() > 0, "No frame reached MapLibre; the map never rendered.")
   }

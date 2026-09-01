@@ -330,6 +330,19 @@ class MapLifecycleBindingTest {
   }
 
   @Test
+  fun a_late_attach_start_is_inert_after_closure_begins() = runTest {
+    val adapter = FakeMapLifecycleAdapter().apply { allowResources = CompletableDeferred() }
+    val lifecycle = bindLifecycle(adapter)
+    lifecycle.close()
+
+    assertTrue(!lifecycle.beginAttachIfOpen())
+
+    adapter.allowResources.complete(Unit)
+    lifecycle.awaitClosed()
+    assertEquals(listOf("close resources"), adapter.commands)
+  }
+
+  @Test
   fun detach_during_failed_engine_creation_cleans_partial_engine_resources() = runTest {
     val adapter =
       FakeMapLifecycleAdapter().apply {
@@ -347,6 +360,17 @@ class MapLifecycleBindingTest {
 
     assertTrue(detaching.await())
     assertTrue(attaching.await().exceptionOrNull() is MapLeaseInvalidatedException)
+    assertEquals(MapLifecycleState.OpenDetached(null), lifecycle.state)
+    assertEquals(1, adapter.commands.count { it.startsWith("destroy ") })
+  }
+
+  @Test
+  fun failed_detached_engine_creation_cleans_partial_engine_resources() = runTest {
+    val adapter = FakeMapLifecycleAdapter().apply { createFailure = TestFailure("create") }
+    val lifecycle = bindLifecycle(adapter)
+
+    assertFailsWith<TestFailure> { lifecycle.ensureEngine() }
+
     assertEquals(MapLifecycleState.OpenDetached(null), lifecycle.state)
     assertEquals(1, adapter.commands.count { it.startsWith("destroy ") })
   }

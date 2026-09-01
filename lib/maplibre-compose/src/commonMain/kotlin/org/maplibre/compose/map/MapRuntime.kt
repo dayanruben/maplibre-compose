@@ -50,6 +50,7 @@ import org.maplibre.compose.sources.sourceHandle
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.DesiredStyleRevision
 import org.maplibre.compose.style.StyleBinding
+import org.maplibre.compose.style.StyleComposition
 import org.maplibre.compose.style.StyleHandleOperationGuard
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.spatialk.geojson.BoundingBox
@@ -74,7 +75,13 @@ public interface MapRuntime {
     initialBaseStyle: BaseStyle = BaseStyle.Demo,
   ): MapState
 
-  /** Whether [close] has marked this runtime as closed. */
+  /** Creates an independent non-UI map for image capture. The caller must close the result. */
+  public fun createSnapshotter(
+    baseStyle: BaseStyle,
+    styleComposition: StyleComposition = StyleComposition.Empty,
+  ): MapSnapshotter
+
+  /** Returns true after [close] marks this runtime as closed. */
   public val isClosed: Boolean
 
   /** Marks this runtime as closed and starts child and shared-resource cleanup. */
@@ -94,24 +101,38 @@ public class MapStateClosedException : IllegalStateException("The map state is c
 public class MapPresentationDetachedException :
   IllegalStateException("The map presentation lease has ended")
 
-/** The load state for the desired base style of one logical map. */
+/** Reports the load state for the desired base style of one logical map. */
 public sealed interface StyleLoadState {
   /** No presentation can currently load the desired style. */
   public data object Pending : StyleLoadState
 
-  /** The current presentation is loading the desired style. */
+  /** Indicates that the current presentation is loading the desired style. */
   public data object Loading : StyleLoadState
 
-  /** The current presentation has loaded the desired style. */
+  /** Indicates that the current presentation loaded the desired style. */
   public data object Ready : StyleLoadState
 
-  /** The current presentation failed to load the desired style. */
+  /** Indicates that the current presentation failed to load the desired style. */
   public data class Failed(public val reason: String?) : StyleLoadState
 }
 
-/** Desired and applied style state for one [MapState]. */
+internal interface MapStyleStateOwner {
+  fun setBaseStyle(value: BaseStyle)
+
+  fun desiredSourceDefinition(id: String): org.maplibre.compose.style.SourceDefinition?
+
+  fun readyLoadedStyle(): StyleBinding?
+
+  fun <T> runStyleHandleOperation(binding: StyleBinding, action: () -> T): T
+
+  fun styleHandleCheckpoint(binding: StyleBinding): Long
+
+  fun requireStyleHandleUnchanged(binding: StyleBinding, checkpoint: Long)
+}
+
+/** Desired and applied style state for one logical map or snapshotter. */
 public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
-  private var owner: MapState? = null
+  private var owner: MapStyleStateOwner? = null
   private val loadedStyle = AtomicReference<StyleBinding?>(null)
   private var sourcesState: Map<String, SourceHandle> by mutableStateOf(emptyMap())
   private var baseStyleState: BaseStyle by
@@ -126,14 +147,13 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
   public var loadState: StyleLoadState by mutableStateOf(StyleLoadState.Pending)
     internal set
 
-  /** The sources in the current loaded style, in style order. */
+  /** Contains the sources in the current loaded style, in style order. */
   public val sources: Map<String, SourceHandle>
-    get() = if (loadState == StyleLoadState.Ready) sourcesState else emptyMap()
+    get() = if (readyLoadedStyle() == null) emptyMap() else sourcesState
 
   /** Returns a generation-bound handle for [id], or null until the style is ready or if absent. */
   public fun source(id: String): SourceHandle? {
-    if (loadState != StyleLoadState.Ready) return null
-    val current = loadedStyle.load() ?: return null
+    val current = readyLoadedStyle() ?: return null
     return sourceHandle(current, id)
   }
 
@@ -147,12 +167,14 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
 
   /** Returns a generation-bound handle for [id], or null until the style is ready or if absent. */
   public fun layer(id: String): LayerHandle? {
-    if (loadState != StyleLoadState.Ready) return null
-    val current = loadedStyle.load() ?: return null
+    val current = readyLoadedStyle() ?: return null
     return current.layerHandle(id, operationGuard(current))
   }
 
-  internal fun attach(owner: MapState) {
+  private fun readyLoadedStyle(): StyleBinding? =
+    owner?.readyLoadedStyle() ?: loadedStyle.load()?.takeIf { loadState == StyleLoadState.Ready }
+
+  internal fun attach(owner: MapStyleStateOwner) {
     this.owner = owner
   }
 
@@ -171,6 +193,8 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
   }
 
   internal fun isCurrentLoadedStyle(style: StyleBinding): Boolean = loadedStyle.load() === style
+
+  internal fun currentLoadedStyle(): StyleBinding? = loadedStyle.load()
 
   internal fun refreshSource(id: String) {
     val refreshed = source(id)
@@ -203,7 +227,7 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
     }
 }
 
-/** One temporary connection between a [MapState] and a map surface. */
+/** Represents a temporary connection between a [MapState] and a map surface. */
 public class MapPresentation
 internal constructor(
   private val owner: MapState,
@@ -214,31 +238,30 @@ internal constructor(
   private val invalidated = CompletableDeferred<Unit>()
   private val cameraMutation = MutatorMutex()
   private var validState: Boolean by mutableStateOf(true)
-  private var viewportState: Viewport? by mutableStateOf(adapter.getViewport())
-  private val firstViewport =
-    CompletableDeferred<Viewport>().also { readiness -> viewportState?.let(readiness::complete) }
+  private var viewportState: Viewport? by mutableStateOf(null)
+  private val firstViewport = CompletableDeferred<Viewport>()
   private var cameraMovingState: Boolean by mutableStateOf(false)
   private var moveReasonState: CameraMoveReason by mutableStateOf(CameraMoveReason.NONE)
   private var optionsState: MapPresentationOptions by
     mutableStateOf(initialOptions, structuralEqualityPolicy())
 
-  /** Whether this presentation is still the current connection. */
+  /** Returns true while this presentation is the current connection. */
   public val isValid: Boolean
     get() = validState
 
-  /** The current viewport, or null before the presentation has rendered its first viewport. */
+  /** Contains the current viewport, or null before the first rendered viewport. */
   public val viewport: Viewport?
     get() = viewportState
 
-  /** Whether the current camera mutation is still in progress. */
+  /** Returns true while a camera mutation is in progress. */
   public val isCameraMoving: Boolean
     get() = cameraMovingState
 
-  /** The reason that the current or most recent camera mutation started. */
+  /** Contains the reason for the current or most recent camera mutation. */
   public val cameraMoveReason: CameraMoveReason
     get() = moveReasonState
 
-  /** The settings that the current [MaplibreMap] call applies to this render lease. */
+  /** Contains the settings that the current [MaplibreMap] call applies to this render lease. */
   public val options: MapPresentationOptions
     get() = optionsState
 
@@ -248,13 +271,14 @@ internal constructor(
   }
 
   /** Fits [boundingBox] in the current viewport and keeps the presentation camera padding. */
-  public fun setCameraPosition(
+  public suspend fun setCameraPosition(
     boundingBox: BoundingBox,
     bearing: Double = 0.0,
     tilt: Double = 0.0,
     padding: PaddingValues = PaddingValues(0.dp),
-  ) {
-    owner.withCurrent(this) { adapter.setCameraPosition(boundingBox, bearing, tilt, padding) }
+  ): Unit = runLeaseBound {
+    awaitViewportState()
+    adapter.setCameraPosition(boundingBox, bearing, tilt, padding)
   }
 
   /** Animates the camera to [position]. A new camera animation replaces the previous one. */
@@ -277,6 +301,7 @@ internal constructor(
   ) {
     cameraMutation.mutate {
       runLeaseBound {
+        awaitViewportState()
         adapter.animateCameraPosition(boundingBox, bearing, tilt, padding, duration)
       }
     }
@@ -380,7 +405,7 @@ internal constructor(
   }
 }
 
-/** One logical map, independent from its temporary UI presentation. */
+/** Represents a logical map independently from a temporary UI presentation. */
 public class MapState
 internal constructor(
   internal val runtime: RuntimeImplementation,
@@ -397,7 +422,32 @@ internal constructor(
 
   internal var desiredStyleRevision: DesiredStyleRevision = DesiredStyleRevision.Empty
 
-  public val style: MapStyleState = MapStyleState(initialBaseStyle).also { it.attach(this) }
+  public val style: MapStyleState =
+    MapStyleState(initialBaseStyle).also {
+      it.attach(
+        object : MapStyleStateOwner {
+          override fun setBaseStyle(value: BaseStyle) = this@MapState.setBaseStyle(value)
+
+          override fun desiredSourceDefinition(id: String) =
+            this@MapState.desiredSourceDefinition(id)
+
+          override fun readyLoadedStyle() = this@MapState.readyLoadedStyle()
+
+          override fun <T> runStyleHandleOperation(
+            binding: StyleBinding,
+            action: () -> T,
+          ): T = this@MapState.runStyleHandleOperation(binding, action)
+
+          override fun styleHandleCheckpoint(binding: StyleBinding) =
+            this@MapState.styleHandleCheckpoint(binding)
+
+          override fun requireStyleHandleUnchanged(
+            binding: StyleBinding,
+            checkpoint: Long,
+          ) = this@MapState.requireStyleHandleUnchanged(binding, checkpoint)
+        }
+      )
+    }
 
   public val cameraPosition: CameraPosition
     get() = cameraPositionState
@@ -434,6 +484,7 @@ internal constructor(
 
   internal fun markStyleReady(adapter: MapAdapter): Boolean = lifecycle.serialized {
     if (!lifecycle.acceptsAdapter(adapter)) return false
+    if (style.currentLoadedStyle() == null) return false
     style.loadState = StyleLoadState.Ready
     style.refreshSources()
     true
@@ -452,10 +503,16 @@ internal constructor(
   internal fun updateLoadedStyle(adapter: MapAdapter, loadedStyle: StyleBinding?): Boolean =
     lifecycle.serialized {
       if (!lifecycle.acceptsAdapter(adapter)) return false
+      if (style.currentLoadedStyle() === loadedStyle) return true
       styleHandleEpoch++
+      style.loadState = StyleLoadState.Loading
       style.updateLoadedStyle(loadedStyle)
       true
     }
+
+  internal fun readyLoadedStyle(): StyleBinding? = lifecycle.serialized {
+    style.currentLoadedStyle()?.takeIf { style.loadState == StyleLoadState.Ready }
+  }
 
   internal fun markStyleFailed(adapter: MapAdapter, reason: String?) {
     lifecycle.serialized {
@@ -495,10 +552,13 @@ internal constructor(
     applyBaseStyleCommand(command)
   }
 
-  internal fun desiredSourceDefinition(id: String) =
+  internal fun desiredSourceDefinition(id: String): org.maplibre.compose.style.SourceDefinition? =
     desiredStyleRevision.sources.firstOrNull { it.id == id }
 
-  internal fun <T> runStyleHandleOperation(binding: StyleBinding, action: () -> T): T {
+  internal fun <T> runStyleHandleOperation(
+    binding: StyleBinding,
+    action: () -> T,
+  ): T {
     lifecycle.serialized { requireStyleHandleLocked(binding) }
     val result = action()
     lifecycle.serialized { requireStyleHandleLocked(binding) }
@@ -527,13 +587,12 @@ internal constructor(
   }
 
   internal fun setCameraPosition(candidate: MapPresentation, position: CameraPosition) {
-    lifecycle.serialized { requireCurrentLocked(candidate) }
-    candidate.adapter.setCameraPosition(position)
-    lifecycle.serialized {
+    val command = lifecycle.serialized {
       requireCurrentLocked(candidate)
       cameraPositionState = position
-      cameraCommandRevision++
+      CameraCommand(candidate.adapter, position, ++cameraCommandRevision)
     }
+    applyPresentationCameraCommand(candidate, command)
   }
 
   internal fun synchronizeCamera(adapter: MapAdapter): MapPresentation? {
@@ -604,15 +663,30 @@ internal constructor(
 
   internal fun configurePresentationAdapter(adapter: MapAdapter) {
     val configuration = lifecycle.serialized {
-      if (!lifecycle.acceptsAdapter(adapter)) return
+      if (!lifecycle.isPendingPublication(adapter)) return
       PresentationConfiguration(
         camera = CameraCommand(adapter, cameraPositionState, cameraCommandRevision),
         baseStyle = BaseStyleCommand(adapter, style.baseStyle, baseStyleCommandRevision),
       )
     }
     applyCameraCommand(configuration.camera)
-    if (!lifecycle.acceptsAdapter(adapter)) return
+    if (!lifecycle.isPendingPublication(adapter)) return
     applyBaseStyleCommand(configuration.baseStyle)
+  }
+
+  internal fun beginStyleLoadForNewAdapter() {
+    styleHandleEpoch++
+    style.invalidateLoadedStyle()
+    style.loadState = StyleLoadState.Loading
+  }
+
+  internal fun seedPresentationViewport(token: MapPresentationToken, adapter: MapAdapter) {
+    val viewport = adapter.getViewport() ?: return
+    lifecycle.serialized {
+      val current = presentation ?: return@serialized
+      if (current.token != token || current.adapter !== adapter || current.viewport != null) return
+      current.updateViewport(viewport)
+    }
   }
 
   private fun applyBaseStyleCommand(initial: BaseStyleCommand) {
@@ -641,17 +715,27 @@ internal constructor(
     }
   }
 
+  private fun applyPresentationCameraCommand(
+    presentation: MapPresentation,
+    initial: CameraCommand,
+  ) {
+    var command = initial
+    while (true) {
+      if (!lifecycle.isCurrent(presentation.token, command.adapter)) return
+      command.adapter.setCameraPosition(command.value)
+      command = lifecycle.serialized {
+        if (!lifecycle.isCurrent(presentation.token, command.adapter)) return
+        if (cameraCommandRevision == command.revision) return
+        CameraCommand(command.adapter, cameraPositionState, cameraCommandRevision)
+      }
+    }
+  }
+
   internal fun commitPresentation(
     token: MapPresentationToken,
     adapter: MapAdapter,
     options: MapPresentationOptions,
-    reusesRetainedAdapter: Boolean,
   ) {
-    if (!reusesRetainedAdapter) {
-      styleHandleEpoch++
-      style.invalidateLoadedStyle()
-    }
-    if (!reusesRetainedAdapter) style.loadState = StyleLoadState.Loading
     presentation = MapPresentation(this, token, adapter, options)
   }
 
@@ -674,11 +758,7 @@ internal constructor(
 }
 
 internal class MapStateCleanupException(failures: List<Throwable>) :
-  RuntimeException("Map state cleanup failed in ${failures.size} resource(s)", failures.first()) {
-  init {
-    failures.drop(1).forEach(::addSuppressed)
-  }
-}
+  AggregateCleanupException("Map state cleanup failed in ${failures.size} resource(s)", failures)
 
 @JvmInline internal value class MapPresentationToken(val value: Long)
 
@@ -763,9 +843,13 @@ internal class RuntimeImplementation(
   internal val logger: Logger?,
   internal val physicalScope: CoroutineScope =
     CoroutineScope(SupervisorJob() + Dispatchers.Default),
+  internal val snapshotterAdapterFactory: SnapshotterAdapterFactory =
+    UnsupportedSnapshotterAdapterFactory,
+  internal val styleEvaluator: StyleCompositionEvaluator = DefaultStyleCompositionEvaluator,
 ) : MapRuntime {
   private val lock = reentrantLock()
   private val children = linkedSetOf<MapState>()
+  private val snapshotters = linkedSetOf<MapSnapshotterImplementation>()
   private val closure = CompletableDeferred<Result<Unit>>()
   private var closed = false
   private var closedState: Boolean by mutableStateOf(false)
@@ -778,17 +862,30 @@ internal class RuntimeImplementation(
     MapState(this, initialCameraPosition, initialBaseStyle).also(children::add)
   }
 
+  final override fun createSnapshotter(
+    baseStyle: BaseStyle,
+    styleComposition: StyleComposition,
+  ): MapSnapshotter = lock.withLock {
+    if (closed) throw MapRuntimeClosedException()
+    MapSnapshotterImplementation(this, baseStyle, styleComposition).also(snapshotters::add)
+  }
+
   override fun close() {
     val closingChildren = lock.withLock {
       if (closed) return
       closed = true
       Snapshot.withMutableSnapshot { closedState = true }
-      children.toList()
+      children.toList() to snapshotters.toList()
     }
-    closingChildren.forEach(MapState::close)
+    val (closingStates, closingSnapshotters) = closingChildren
+    closingStates.forEach(MapState::close)
+    closingSnapshotters.forEach(MapSnapshotterImplementation::close)
     physicalScope.launch(start = CoroutineStart.UNDISPATCHED) {
       val failures = mutableListOf<Throwable>()
-      closingChildren.forEach { child ->
+      closingStates.forEach { child ->
+        runCatching { child.awaitClosed() }.exceptionOrNull()?.let(failures::add)
+      }
+      closingSnapshotters.forEach { child ->
         runCatching { child.awaitClosed() }.exceptionOrNull()?.let(failures::add)
       }
       runCatching { resources.close() }.exceptionOrNull()?.let(failures::add)
@@ -809,22 +906,11 @@ internal class RuntimeImplementation(
   internal fun childClosed(child: MapState) {
     lock.withLock { children.remove(child) }
   }
-}
 
-internal class MapRuntimeCleanupException(failures: List<Throwable>) :
-  RuntimeException("Map runtime cleanup failed in ${failures.size} resource(s)", failures.first()) {
-  init {
-    failures.drop(1).forEach(::addSuppressed)
+  internal fun childClosed(child: MapSnapshotterImplementation) {
+    lock.withLock { snapshotters.remove(child) }
   }
 }
 
-internal fun mapRuntimeForTest(
-  physicalScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
-  closeResources: suspend () -> Unit = {},
-): MapRuntime =
-  RuntimeImplementation(
-    platformOptions = null,
-    resources = MapRuntimeResources(closeResources),
-    logger = null,
-    physicalScope = physicalScope,
-  )
+internal class MapRuntimeCleanupException(failures: List<Throwable>) :
+  AggregateCleanupException("Map runtime cleanup failed in ${failures.size} resource(s)", failures)

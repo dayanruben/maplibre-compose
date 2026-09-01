@@ -70,6 +70,14 @@ private constructor(private val display: EGLDisplay, private val config: EGLConf
   /** The producer renders directly into this EGL pbuffer, so there is no consumer-side bridge. */
   override fun present(target: MlnFfiRenderTarget): Boolean = true
 
+  override fun discardPresentedFrame() {
+    if (surface == EGL14.EGL_NO_SURFACE) return
+    // The session that just lost this surface may still name it while it closes.
+    retiredSurfaces += surface
+    surface = EGL14.EGL_NO_SURFACE
+    extent = MapExtent.Empty
+  }
+
   override fun readPixel(x: Int, y: Int): RgbaPixel {
     check(surface != EGL14.EGL_NO_SURFACE) { "No Android test frame has been rendered" }
     // A dedicated session keeps its context current on this thread after render. Symbol passes
@@ -126,7 +134,6 @@ private constructor(private val display: EGLDisplay, private val config: EGLConf
     }
     retiredSurfaces.forEach { EGL14.eglDestroySurface(display, it) }
     retiredSurfaces.clear()
-    EGL14.eglTerminate(display)
     EGL14.eglReleaseThread()
   }
 
@@ -137,17 +144,9 @@ private constructor(private val display: EGLDisplay, private val config: EGLConf
     private const val EGL_OPENGL_ES3_BIT = 0x00000040
 
     fun create(): AndroidEglTestRenderDriver {
-      val display = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-      check(display != EGL14.EGL_NO_DISPLAY) { "Android test EGL display is unavailable" }
-      try {
-        val version = IntArray(2)
-        eglCheck(display, EGL14.eglInitialize(display, version, 0, version, 1), "initialize EGL")
-        eglCheck(display, EGL14.eglBindAPI(EGL14.EGL_OPENGL_ES_API), "bind the OpenGL ES API")
-        return AndroidEglTestRenderDriver(display, chooseConfig(display))
-      } catch (error: Throwable) {
-        EGL14.eglTerminate(display)
-        throw error
-      }
+      val display = AndroidEglDisplay.default
+      eglCheck(display, EGL14.eglBindAPI(EGL14.EGL_OPENGL_ES_API), "bind the OpenGL ES API")
+      return AndroidEglTestRenderDriver(display, chooseConfig(display))
     }
 
     private fun chooseConfig(display: EGLDisplay): EGLConfig {
