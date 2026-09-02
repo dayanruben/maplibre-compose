@@ -1,10 +1,6 @@
 package org.maplibre.compose.offline
 
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalDensity
-import co.touchlab.kermit.Logger
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.coroutines.cancellation.CancellationException
@@ -12,10 +8,9 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.maplibre.compose.mlnffi.EnsureMlnFfiConfigured
-import org.maplibre.compose.mlnffi.MlnFfiApplication
 import org.maplibre.compose.mlnffi.MlnFfiGate
 import org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions
+import org.maplibre.compose.resource.MapResourceConfig
 import org.maplibre.nativeffi.error.MaplibreException
 import org.maplibre.nativeffi.error.MaplibreStatus
 import org.maplibre.nativeffi.offline.OfflineRegionDownloadState
@@ -27,34 +22,14 @@ import org.maplibre.nativeffi.runtime.RuntimeEventPayload
 import org.maplibre.nativeffi.runtime.RuntimeEventType
 import org.maplibre.nativeffi.runtime.RuntimeHandle
 
-/** Acquire an instance of [OfflineManager]. */
-@Composable
-public fun rememberOfflineManager(): OfflineManager {
-  EnsureMlnFfiConfigured()
-  val density = LocalDensity.current.density
-  val manager = MlnFfiApplication.offlineManager
-  // Packs record the density they were created at; a downloaded raster tile cannot be rescaled.
-  return remember(manager, density) { DensityScopedOfflineManager(manager, density) }
-}
+/** The MapLibre Native FFI offline manager that belongs to one map runtime. */
+internal class MlnFfiOfflineManager(
+  private val options: MlnFfiRuntimeOptions,
+  resourceConfig: MapResourceConfig =
+    MapResourceConfig(options.requestInterceptor, options.resourceProvider),
+) : OfflineManager, OfflinePackOwner {
 
-/** Captures the calling window's density while sharing the process-lifetime native runtime. */
-private class DensityScopedOfflineManager(
-  private val manager: MlnFfiOfflineManager,
-  private val pixelRatio: Float,
-) : OfflineManager by manager {
-  override suspend fun create(definition: OfflinePackDefinition, metadata: ByteArray): OfflinePack =
-    manager.create(definition, metadata, pixelRatio)
-}
-
-/**
- * The MapLibre Native FFI [OfflineManager], backed by a MapLibre runtime of its own.
- *
- * The process-wide application instance is never disposed: mbgl holds download state in memory
- * only, so closing the runtime silently destroys in-flight downloads.
- */
-internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) : OfflineManager {
-
-  private val logger = Logger.withTag("maplibre-compose")
+  private val logger = options.logger
 
   /**
    * Compose state, written inline on the owner thread — never hopped to a dispatcher, which would
@@ -65,9 +40,10 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
   /** Owner-thread state: the packs this manager has seen, keyed by native region id. */
   private val packsById = mutableMapOf<Long, OfflinePack>()
 
-  private val runtime = MlnFfiOfflineRuntime(options.cacheFile, logger, ::handleEvent)
+  private val runtime =
+    MlnFfiOfflineRuntime(options.cacheFile, logger, ::handleEvent, resourceConfig)
 
-  /** The application has one writer; this prevents concurrent suspending calls from overlapping. */
+  /** One manager applies one cache-budget change at a time. */
   private val cacheBudgetMutex = Mutex()
 
   override val packs: Set<OfflinePack>
@@ -83,13 +59,13 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
         nativeRuntime.takeOfflineRegionsResult(handle).forEach { info ->
           // One unrepresentable region must not cost the user the rest of their packs.
           runCatching { registerRegion(info) }
-            .onFailure { logger.w(it) { "Ignoring offline region ${info.id}" } }
+            .onFailure { logger?.w(it) { "Ignoring offline region ${info.id}" } }
         }
       },
     )
   }
 
-  /** Does not let process-wide configuration publish a runtime whose startup or budget failed. */
+  /** Publishes the manager after runtime startup and initial cache-budget configuration succeed. */
   @OptIn(ExperimentalAtomicApi::class)
   private fun awaitConfiguredRuntime() {
     val settled = MlnFfiGate()
@@ -132,7 +108,7 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
         )
     val failure = settledOutcome.exceptionOrNull()
     if (failure != null) failStartup("Could not configure MapLibre's offline runtime", failure)
-    if (initialSize != null) logger.d { "Ambient cache size set to $initialSize bytes" }
+    if (initialSize != null) logger?.d { "Ambient cache size set to $initialSize bytes" }
   }
 
   private fun failStartup(message: String, cause: Throwable): Nothing {
@@ -142,15 +118,7 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
   }
 
   override suspend fun create(definition: OfflinePackDefinition, metadata: ByteArray): OfflinePack {
-    return create(definition, metadata, pixelRatio = 1f)
-  }
-
-  internal suspend fun create(
-    definition: OfflinePackDefinition,
-    metadata: ByteArray,
-    pixelRatio: Float,
-  ): OfflinePack {
-    val ffiDefinition = definition.toFfiRegionDefinition(pixelRatio)
+    val ffiDefinition = definition.toFfiRegionDefinition()
     // Copied because the caller still owns the array it passed and native reads it later.
     val ffiMetadata = metadata.copyOf()
     return runOperation(
@@ -166,14 +134,17 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
   }
 
   override fun resume(pack: OfflinePack) {
+    requireOwned(pack)
     setDownloadState(pack, OfflineRegionDownloadState.ACTIVE)
   }
 
   override fun pause(pack: OfflinePack) {
+    requireOwned(pack)
     setDownloadState(pack, OfflineRegionDownloadState.INACTIVE)
   }
 
   override suspend fun delete(pack: OfflinePack) {
+    requireOwned(pack)
     runOperation(
       description = "delete offline pack ${pack.regionId}",
       start = { it.startDeleteOfflineRegion(pack.regionId) },
@@ -185,6 +156,7 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
   }
 
   override suspend fun invalidate(pack: OfflinePack) {
+    requireOwned(pack)
     runOperation(
       description = "invalidate offline pack ${pack.regionId}",
       start = { it.startInvalidateOfflineRegion(pack.regionId) },
@@ -211,23 +183,18 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
     }
   }
 
-  /** Stops this otherwise process-lifetime owner. Tests only. */
-  internal fun closeForTest(timeoutMillis: Long = 30_000): Boolean {
+  /** Stops this manager's owner thread. */
+  internal fun close(timeoutMillis: Long = 30_000): Boolean {
     runtime.shutdown()
     return runtime.awaitStopped(timeoutMillis)
   }
 
-  override fun setTileCountLimit(limit: Long) {
-    // maplibre-native-ffi does not expose mbgl's setOfflineMapboxTileCountLimit; it applies only to
-    // canonical Mapbox tile URLs. MapLibre's own limit still reports as TileLimitExceeded.
-    logger.i {
-      "Ignoring setTileCountLimit($limit) on this platform; MapLibre's own offline tile count limit " +
-        "applies, and it counts only Mapbox-hosted tiles"
-    }
+  private fun requireOwned(pack: OfflinePack) {
+    require(pack.owner === this) { "The offline pack belongs to a different manager" }
   }
 
   /** Backs [OfflinePack.setMetadata]; the pack itself holds no native state. */
-  internal suspend fun updateMetadata(pack: OfflinePack, metadata: ByteArray) {
+  override suspend fun updateMetadata(pack: OfflinePack, metadata: ByteArray) {
     val ffiMetadata = metadata.copyOf()
     runOperation(
       description = "update the metadata of offline pack ${pack.regionId}",
@@ -271,7 +238,7 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
         finish = { _, _ -> refreshStatus(pack.regionId) },
       )
     if (!accepted) {
-      logger.w { "Cannot change the download state of pack ${pack.regionId}: manager disposed" }
+      logger?.w { "Cannot change the download state of pack ${pack.regionId}: manager disposed" }
     }
   }
 
@@ -321,7 +288,7 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
 
       RuntimeEventType.OFFLINE_REGION_TILE_COUNT_LIMIT_EXCEEDED -> {
         val payload = event.payload as? RuntimeEventPayload.OfflineRegionTileCountLimit ?: return
-        logger.w { "Offline pack ${payload.regionId} hit the tile limit of ${payload.limit}" }
+        logger?.w { "Offline pack ${payload.regionId} hit the tile limit of ${payload.limit}" }
         publishProgress(payload.regionId, DownloadProgress.TileLimitExceeded(payload.limit))
       }
 
@@ -329,21 +296,21 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
         val payload = event.payload as? RuntimeEventPayload.OfflineRegionResponseError ?: return
         val reason = payload.reason.toDownloadErrorReason()
         val message = event.message.ifBlank { "MapLibre could not download an offline resource" }
-        logger.e { "Offline pack ${payload.regionId} failed ($reason): $message" }
+        logger?.e { "Offline pack ${payload.regionId} failed ($reason): $message" }
         publishProgress(payload.regionId, DownloadProgress.Error(reason, message))
       }
 
       else ->
         // Event types are value classes over Int, so an FFI upgrade can deliver a type this build
         // has never seen.
-        logger.v { "Ignoring MapLibre event ${event.type} on the offline runtime" }
+        logger?.v { "Ignoring MapLibre event ${event.type} on the offline runtime" }
     }
   }
 
   private fun publishProgress(regionId: Long, progress: DownloadProgress) {
     val pack = packsById[regionId]
     if (pack == null) {
-      logger.v { "Ignoring progress for offline region $regionId, which has no pack" }
+      logger?.v { "Ignoring progress for offline region $regionId, which has no pack" }
       return
     }
     pack.progressState.value = progress
@@ -372,7 +339,7 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
     isCancelled: () -> Boolean = { false },
     onStarted: (OfflineOperationHandle<T>) -> Unit = {},
     onResult: (Result<R>) -> Unit = { result ->
-      result.onFailure { logger.e(it) { "Failed to $description" } }
+      result.onFailure { logger?.e(it) { "Failed to $description" } }
     },
   ): Boolean {
     return runtime.post(
@@ -442,12 +409,12 @@ internal class MlnFfiOfflineManager(private val options: MlnFfiRuntimeOptions) :
       is MaplibreException -> {
         // OfflineManagerException carries no cause, so the native detail is logged before it is
         // flattened into the message.
-        logger.d(this) { "Native failure while trying to $description" }
+        logger?.d(this) { "Native failure while trying to $description" }
         val detail = diagnostic.ifBlank { message.orEmpty() }
         OfflineManagerException("Failed to $description: $detail")
       }
       else -> {
-        logger.d(this) { "Failure while trying to $description" }
+        logger?.d(this) { "Failure while trying to $description" }
         OfflineManagerException(
           "Failed to $description: ${message ?: this::class.simpleName.orEmpty()}"
         )

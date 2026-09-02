@@ -45,6 +45,11 @@ import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.expressions.value.BooleanValue
 import org.maplibre.compose.layers.LayerHandle
 import org.maplibre.compose.layers.layerHandle
+import org.maplibre.compose.offline.CapabilityCheckedOfflineManager
+import org.maplibre.compose.offline.EmptyOfflineManager
+import org.maplibre.compose.offline.OfflineManager
+import org.maplibre.compose.resource.MapRequestInterceptor
+import org.maplibre.compose.resource.MapResourceConfig
 import org.maplibre.compose.sources.SourceHandle
 import org.maplibre.compose.sources.sourceHandle
 import org.maplibre.compose.style.BaseStyle
@@ -67,8 +72,30 @@ public expect fun createMapRuntime(options: MapRuntimeOptions): MapRuntime
 /** Returns the default runtime for this process. */
 @Composable public expect fun rememberMapRuntime(): MapRuntime
 
+/** Reports the optional operations that one [MapRuntime] supports. */
+public data class MapRuntimeCapabilities(
+  /** Whether the runtime supports offline-pack operations. */
+  public val supportsOfflinePacks: Boolean,
+  /** Whether the runtime supports ambient-cache management operations. */
+  public val supportsAmbientCacheManagement: Boolean,
+)
+
 /** Creates logical maps that share one application-level configuration. */
 public interface MapRuntime {
+  /** The optional operations that this runtime supports. */
+  public val capabilities: MapRuntimeCapabilities
+
+  /** The offline packs and ambient cache managed by this runtime. */
+  public val offlineManager: OfflineManager
+
+  /**
+   * Replaces the request interceptor for every map and snapshotter on this runtime.
+   *
+   * A null [interceptor] stops rewriting URLs and headers. The change applies to requests that
+   * start after this call returns.
+   */
+  public fun setRequestInterceptor(interceptor: MapRequestInterceptor?)
+
   /** Creates a logical map. The caller must close the result. */
   public fun createMapState(
     initialCameraPosition: CameraPosition = CameraPosition(),
@@ -196,22 +223,20 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
 
   internal fun currentLoadedStyle(): StyleBinding? = loadedStyle.load()
 
-  internal fun refreshSource(id: String) {
-    val refreshed = source(id)
-    sourcesState = if (refreshed == null) sourcesState - id else sourcesState + (id to refreshed)
-  }
-
   internal fun refreshSources() {
     val current = loadedStyle.load()
     sourcesState =
-      if (loadState != StyleLoadState.Ready || current == null) emptyMap()
-      else
-        current
-          .getSources()
-          .mapNotNull { source ->
-            sourceHandle(current, source.id)?.let { source.id to it }
-          }
-          .toMap()
+      if (loadState != StyleLoadState.Ready || current == null) emptyMap() else readSources(current)
+  }
+
+  internal fun readSources(current: StyleBinding): Map<String, SourceHandle> =
+    current
+      .getSources()
+      .mapNotNull { source -> sourceHandle(current, source.id)?.let { source.id to it } }
+      .toMap()
+
+  internal fun updateSources(sources: Map<String, SourceHandle>) {
+    sourcesState = sources
   }
 
   private fun operationGuard(style: StyleBinding): StyleHandleOperationGuard =
@@ -416,6 +441,7 @@ internal constructor(
   private var baseStyleCommandRevision = 0L
   private var cameraCommandRevision = 0L
   private var styleHandleEpoch = 0L
+  private var styleSourceChangeRevision = 0L
   private var closedState: Boolean by mutableStateOf(false)
   private var cameraPositionState: CameraPosition by
     mutableStateOf(initialCameraPosition, structuralEqualityPolicy())
@@ -482,23 +508,63 @@ internal constructor(
 
   internal fun durableStyleCallbacks(): MapAdapter.Callbacks = DurableStyleCallbacks(this)
 
-  internal fun markStyleReady(adapter: MapAdapter): Boolean = lifecycle.serialized {
-    if (!lifecycle.acceptsAdapter(adapter)) return false
-    if (style.currentLoadedStyle() == null) return false
-    style.loadState = StyleLoadState.Ready
-    style.refreshSources()
-    true
+  internal fun markStyleReady(adapter: MapAdapter): Boolean {
+    while (true) {
+      val read = lifecycle.serialized {
+        if (!lifecycle.acceptsAdapter(adapter)) return false
+        val binding = style.currentLoadedStyle() ?: return false
+        StyleSourceRead(binding, styleHandleEpoch, styleSourceChangeRevision)
+      }
+      val sources = runCatching { style.readSources(read.binding) }
+      if (sources.isFailure) {
+        val stillCurrent = lifecycle.serialized { isCurrentStyleSourceRead(adapter, read) }
+        if (!stillCurrent) return false
+        throw requireNotNull(sources.exceptionOrNull())
+      }
+      val committed = lifecycle.serialized {
+        if (!isCurrentStyleSourceRead(adapter, read)) return false
+        if (style.loadState is StyleLoadState.Failed) return false
+        if (styleSourceChangeRevision != read.sourceChangeRevision) return@serialized false
+        style.updateSources(sources.getOrThrow())
+        style.loadState = StyleLoadState.Ready
+        true
+      }
+      if (committed) return true
+    }
   }
 
   internal fun acceptsPresentationEvent(adapter: MapAdapter): Boolean =
     lifecycle.acceptsPresentation(adapter)
 
-  internal fun refreshStyleSources(adapter: MapAdapter, sourceId: String?): Boolean =
-    lifecycle.serialized {
+  internal fun refreshStyleSources(adapter: MapAdapter): Boolean {
+    val read = lifecycle.serialized {
       if (!lifecycle.acceptsAdapter(adapter)) return false
-      if (sourceId == null) style.refreshSources() else style.refreshSource(sourceId)
+      val sourceChangeRevision = ++styleSourceChangeRevision
+      if (style.loadState != StyleLoadState.Ready) return true
+      val binding = style.currentLoadedStyle() ?: return true
+      StyleSourceRead(binding, styleHandleEpoch, sourceChangeRevision)
+    }
+    val sources = runCatching { style.readSources(read.binding) }
+    if (sources.isFailure) {
+      val stillCurrent = lifecycle.serialized { isCurrentStyleSourceRead(adapter, read) }
+      if (!stillCurrent) return false
+      throw requireNotNull(sources.exceptionOrNull())
+    }
+    return lifecycle.serialized {
+      if (!isCurrentStyleSourceRead(adapter, read)) return false
+      if (style.loadState != StyleLoadState.Ready) return false
+      // A later callback performs its own complete read, preserving source order without allowing
+      // this older result to overwrite it.
+      if (styleSourceChangeRevision != read.sourceChangeRevision) return true
+      style.updateSources(sources.getOrThrow())
       true
     }
+  }
+
+  private fun isCurrentStyleSourceRead(adapter: MapAdapter, read: StyleSourceRead): Boolean =
+    lifecycle.acceptsAdapter(adapter) &&
+      styleHandleEpoch == read.styleHandleEpoch &&
+      style.currentLoadedStyle() === read.binding
 
   internal fun updateLoadedStyle(adapter: MapAdapter, loadedStyle: StyleBinding?): Boolean =
     lifecycle.serialized {
@@ -755,6 +821,12 @@ internal constructor(
     val value: BaseStyle,
     val revision: Long,
   )
+
+  private data class StyleSourceRead(
+    val binding: StyleBinding,
+    val styleHandleEpoch: Long,
+    val sourceChangeRevision: Long,
+  )
 }
 
 internal class MapStateCleanupException(failures: List<Throwable>) :
@@ -841,12 +913,25 @@ internal class RuntimeImplementation(
   internal val platformOptions: Any?,
   private val resources: MapRuntimeResources,
   internal val logger: Logger?,
+  override val capabilities: MapRuntimeCapabilities =
+    MapRuntimeCapabilities(
+      supportsOfflinePacks = false,
+      supportsAmbientCacheManagement = false,
+    ),
+  offlineManagerBackend: OfflineManager = EmptyOfflineManager,
   internal val physicalScope: CoroutineScope =
     CoroutineScope(SupervisorJob() + Dispatchers.Default),
   internal val snapshotterAdapterFactory: SnapshotterAdapterFactory =
     UnsupportedSnapshotterAdapterFactory,
   internal val styleEvaluator: StyleCompositionEvaluator = DefaultStyleCompositionEvaluator,
+  internal val resourceConfig: MapResourceConfig = MapResourceConfig(),
 ) : MapRuntime {
+  override val offlineManager: OfflineManager =
+    CapabilityCheckedOfflineManager(
+      capabilities = capabilities,
+      delegate = offlineManagerBackend,
+      requireRuntimeOpen = ::requireOpen,
+    )
   private val lock = reentrantLock()
   private val children = linkedSetOf<MapState>()
   private val snapshotters = linkedSetOf<MapSnapshotterImplementation>()
@@ -858,7 +943,7 @@ internal class RuntimeImplementation(
     initialCameraPosition: CameraPosition,
     initialBaseStyle: BaseStyle,
   ): MapState = lock.withLock {
-    if (closed) throw MapRuntimeClosedException()
+    requireOpenLocked()
     MapState(this, initialCameraPosition, initialBaseStyle).also(children::add)
   }
 
@@ -866,8 +951,23 @@ internal class RuntimeImplementation(
     baseStyle: BaseStyle,
     styleComposition: StyleComposition,
   ): MapSnapshotter = lock.withLock {
-    if (closed) throw MapRuntimeClosedException()
+    requireOpenLocked()
     MapSnapshotterImplementation(this, baseStyle, styleComposition).also(snapshotters::add)
+  }
+
+  final override fun setRequestInterceptor(interceptor: MapRequestInterceptor?) {
+    lock.withLock {
+      requireOpenLocked()
+      resourceConfig.setInterceptor(interceptor)
+    }
+  }
+
+  private fun requireOpen() {
+    lock.withLock { requireOpenLocked() }
+  }
+
+  private fun requireOpenLocked() {
+    if (closed) throw MapRuntimeClosedException()
   }
 
   override fun close() {

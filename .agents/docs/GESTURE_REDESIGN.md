@@ -9,10 +9,8 @@ callback), and [#952](https://github.com/maplibre/maplibre-compose/issues/952)
 (double-click callback). The shapes below are representative, not locked. A
 prototype will change them.
 
-This ships in the same release as step 4 of
-[API_REDESIGN.md](./API_REDESIGN.md), and it designs against that API:
-`MaplibreMap(state)` with the camera on `MapState`. `GestureOptions` is deleted,
-with no compatibility layer.
+This ships against the ownership API: `MaplibreMap(state)` with the camera on
+`MapState`. `GestureOptions` is deleted, with no compatibility layer.
 
 ## What the current code is
 
@@ -219,9 +217,8 @@ cost.
 The internal `GestureTarget` and `GestureContinuation` become a public
 gesture-camera facet of `MapState` — a narrow handle such as
 `state.gestureCamera`, so the state's main camera API stays `setCamera` and
-`animateCamera`. Per-frame gesture deltas are commands in the execution model of
-[API_REDESIGN.md](./API_REDESIGN.md): async, no result. Discrete eased gestures
-are the awaiting variants.
+`animateCamera`. Per-frame gesture deltas are async camera commands with no
+result. Discrete eased gestures are the awaiting variants.
 
 The gesture-token and continuation lifecycle stays owned by the gesture node in
 the UI, because gestures attach and detach with the render session. The
@@ -296,8 +293,7 @@ that gains emission later lights up with no API change.
 ## Attachment
 
 `MaplibreMap(state)` takes `gestures: MapGestures = MapGestures.Standard` in
-place of the `gestureOptions` parameter sketched in
-[API_REDESIGN.md](./API_REDESIGN.md). The parameter is the only public
+place of a `gestureOptions` parameter. The parameter is the only public
 attachment in 0.16. A public `Modifier.mapGestures(state, gestures)` can be
 extracted later without breaking the parameter form, so it waits for demand.
 
@@ -315,26 +311,20 @@ extracted later without breaking the parameter form, so it waits for demand.
 
 ## Sequence
 
-All in 0.16. The phases are PR sequencing against the API redesign work, which
-is in flight on the `api-redesign-*` branches.
+All in 0.16. These phases land on the ownership API.
 
 1. **Value model.** Events, filters, bindings, actions, `MapGestures`, in
-   `commonMain`, referencing no map state type. Parallel with the redesign
-   branches; conflicts with nothing in flight.
+   `commonMain`, referencing no map state type.
 2. **Arena rewrite.** `MapPointerGesture` reads bindings instead of
    `GestureOptions` and inline conditionals. Behavior-identical at `Standard`,
    verified against the existing `commonTest` and `liveMapTest` suites,
    including the token-ordering tests. `GestureOptions` is deleted. Still
-   against the internal `GestureTarget` seam, so still parallel.
+   against the internal `GestureTarget` seam.
 3. **New events.** Hover, double tap, long press as events with user actions
    (#951, #952), minus the layer walk.
-4. **Wiring after the `MapState` split lands.** The dispatch chain moves the
-   layer walk out of `MaplibreMap.kt` into delivery against the state-owned
-   composition host; `state.gestureCamera` becomes public; `MaplibreMap` takes
-   `gestures`. This phase serializes behind the `api-redesign-mapstate-split`
-   merge, because those PRs are rewriting the files it touches. The conflicts
-   confined to the attach points (`MaplibreMap.kt`, `MlnFfiMapView.kt`,
-   `JsMapView.kt`) are mechanical.
+4. **Wiring.** The dispatch chain moves the layer walk out of `MaplibreMap.kt`
+   into delivery against the state-owned composition host; `state.gestureCamera`
+   becomes public; `MaplibreMap` takes `gestures`.
 5. **Device work.** Trackpad scroll-pan through the continuous-scroll heuristic,
    trackpad pinch through Ctrl-scroll on web and the `Scale` events where a
    platform emits them, tilt velocity, and Shift-drag box zoom, as recognizers
@@ -351,7 +341,7 @@ until the query answers. A prototype decides.
 
 **Naming.** `MapGestures`, binding and action class names, and
 `state.gestureCamera` are placeholders. The final names follow the `MapState`
-naming that step 4 of the API redesign settles.
+naming in the ownership API.
 
 **Chain latency bounds.** The double-tap fallthrough waits on one
 `queryRenderedFeatures`. If a style makes that query slow, the zoom lags. A

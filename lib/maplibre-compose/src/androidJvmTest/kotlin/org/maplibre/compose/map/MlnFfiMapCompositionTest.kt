@@ -56,7 +56,6 @@ import org.maplibre.compose.mlnffi.FfiTestPlatform
 import org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions
 import org.maplibre.compose.mlnffi.runFfiComposeUiTest
 import org.maplibre.compose.mlnffi.setFfiTestMapContent
-import org.maplibre.compose.offline.rememberOfflineManager
 import org.maplibre.compose.offline.rememberOfflinePacksSource
 import org.maplibre.compose.overlay.MapOverlay
 import org.maplibre.compose.sources.GeoJsonData
@@ -455,7 +454,7 @@ class MlnFfiMapCompositionTest {
       onMapLoadFailed = { errors += "mapLoadFailed: $it" },
       onFrame = { onFrame() },
     ) {
-      val offlineManager = rememberOfflineManager()
+      val offlineManager = rememberMapRuntime().offlineManager
       FillLayer(
         id = "offline-packs",
         source = rememberOfflinePacksSource(offlineManager.packs),
@@ -537,26 +536,17 @@ class MlnFfiMapCompositionTest {
           requireNotNull(mapState.presentation?.adapter as? MlnFfiMapSession) {
             "no native session"
           }
-        waitUntil(
-          conditionDescription = "the initial layer to reach the native style",
-          timeoutMillis = RENDER_TIMEOUT_MILLIS,
-        ) {
+        waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
           "toggled" in session.currentStyleLayerIds()
         }
 
         visible = false
-        waitUntil(
-          conditionDescription = "the removed layer to leave the native style",
-          timeoutMillis = RENDER_TIMEOUT_MILLIS,
-        ) {
+        waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
           "toggled" !in session.currentStyleLayerIds()
         }
 
         visible = true
-        waitUntil(
-          conditionDescription = "the re-added layer to return to the native style",
-          timeoutMillis = RENDER_TIMEOUT_MILLIS,
-        ) {
+        waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
           "toggled" in session.currentStyleLayerIds()
         }
       }

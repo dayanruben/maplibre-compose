@@ -144,6 +144,7 @@ private fun MaplibreMapPresentation(
     rememberStyleComposition(
       composition = styleComposition,
       maybeStyle = rememberedStyle,
+      mapState = state,
       replaceableSourceIds = state.desiredStyleRevision.sources.mapTo(mutableSetOf()) { it.id },
       replaceableLayerIds =
         state.desiredStyleRevision.layers.mapTo(mutableSetOf()) {
@@ -207,7 +208,7 @@ private fun MaplibreMapPresentation(
         }
 
         override fun onSourceChanged(map: MapAdapter, sourceId: String?) {
-          state.refreshStyleSources(map, sourceId)
+          state.refreshStyleSources(map)
         }
 
         override fun onCameraMoveStarted(map: MapAdapter, reason: CameraMoveReason) {

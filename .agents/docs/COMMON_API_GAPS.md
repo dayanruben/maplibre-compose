@@ -18,16 +18,15 @@ The sequence they belong to is:
 2. ~~Once it surpasses the Android and iOS integrations in quality, rewrite
    those on maplibre-native-ffi too.~~ Done: every non-web platform runs on
    maplibre-native-ffi.
-3. Redesign the public API and internal architecture around that one native
+3. ~~Redesign the public API and internal architecture around that one native
    integration, deciding along the way whether web folds in via Wasm or stays on
-   MapLibre GL JS. In progress; [API_REDESIGN.md](./API_REDESIGN.md) is the
-   plan.
+   MapLibre GL JS.~~ Done. Web stays on MapLibre GL JS. The public map API is
+   `MapRuntime`, `MapState`, and `MapPresentation`.
 4. Implement the missing common APIs once — twice at most, if web stays separate
    — against that shared integration.
 
-Everything below is step 4 work. It waits on step 3 because the redesign decides
-the objects these APIs attach to, such as the runtime that owns HTTP and offline
-work.
+Everything below is step 4 work. The ownership API decides the objects these
+APIs attach to, such as the runtime that owns HTTP and offline work.
 
 The corollary is that **what the FFI can do is the target surface**. Whether the
 Android or iOS SDK exposes a capability today does not decide whether it belongs
@@ -38,11 +37,11 @@ Found by diffing the public surface of `MapHandle`, `RuntimeHandle`, and
 `RenderSessionHandle` against desktop call sites during the desktop rewrite.
 Nothing here is a desktop bug.
 
-## Architecture to fix at step 3
+## Architecture the redesign addressed
 
 Not missing capabilities — shapes in the common layer that the desktop rewrite
-had to work around, and that step 3 is the moment to fix rather than reproduce.
-The desktop rewrite exposed them.
+had to work around, and that the ownership API was the moment to fix rather than
+reproduce. The desktop rewrite exposed them.
 
 **Unloading the outgoing style is a contract no engine states.** Switching a
 style has to mark the previous one unloaded, because `LayerManager` skips anchor
@@ -98,18 +97,9 @@ per-map options.
 
 ## HTTP header transforms
 
-A hook to add or rewrite request headers for every resource the map fetches —
-the usual home for an `Authorization` header or an API key that does not belong
-in a URL.
-
-- FFI: `setHttpHeaderTransform`, `clearHttpHeaderTransform`
-  ([#509](https://github.com/maplibre/maplibre-native-ffi/pull/509))
-
-Related to the resource-transform entry below, and worth designing with it: one
-rewrites the URL, the other the headers, and an application adding credentials
-needs whichever the server expects. Note the FFI reports this as unsupported on
-OpenHarmony, whose HTTP client cannot intercept redirects, so a common API has
-to tolerate a platform declining it.
+Done: `MapRequestInterceptor` on `MapRuntime` / `MapRuntimeOptions`. Native
+installs `setHttpHeaderTransform`; web sets `transformRequest` headers. The
+install is skipped when the FFI reports the hook as unsupported.
 
 ## Missing style images
 
@@ -125,14 +115,10 @@ See the `MAP_STYLE_IMAGE_MISSING` branch in `MlnFfiMapSession.handleEvent`.
 
 ## Resource transform
 
-A hook to rewrite every resource URL before it is requested — how applications
-add API keys, route through a proxy, or redirect to a local mirror.
-
-- FFI: `setResourceTransform`, `clearResourceTransform`
-
-The FFI integration already has a broader mechanism in `MlnFfiResourceProvider`,
-which serves resources rather than only rewriting their URLs. The redesign
-should decide which of the two is the public API, rather than shipping both.
+Done: the same `MapRequestInterceptor` rewrites URLs. Native installs
+`setResourceTransform`. `MapResourceProvider` is the public serve-bytes API;
+`MlnFfiResourceProvider` remains the internal packaged-resource adapter and
+composes the user provider in front of `jar:file:` / `file:` reads.
 
 ## Offline database merge
 

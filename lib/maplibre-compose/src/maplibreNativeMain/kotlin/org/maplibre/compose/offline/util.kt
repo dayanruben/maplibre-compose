@@ -20,7 +20,7 @@ import org.maplibre.spatialk.geojson.toJson
  */
 private const val INCLUDE_IDEOGRAPHS = true
 
-internal fun OfflinePackDefinition.toFfiRegionDefinition(pixelRatio: Float): FfiRegionDefinition =
+internal fun OfflinePackDefinition.toFfiRegionDefinition(): FfiRegionDefinition =
   when (this) {
     is OfflinePackDefinition.TilePyramid ->
       FfiRegionDefinition.TilePyramid(
@@ -47,12 +47,13 @@ internal fun OfflinePackDefinition.toFfiRegionDefinition(pixelRatio: Float): Ffi
  * reports it as `Unknown`, which carries no style URL and so cannot become an
  * [OfflinePackDefinition].
  */
-internal fun FfiRegionDefinition.toOfflinePackDefinition(logger: Logger): OfflinePackDefinition? =
+internal fun FfiRegionDefinition.toOfflinePackDefinition(logger: Logger?): OfflinePackDefinition? =
   when (this) {
     is FfiRegionDefinition.TilePyramid ->
       OfflinePackDefinition.TilePyramid(
         styleUrl = styleUrl,
         bounds = bounds.toBoundingBox(),
+        pixelRatio = pixelRatio,
         minZoom = minZoom.toInt(),
         // MapLibre spells "no maximum" as infinity, which does not survive a conversion to Int.
         maxZoom = maxZoom.takeIf { it.isFinite() }?.toInt(),
@@ -61,16 +62,17 @@ internal fun FfiRegionDefinition.toOfflinePackDefinition(logger: Logger): Offlin
       OfflinePackDefinition.Shape(
         styleUrl = styleUrl,
         shape = geometry.toGeoJsonGeometry(logger),
+        pixelRatio = pixelRatio,
         minZoom = minZoom.toInt(),
         maxZoom = maxZoom.takeIf { it.isFinite() }?.toInt(),
       )
     else -> {
-      logger.w { "Ignoring an offline region with an unrecognized definition: $this" }
+      logger?.w { "Ignoring an offline region with an unrecognized definition: $this" }
       null
     }
   }
 
-internal fun OfflineRegionStatus.toDownloadProgress(logger: Logger): DownloadProgress =
+internal fun OfflineRegionStatus.toDownloadProgress(logger: Logger?): DownloadProgress =
   DownloadProgress.Healthy(
     completedResourceCount = completedResourceCount,
     completedResourceBytes = completedResourceSize,
@@ -84,7 +86,7 @@ internal fun OfflineRegionStatus.toDownloadProgress(logger: Logger): DownloadPro
         else -> {
           // Download states are value classes over Int rather than enums, so a newer native runtime
           // can report one this build has never seen.
-          logger.w { "Unrecognized offline download state $downloadState; reporting it as paused" }
+          logger?.w { "Unrecognized offline download state $downloadState; reporting it as paused" }
           DownloadStatus.Paused
         }
       },
@@ -106,12 +108,12 @@ internal fun ResourceErrorReason.toDownloadErrorReason(): String =
     else -> "REASON_OTHER"
   }
 
-private fun ByteArray.toGeoJsonGeometry(logger: Logger): Geometry = runCatching {
+private fun ByteArray.toGeoJsonGeometry(logger: Logger?): Geometry = runCatching {
   Geometry.fromJson(decodeToString())
 }
   .getOrElse {
     // An unreadable shape has no GeoJSON spelling; an empty collection keeps the pack listed and
     // deletable.
-    logger.w(it) { "Offline region shape has no readable GeoJSON; reporting it as empty" }
+    logger?.w(it) { "Offline region shape has no readable GeoJSON; reporting it as empty" }
     GeometryCollection<Geometry>(emptyList())
   }
