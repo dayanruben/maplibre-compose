@@ -1,6 +1,6 @@
 package org.maplibre.compose.offline
 
-import org.maplibre.compose.map.MapRuntimeCapabilities
+import kotlinx.io.files.Path
 
 /** Manages the offline packs and ambient cache that belong to one map runtime. */
 public interface OfflineManager {
@@ -50,6 +50,22 @@ public interface OfflineManager {
   public suspend fun invalidate(pack: OfflinePack)
 
   /**
+   * Merges the offline packs and their resources from [databaseFile] into this manager's database.
+   *
+   * [databaseFile] must identify a readable MapLibre offline database with the same schema version
+   * as this runtime's database. The merge does not modify the source database. Ambient-cache
+   * resources are not imported.
+   *
+   * The returned set contains the packs represented by the source database. It includes an existing
+   * pack when the source contains the same definition and metadata. Imported packs can be
+   * incomplete when the source database does not contain every required resource.
+   *
+   * @throws UnsupportedOperationException if the runtime does not support offline packs.
+   * @throws OfflineManagerException if the operation failed.
+   */
+  public suspend fun mergeDatabase(databaseFile: Path): Set<OfflinePack>
+
+  /**
    * Checks ambient-cache resources against the server and downloads changed resources.
    *
    * @throws UnsupportedOperationException if the runtime does not support ambient-cache management.
@@ -74,99 +90,95 @@ public interface OfflineManager {
   public suspend fun setMaximumAmbientCacheSize(size: Long)
 }
 
-internal class CapabilityCheckedOfflineManager(
-  private val capabilities: MapRuntimeCapabilities,
+internal class RuntimeBoundOfflineManager(
   private val delegate: OfflineManager,
   private val requireRuntimeOpen: () -> Unit,
 ) : OfflineManager {
   override val packs: Set<OfflinePack>
-    get() =
-      if (capabilities.supportsOfflinePacks) delegate.packs.onEach(::bindToRuntime) else emptySet()
+    get() = delegate.packs.onEach(::bindToRuntime)
 
   override suspend fun create(
     definition: OfflinePackDefinition,
     metadata: ByteArray,
   ): OfflinePack {
-    requireOfflinePackOperation()
+    requireRuntimeOpen()
     return bindToRuntime(delegate.create(definition, metadata))
   }
 
   override fun resume(pack: OfflinePack) {
-    requireOfflinePackOperation()
+    requireRuntimeOpen()
     delegate.resume(pack)
   }
 
   override fun pause(pack: OfflinePack) {
-    requireOfflinePackOperation()
+    requireRuntimeOpen()
     delegate.pause(pack)
   }
 
   override suspend fun delete(pack: OfflinePack) {
-    requireOfflinePackOperation()
+    requireRuntimeOpen()
     delegate.delete(pack)
   }
 
   override suspend fun invalidate(pack: OfflinePack) {
-    requireOfflinePackOperation()
+    requireRuntimeOpen()
     delegate.invalidate(pack)
   }
 
+  override suspend fun mergeDatabase(databaseFile: Path): Set<OfflinePack> {
+    requireRuntimeOpen()
+    return delegate.mergeDatabase(databaseFile).onEach(::bindToRuntime)
+  }
+
   override suspend fun invalidateAmbientCache() {
-    requireAmbientCacheOperation()
+    requireRuntimeOpen()
     delegate.invalidateAmbientCache()
   }
 
   override suspend fun clearAmbientCache() {
-    requireAmbientCacheOperation()
+    requireRuntimeOpen()
     delegate.clearAmbientCache()
   }
 
   override suspend fun setMaximumAmbientCacheSize(size: Long) {
-    requireAmbientCacheOperation()
+    requireRuntimeOpen()
     delegate.setMaximumAmbientCacheSize(size)
   }
 
   private fun bindToRuntime(pack: OfflinePack): OfflinePack = pack.bindToRuntime(requireRuntimeOpen)
-
-  private fun requireOfflinePackOperation() {
-    requireRuntimeOpen()
-    if (!capabilities.supportsOfflinePacks) {
-      throw UnsupportedOperationException("This map runtime does not support offline packs")
-    }
-  }
-
-  private fun requireAmbientCacheOperation() {
-    requireRuntimeOpen()
-    if (!capabilities.supportsAmbientCacheManagement) {
-      throw UnsupportedOperationException(
-        "This map runtime does not support ambient-cache management"
-      )
-    }
-  }
 }
 
-internal object EmptyOfflineManager : OfflineManager {
+internal object UnsupportedOfflineManager : OfflineManager {
   override val packs: Set<OfflinePack> = emptySet()
 
   override suspend fun create(
     definition: OfflinePackDefinition,
     metadata: ByteArray,
-  ): OfflinePack = unsupported()
+  ): OfflinePack = unsupportedOfflinePacks()
 
-  override fun resume(pack: OfflinePack): Unit = unsupported()
+  override fun resume(pack: OfflinePack): Unit = unsupportedOfflinePacks()
 
-  override fun pause(pack: OfflinePack): Unit = unsupported()
+  override fun pause(pack: OfflinePack): Unit = unsupportedOfflinePacks()
 
-  override suspend fun delete(pack: OfflinePack): Unit = unsupported()
+  override suspend fun delete(pack: OfflinePack): Unit = unsupportedOfflinePacks()
 
-  override suspend fun invalidate(pack: OfflinePack): Unit = unsupported()
+  override suspend fun invalidate(pack: OfflinePack): Unit = unsupportedOfflinePacks()
 
-  override suspend fun invalidateAmbientCache(): Unit = unsupported()
+  override suspend fun mergeDatabase(databaseFile: Path): Set<OfflinePack> =
+    unsupportedOfflinePacks()
 
-  override suspend fun clearAmbientCache(): Unit = unsupported()
+  override suspend fun invalidateAmbientCache(): Unit = unsupportedAmbientCacheManagement()
 
-  override suspend fun setMaximumAmbientCacheSize(size: Long): Unit = unsupported()
+  override suspend fun clearAmbientCache(): Unit = unsupportedAmbientCacheManagement()
 
-  private fun unsupported(): Nothing =
-    error("The capability wrapper must reject unsupported offline operations")
+  override suspend fun setMaximumAmbientCacheSize(size: Long): Unit =
+    unsupportedAmbientCacheManagement()
+
+  private fun unsupportedOfflinePacks(): Nothing =
+    throw UnsupportedOperationException("This map runtime does not support offline packs")
+
+  private fun unsupportedAmbientCacheManagement(): Nothing =
+    throw UnsupportedOperationException(
+      "This map runtime does not support ambient-cache management"
+    )
 }

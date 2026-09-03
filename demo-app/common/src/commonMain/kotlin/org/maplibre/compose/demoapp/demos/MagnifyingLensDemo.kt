@@ -13,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -49,7 +48,6 @@ import org.maplibre.compose.demoapp.design.SegmentedRow
 import org.maplibre.compose.demoapp.design.SliderRow
 import org.maplibre.compose.demoapp.design.SwitchRow
 import org.maplibre.compose.map.GestureOptions
-import org.maplibre.compose.map.MapPresentationOptions
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.RenderOptions
 import org.maplibre.compose.map.rememberMapState
@@ -96,9 +94,8 @@ object MagnifyingLensDemo : Demo {
 
   @Composable
   override fun MapOverlayScope.Overlay(state: DemoAppState) {
-    val lensState = rememberMapState(runtime = state.mapRuntime)
     val appliedStyle = state.appliedStyle
-    SideEffect { lensState.style.baseStyle = appliedStyle.base }
+    val lensState = rememberMapState(runtime = state.mapRuntime, baseStyle = appliedStyle.base)
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val lensSizePx = with(density) { lensSize.dp.toPx() }
@@ -129,13 +126,13 @@ object MagnifyingLensDemo : Demo {
         val position = mapState.cameraPosition
         val target =
           currentLensCenter?.let {
-            presentation?.positionFromScreenLocation(
+            mapState.positionFromScreenLocation(
               with(density) { DpOffset(it.x.toDp(), it.y.toDp()) }
             )
           } ?: position.target
         position.copy(target = target, zoom = position.zoom + magnification)
       }
-        .collect { lensState.presentation?.setCameraPosition(it) }
+        .collect { lensState.setCameraPosition(it) }
     }
 
     Box(
@@ -165,14 +162,10 @@ object MagnifyingLensDemo : Demo {
             Modifier.fillMaxSize()
           },
         state = lensState,
-        presentationOptions =
-          MapPresentationOptions(
-            renderOptions = lensRenderOptions,
-            gestureOptions = GestureOptions.AllDisabled,
-          ),
+        renderOptions = lensRenderOptions,
+        gestureOptions = GestureOptions.AllDisabled,
         contentWindowInsets = WindowInsets(0),
-        overlay = MapOverlay.None,
-      )
+      ) {}
       Box(
         Modifier.fillMaxSize()
           .background(

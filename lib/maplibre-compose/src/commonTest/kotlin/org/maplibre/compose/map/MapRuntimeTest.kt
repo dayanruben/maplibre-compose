@@ -24,14 +24,14 @@ class MapRuntimeTest {
       assertTrue(second.isClosed)
       resourcesClosed = true
     }
-    first = runtime.createMapState()
-    second = runtime.createMapState()
+    first = runtime.createMapState(BaseStyle.Demo)
+    second = runtime.createMapState(BaseStyle.Demo)
 
     runtime.close()
 
     assertTrue(first.isClosed)
     assertTrue(second.isClosed)
-    assertFailsWith<MapRuntimeClosedException> { runtime.createMapState() }
+    assertFailsWith<IllegalStateException> { runtime.createMapState(BaseStyle.Demo) }
     runtime.awaitClosed()
     assertTrue(resourcesClosed)
   }
@@ -39,14 +39,14 @@ class MapRuntimeTest {
   @Test
   fun child_closure_does_not_close_its_runtime() = runTest {
     val runtime = mapRuntimeForTest()
-    val first = runtime.createMapState()
+    val first = runtime.createMapState(BaseStyle.Demo)
 
     first.close()
     first.awaitClosed()
 
     assertTrue(first.isClosed)
     assertFalse(runtime.isClosed)
-    val second = runtime.createMapState()
+    val second = runtime.createMapState(BaseStyle.Demo)
     assertNotSame(first, second)
     runtime.close()
     runtime.awaitClosed()
@@ -58,7 +58,7 @@ class MapRuntimeTest {
     var secondResourcesClosed = false
     val first = mapRuntimeForTest { firstResourcesClosed = true }
     val second = mapRuntimeForTest { secondResourcesClosed = true }
-    val secondState = second.createMapState()
+    val secondState = second.createMapState(BaseStyle.Demo)
 
     first.close()
     first.awaitClosed()
@@ -66,7 +66,7 @@ class MapRuntimeTest {
     assertTrue(firstResourcesClosed)
     assertFalse(secondResourcesClosed)
     assertFalse(secondState.isClosed)
-    second.createMapState().close()
+    second.createMapState(BaseStyle.Demo).close()
     second.close()
     second.awaitClosed()
     assertTrue(secondResourcesClosed)
@@ -83,11 +83,11 @@ class MapRuntimeTest {
         zoom = 9.0,
       )
 
-    val state = runtime.createMapState(camera, BaseStyle.Empty)
+    val state = runtime.createMapState(baseStyle = BaseStyle.Empty, initialCameraPosition = camera)
 
     assertTrue(state.cameraPosition == camera)
     assertTrue(state.style.baseStyle == BaseStyle.Empty)
-    assertTrue(state.presentation == null)
+    assertTrue(state.currentMapAttachment == null)
     state.close()
     runtime.close()
   }
@@ -121,10 +121,10 @@ class MapRuntimeTest {
 
     runtime.close()
 
-    assertFailsWith<MapRuntimeClosedException> {
+    assertFailsWith<IllegalStateException> {
       runtime.createSnapshotter(BaseStyle.Empty, StyleComposition.Empty)
     }
-    assertFailsWith<MapSnapshotterClosedException> {
+    assertFailsWith<IllegalStateException> {
       snapshotter.capture(MapSnapshotRequest(1, 1))
     }
     runtime.awaitClosed()

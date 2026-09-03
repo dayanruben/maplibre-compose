@@ -1,9 +1,7 @@
 package org.maplibre.compose.gljs
 
 import androidx.compose.foundation.layout.size
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.unit.dp
@@ -124,7 +122,6 @@ class BrowserMapStyleStateTest {
   fun a_detached_web_map_keeps_its_desired_style_pending_and_replays_it(): Promise<*> =
     runBrowserMapTest {
       val runtime = createMapRuntime(MapRuntimeOptions())
-      val state = runtime.createMapState(initialBaseStyle = STYLE_A)
       val presented = mutableStateOf(true)
       val useLatestRevision = mutableStateOf(false)
       val composition = StyleComposition {
@@ -135,21 +132,22 @@ class BrowserMapStyleStateTest {
           visible = true,
         )
       }
+      val state = runtime.createMapState(baseStyle = STYLE_A, styleComposition = composition)
 
       setBrowserMapContent {
-        if (presented.value) MaplibreMap(state, styleComposition = composition)
+        if (presented.value) MaplibreMap(state = state)
       }
       waitUntilMap("style A to become ready") {
-        state.presentation != null && state.style.loadState == StyleLoadState.Ready
+        state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
       }
-      val initialSession = requireNotNull(state.presentation).adapter as GlJsMapSession
+      val initialSession = requireNotNull(state.currentMapAttachment).adapter as GlJsMapSession
       assertTrue(
         initialSession.engineMapForTest()?.getStyle()?.layers?.any { it.id == "initial-overlay" } ==
           true
       )
 
       runOnIdle { presented.value = false }
-      waitUntilMap("the Web map to detach") { state.presentation == null }
+      waitUntilMap("the Web map to detach") { state.currentMapAttachment == null }
       runOnIdle {
         useLatestRevision.value = true
         state.style.baseStyle = STYLE_B
@@ -174,9 +172,9 @@ class BrowserMapStyleStateTest {
       try {
         runOnIdle { presented.value = true }
         waitUntilMap("style B to load on the replacement map") {
-          state.presentation != null && state.style.loadState == StyleLoadState.Ready
+          state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
         }
-        val session = requireNotNull(state.presentation).adapter as GlJsMapSession
+        val session = requireNotNull(state.currentMapAttachment).adapter as GlJsMapSession
 
         assertTrue(layerAdditions.indexOf("initial-overlay") >= 0)
         assertTrue(
@@ -203,21 +201,21 @@ class BrowserMapStyleStateTest {
   fun a_web_presentation_waits_for_a_viewport_and_survives_style_failure(): Promise<*> =
     runBrowserMapTest {
       val runtime = createMapRuntime(MapRuntimeOptions())
-      val state = runtime.createMapState(initialBaseStyle = STYLE_A)
+      val state = runtime.createMapState(baseStyle = STYLE_A)
       val size = mutableStateOf(0.dp)
 
-      setBrowserMapContent { MaplibreMap(state, modifier = Modifier.size(size.value)) }
+      setBrowserMapContent { MaplibreMap(state = state, modifier = Modifier.size(size.value)) }
       waitForIdle()
 
-      assertNull(state.presentation)
+      assertNull(state.currentMapAttachment)
       assertEquals(StyleLoadState.Pending, state.style.loadState)
 
       runOnIdle { size.value = 128.dp }
       waitUntilMap("the attached style to become ready") {
-        state.presentation != null && state.style.loadState == StyleLoadState.Ready
+        state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
       }
-      val presentation = requireNotNull(state.presentation)
-      val session = requireNotNull(state.presentation).adapter as GlJsMapSession
+      val presentation = requireNotNull(state.currentMapAttachment)
+      val session = requireNotNull(state.currentMapAttachment).adapter as GlJsMapSession
 
       assertNotNull(session.engineMapForTest())
       assertTrue(session.canPresentFrames)
@@ -227,7 +225,7 @@ class BrowserMapStyleStateTest {
         state.style.loadState is StyleLoadState.Failed
       }
 
-      assertTrue(state.presentation === presentation)
+      assertTrue(state.currentMapAttachment === presentation)
       assertTrue(presentation.isValid)
       assertFalse(session.canPresentFrames, "the failed map surface must remain hidden")
 
@@ -242,7 +240,7 @@ class BrowserMapStyleStateTest {
       var styleState: MapStyleState? = null
       var mapState: MapState? = null
       setBrowserMapContent {
-        val current = rememberMapState(initialBaseStyle = tileJsonStyle)
+        val current = rememberMapState(baseStyle = tileJsonStyle)
         mapState = current
         styleState = current.style
         MaplibreMap(state = current, modifier = Modifier)
@@ -253,7 +251,7 @@ class BrowserMapStyleStateTest {
 
       assertEquals(
         listOf("fetched attribution"),
-        styleState?.sources?.values?.map { it.attributionHtml },
+        styleState?.sources?.map { it.attributionHtml },
         "loading is only finished once a source's TileJSON has arrived; the attribution UI reads " +
           "this the moment it is told",
       )
@@ -270,10 +268,9 @@ class BrowserMapStyleStateTest {
       var styleState: MapStyleState? = null
       var mapState: MapState? = null
       setBrowserMapContent {
-        val logicalMap = rememberMapState(initialBaseStyle = current.value)
+        val logicalMap = rememberMapState(baseStyle = current.value)
         mapState = logicalMap
         styleState = logicalMap.style
-        SideEffect { logicalMap.style.baseStyle = current.value }
         MaplibreMap(state = logicalMap, modifier = Modifier)
       }
       waitUntilMap("the first style to load") {
@@ -282,7 +279,7 @@ class BrowserMapStyleStateTest {
 
       current.value = tileJsonStyle
       waitUntilMap("the switched style's attribution to be reported") {
-        styleState?.sources?.values?.map { it.attributionHtml } == listOf("fetched attribution")
+        styleState?.sources?.map { it.attributionHtml } == listOf("fetched attribution")
       }
     } finally {
       restoreFetch()
@@ -299,21 +296,15 @@ class BrowserMapStyleStateTest {
         var styleState: MapStyleState? = null
         var mapState: MapState? = null
         setBrowserMapContent {
-          val logicalMap = rememberMapState(initialBaseStyle = BaseStyle.Empty)
-          mapState = logicalMap
-          styleState = logicalMap.style
-          val composition = remember {
-            StyleComposition {
+          val logicalMap =
+            rememberMapState(baseStyle = BaseStyle.Empty) {
               if (showLateSource.value) {
                 RasterLayer(id = "late-layer", source = source, visible = true)
               }
             }
-          }
-          MaplibreMap(
-            state = logicalMap,
-            styleComposition = composition,
-            modifier = Modifier,
-          )
+          mapState = logicalMap
+          styleState = logicalMap.style
+          MaplibreMap(state = logicalMap, modifier = Modifier)
         }
         waitUntilMap("the empty map to finish loading") {
           mapState?.style?.loadState == StyleLoadState.Ready
@@ -321,16 +312,16 @@ class BrowserMapStyleStateTest {
 
         showLateSource.value = true
 
-        waitUntilMap("the late source's initial snapshot") { styleState?.sources?.size == 1 }
-        assertEquals(listOf(""), styleState?.sources?.values?.map { it.attributionHtml })
-        val initialSource = styleState?.sources?.values?.single()
+        waitUntilMap("the late source's initial snapshot") { styleState?.sources?.count() == 1 }
+        assertEquals(listOf(""), styleState?.sources?.map { it.attributionHtml })
+        val initialSource = styleState?.sources?.single()
 
         waitUntilMap("MapLibre to request the TileJSON") { tileJson.isRequested() }
         tileJson.resolve()
         waitUntilMap("the late source's attribution") {
-          styleState?.sources?.values?.map { it.attributionHtml } == listOf("fetched attribution")
+          styleState?.sources?.map { it.attributionHtml } == listOf("fetched attribution")
         }
-        assertNotSame(initialSource, styleState?.sources?.values?.single())
+        assertNotSame(initialSource, styleState?.sources?.single())
         assertEquals(
           StyleLoadState.Ready,
           mapState?.style?.loadState,
@@ -348,40 +339,34 @@ class BrowserMapStyleStateTest {
     var identity: StyleIdentity? = null
     var mapState: MapState? = null
     setBrowserMapContent {
-      val logicalMap = rememberMapState(initialBaseStyle = current.value)
+      val logicalMap =
+        rememberMapState(baseStyle = current.value) {
+          identity = LocalStyleNode.current.style.identity
+        }
       mapState = logicalMap
       styleState = logicalMap.style
-      SideEffect { logicalMap.style.baseStyle = current.value }
-      val composition = remember {
-        StyleComposition { identity = LocalStyleNode.current.style.identity }
-      }
-      MaplibreMap(
-        state = logicalMap,
-        styleComposition = composition,
-        modifier = Modifier,
-      )
+      MaplibreMap(state = logicalMap, modifier = Modifier)
     }
     waitUntilMap("the first style to load") {
-      mapState?.style?.loadState == StyleLoadState.Ready &&
-        styleState?.sources?.isNotEmpty() == true
+      mapState?.style?.loadState == StyleLoadState.Ready && styleState?.sources?.any() == true
     }
     val firstIdentity = identity
     assertEquals(
       listOf("first attribution"),
-      styleState?.sources?.values?.map { it.attributionHtml },
+      styleState?.sources?.map { it.attributionHtml },
     )
 
     val observed = mutableListOf<List<String>>()
     current.value = styleWith("second", "second-source")
     waitUntilMap("the second style's sources to be reported") {
-      styleState?.sources?.values?.map { it.attributionHtml }?.let { observed += it }
+      styleState?.sources?.map { it.attributionHtml }?.let { observed += it }
       mapState?.style?.loadState == StyleLoadState.Ready &&
-        styleState?.sources?.keys == setOf("second-source")
+        styleState?.sources?.map { it.id }?.toSet() == setOf("second-source")
     }
 
     assertEquals(
       listOf("second attribution"),
-      styleState?.sources?.values?.map { it.attributionHtml },
+      styleState?.sources?.map { it.attributionHtml },
     )
     assertNotSame(firstIdentity, identity)
     assertTrue(

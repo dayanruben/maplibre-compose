@@ -17,7 +17,6 @@ import org.maplibre.compose.desktop.ComposeMapPresentationHost
 import org.maplibre.compose.desktop.ProvideMapPresentationHost
 import org.maplibre.compose.mlnffi.ComposeRenderBackend
 import org.maplibre.compose.mlnffi.FfiTestPlatform
-import org.maplibre.compose.mlnffi.MlnFfiApplication
 import org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions
 import org.maplibre.compose.mlnffi.runFfiComposeUiTest
 import org.maplibre.compose.style.BaseStyle
@@ -38,9 +37,8 @@ class DesktopPresentationHostLifetimeTest {
   @Test
   fun replacing_a_compatible_presentation_host_keeps_the_runtime_logical_map_and_engine() =
     runFfiComposeUiTest {
-      MlnFfiApplication.configure(runtimeOptions)
       val runtime = createNativeMapRuntime(runtimeOptions)
-      val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
+      val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
       var host by
         mutableStateOf(
           ContextlessPresentationHost("first", equalityKey = "same"),
@@ -49,21 +47,21 @@ class DesktopPresentationHostLifetimeTest {
 
       setContent {
         ProvideMapPresentationHost(host) {
-          MaplibreMap(state)
+          MaplibreMap(state = state)
         }
       }
-      waitUntil(timeoutMillis = 10_000) { state.presentation != null }
-      val firstPresentation = requireNotNull(state.presentation)
+      waitUntil(timeoutMillis = 10_000) { state.currentMapAttachment != null }
+      val firstPresentation = requireNotNull(state.currentMapAttachment)
       val engine = firstPresentation.adapter
 
       runOnIdle { host = ContextlessPresentationHost("second", equalityKey = "same") }
       waitUntil(timeoutMillis = 10_000) {
-        state.presentation != null && state.presentation !== firstPresentation
+        state.currentMapAttachment != null && state.currentMapAttachment !== firstPresentation
       }
 
       assertTrue(!firstPresentation.isValid)
-      assertNotSame(firstPresentation, state.presentation)
-      assertSame(engine, requireNotNull(state.presentation).adapter)
+      assertNotSame(firstPresentation, state.currentMapAttachment)
+      assertSame(engine, requireNotNull(state.currentMapAttachment).adapter)
       assertSame(runtime, state.runtime)
       assertTrue(!runtime.isClosed)
       assertTrue(!state.isClosed)
@@ -75,14 +73,14 @@ class DesktopPresentationHostLifetimeTest {
   @Test
   fun inspection_mode_does_not_require_a_presentation_host() = runFfiComposeUiTest {
     val runtime = createNativeMapRuntime(runtimeOptions)
-    val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
+    val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
 
     setContent {
-      CompositionLocalProvider(LocalInspectionMode provides true) { MaplibreMap(state) }
+      CompositionLocalProvider(LocalInspectionMode provides true) { MaplibreMap(state = state) }
     }
 
     waitForIdle()
-    assertTrue(state.presentation == null)
+    assertTrue(state.currentMapAttachment == null)
     runtime.close()
     runtime.awaitClosed()
   }

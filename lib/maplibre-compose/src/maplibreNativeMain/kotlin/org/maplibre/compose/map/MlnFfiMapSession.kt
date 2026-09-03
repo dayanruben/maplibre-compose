@@ -92,6 +92,7 @@ import org.maplibre.nativeffi.geo.ScreenPoint
 import org.maplibre.nativeffi.map.DebugOption
 import org.maplibre.nativeffi.map.MapHandle
 import org.maplibre.nativeffi.map.MapProjectionHandle
+import org.maplibre.nativeffi.map.ProjectionModeOptions
 import org.maplibre.nativeffi.map.TileLodMode as FfiTileLodMode
 import org.maplibre.nativeffi.map.TileOptions
 import org.maplibre.nativeffi.query.RenderedQueryGeometry
@@ -325,6 +326,7 @@ internal class MlnFfiMapSession(
 
   @Volatile private var maximumFps: Int? = null
   private var cameraConstraints: CameraConstraints? = null
+  private var cameraProjection: CameraProjection = CameraProjection.Perspective
   private var tileLodOptions: TileLodOptions = TileLodOptions.Standard
   private var lastRenderTime = TimeSource.Monotonic.markNow()
 
@@ -818,18 +820,19 @@ internal class MlnFfiMapSession(
           return
         }
         val acceptedStyle =
-          lifecycleCallbacks.onStyleChanged(engine, producer.request, this, binding)
+          lifecycleCallbacks.onStyleChanged(engine, producer.request, this, binding) { identity ->
+            // Live handles from the previous binding must not write into a style that is gone.
+            styleBinding?.invalidate()
+            styleBinding = binding
+            featureStateReplayPending.store(true)
+            lifecycleStyleIdentity = identity
+            styleLoadUnreported = true
+            reportedUrlAttribution.clear()
+          }
         if (acceptedStyle == null) {
           binding.invalidate()
           return
         }
-        // Live handles from the previous binding must not write into a style that is gone.
-        styleBinding?.invalidate()
-        styleBinding = binding
-        featureStateReplayPending.store(true)
-        lifecycleStyleIdentity = acceptedStyle
-        styleLoadUnreported = true
-        reportedUrlAttribution.clear()
         // A producer frame that started before this callback can still hold the previous style.
         // requestRepaint dirties mbgl so the next renderUpdate draws instead of returning
         // NO_UPDATE; requestRender lets that draw through the session skip gate.
@@ -1262,13 +1265,13 @@ internal class MlnFfiMapSession(
 
   /**
    * A resize changes the projection without a camera event, so Compose overlays that read
-   * [MapPresentation.viewport] would keep the previous screen locations unless this reports the new
+   * [MapState.viewport] would keep the previous screen locations unless this reports the new
    * snapshot.
    */
   private fun snapshotViewportAndNotify(map: MapHandle) {
     snapshotViewport(map)
     // The first attach snapshot can land before the lease is Attached. Seed from the snapshot
-    // itself so a dropped camera callback cannot leave MapPresentation.viewport null.
+    // itself so a dropped camera callback cannot leave MapState.viewport null.
     lifecycleAuthority.seedCurrentPresentationViewport(this)
     withLifecyclePresentation { engine, lease ->
       lifecycleCallbacks.onCameraMoved(engine, lease, this)
@@ -1354,7 +1357,7 @@ internal class MlnFfiMapSession(
     }
   }
 
-  override fun setCameraPosition(
+  override fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
@@ -1364,7 +1367,7 @@ internal class MlnFfiMapSession(
       map.jumpTo(cameraForBounds(map, boundingBox, bearing, tilt, padding))
       snapshotViewport(map)
     }
-    // MapPresentation waits for the current lease's viewport before it calls this adapter.
+    // MapState waits for the current attachment's viewport before it calls this adapter.
     val hasViewport = stateLock.withLock {
       hasAttachedViewport && lifecycle.acceptsWork && loop != null
     }
@@ -1425,7 +1428,7 @@ internal class MlnFfiMapSession(
     }
   }
 
-  override suspend fun animateCameraPosition(
+  override suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
@@ -1592,12 +1595,18 @@ internal class MlnFfiMapSession(
 
   override fun setRenderSettings(value: RenderOptions) {
     maximumFps = value.maximumFps
+    val cameraProjectionChanged = cameraProjection != value.cameraProjection
+    cameraProjection = value.cameraProjection
     configureMap { map ->
       map.debugOptions = buildSet {
         if (value.isTileBordersEnabled) add(DebugOption.TILE_BORDERS)
         if (value.isTileTimestampsEnabled) add(DebugOption.TIMESTAMPS)
         if (value.isCollisionBoxesEnabled) add(DebugOption.COLLISION)
         if (value.isTileParseStatusEnabled) add(DebugOption.PARSE_STATUS)
+      }
+      if (cameraProjectionChanged) {
+        map.projectionMode = value.cameraProjection.toFfi()
+        snapshotViewportAndNotify(map)
       }
     }
   }
@@ -1633,13 +1642,13 @@ internal class MlnFfiMapSession(
                       result = runCatching { PlatformMapScope(map).block() }
                     }
                   if (!authorityAccepted) {
-                    throw IllegalStateException(
+                    throw CancellationException(
                       "The native platform map changed before access could begin"
                     )
                   }
                 }
               if (!engineAccepted) {
-                throw IllegalStateException(
+                throw CancellationException(
                   "The native platform map changed before access could begin"
                 )
               }
@@ -1648,11 +1657,13 @@ internal class MlnFfiMapSession(
           },
           abandon = {
             invocation.fail(
-              IllegalStateException("The native platform map changed before access could begin")
+              CancellationException("The native platform map changed before access could begin")
             )
           },
         )
-      if (!queued) invocation.fail(MapStateClosedException())
+      if (!queued) {
+        invocation.fail(CancellationException("The map state closed before access could begin"))
+      }
     }
   }
 
@@ -1724,7 +1735,7 @@ internal class MlnFfiMapSession(
           session
             .queryRenderedFeatures(geometry, renderedQueryOptions(layerIds, predicate))
             .toGeoJsonFeatures()
-            // Native walks style layers from the bottom. MapPresentation and GL JS put the
+            // Native walks style layers from the bottom. MapState and GL JS put the
             // feature in front first.
             .asReversed()
         }
@@ -1989,4 +2000,16 @@ private fun TileLodMode.toFfi(): FfiTileLodMode =
   when (this) {
     TileLodMode.Default -> FfiTileLodMode.DEFAULT
     TileLodMode.Distance -> FfiTileLodMode.DISTANCE
+  }
+
+private fun CameraProjection.toFfi(): ProjectionModeOptions =
+  ProjectionModeOptions().also { options ->
+    when (this) {
+      CameraProjection.Perspective -> options.axonometric = false
+      is CameraProjection.Axonometric -> {
+        options.axonometric = true
+        options.xSkew = xSkew
+        options.ySkew = ySkew
+      }
+    }
   }

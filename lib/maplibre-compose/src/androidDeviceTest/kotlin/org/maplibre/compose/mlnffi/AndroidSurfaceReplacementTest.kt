@@ -24,12 +24,13 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.first
-import org.maplibre.compose.map.MapPresentationCallbacks
+import org.maplibre.compose.map.DefaultMapRuntime
 import org.maplibre.compose.map.MapState
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.MlnFfiMapSession
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.overlay.MapOverlay
+import org.maplibre.compose.overlay.include
 import org.maplibre.compose.style.BaseStyle
 
 class AndroidSurfaceReplacementTest {
@@ -37,7 +38,7 @@ class AndroidSurfaceReplacementTest {
   @Test
   fun a_surface_map_without_an_overlay_produces_a_frame_after_replacement() {
     val cacheFile = FfiTestPlatform.createCacheFile()
-    MlnFfiApplication.configure(
+    DefaultMapRuntime.installForTest(
       MlnFfiRuntimeOptions(cacheFile = cacheFile, maximumCacheSizeBytes = null)
     )
 
@@ -73,7 +74,7 @@ class AndroidSurfaceReplacementTest {
         )
       }
     } finally {
-      MlnFfiApplication.resetForTest()
+      DefaultMapRuntime.resetForTest()
       FfiTestPlatform.deleteCacheFile(cacheFile)
     }
   }
@@ -195,7 +196,7 @@ class SurfaceReplacementActivity : ComponentActivity() {
     setContent {
       if (showingReplacement) {
         TestMap(
-          overlay = MapOverlay.None,
+          overlay = MapOverlay {},
           onState = { replacementState = it },
           onPresentation = { replacementPresentation.countDown() },
           onFrame = {
@@ -223,7 +224,7 @@ class SurfaceReplacementActivity : ComponentActivity() {
 
   fun diagnostic(): String {
     val state = if (showingReplacement) replacementState else initialState
-    val session = state?.presentation?.adapter as? MlnFfiMapSession
+    val session = state?.currentMapAttachment?.adapter as? MlnFfiMapSession
     val surfaces =
       window.decorView.descendants().filterIsInstance<SurfaceView>().joinToString(
         prefix = "[",
@@ -233,7 +234,7 @@ class SurfaceReplacementActivity : ComponentActivity() {
           "size=${surface.width}x${surface.height}"
       }
     return "showingReplacement=$showingReplacement, " +
-      "presentation=${state?.presentation != null}, style=${state?.style?.loadState}, " +
+      "presentation=${state?.currentMapAttachment != null}, style=${state?.style?.loadState}, " +
       "frames=${initialFrameCount.get()}/${replacementFrameCount.get()}, " +
       "nativeTargets=${session?.attachCount}/${session?.retargetCount}, surfaces=$surfaces"
   }
@@ -246,18 +247,19 @@ private fun TestMap(
   onPresentation: () -> Unit,
   onFrame: () -> Unit,
 ) {
-  val state = rememberMapState(initialBaseStyle = SOLID_STYLE)
+  val state = rememberMapState(baseStyle = SOLID_STYLE)
   LaunchedEffect(state) {
     onState(state)
-    snapshotFlow { state.presentation }.first { it != null }
+    snapshotFlow { state.currentMapAttachment }.first { it != null }
     onPresentation()
   }
   MaplibreMap(
     state = state,
     modifier = Modifier.fillMaxSize(),
-    callbacks = MapPresentationCallbacks(onFrame = { onFrame() }),
-    overlay = overlay,
-  )
+    onFrame = { onFrame() },
+  ) {
+    include(overlay)
+  }
 }
 
 private fun View.descendants(): Sequence<View> = sequence {

@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
-import org.maplibre.compose.map.MapPresentation
 import org.maplibre.compose.map.MapState
 import org.maplibre.compose.map.MapStyleState
 import org.maplibre.spatialk.geojson.Position
@@ -46,10 +45,6 @@ import org.maplibre.spatialk.geojson.Position
 public interface MapOverlayScope {
   /** The logical map that this overlay belongs to. */
   public val mapState: MapState
-
-  /** The map's current presentation, or null while the surface is attaching. */
-  public val presentation: MapPresentation?
-    get() = mapState.presentation
 
   /** The style state of the map that this overlay belongs to. */
   public val style: MapStyleState
@@ -129,10 +124,8 @@ public fun MapOverlayScope.include(overlay: MapOverlay) {
 }
 
 /**
- * The controls that a [MaplibreMap][org.maplibre.compose.map.MaplibreMap] draws on top of itself.
+ * Reusable controls that a [MaplibreMap][org.maplibre.compose.map.MaplibreMap] draws over itself.
  */
-// A holder rather than a parameter of MaplibreMap: a composable lambda parameter that has a
-// receiver breaks the composable target inference of the map's own `content` parameter.
 @Immutable
 public class MapOverlay(
   internal val content: @Composable @UiComposable MapOverlayScope.() -> Unit
@@ -150,7 +143,7 @@ public class MapOverlay(
      */
     public val Default: MapOverlay = MapOverlay {
       DisappearingScaleBar(
-        metersPerDp = presentation?.viewport?.metersPerDpAtTarget ?: 0.0,
+        metersPerDp = mapState.viewport?.metersPerDpAtTarget ?: 0.0,
         zoom = mapState.cameraPosition.zoom,
         modifier = Modifier.align(Alignment.TopStart),
       )
@@ -167,15 +160,12 @@ public class MapOverlay(
         overlayScope.ExpandingAttributionButton()
       }
     }
-
-    /** Draws the map alone. Use this when you draw the attribution your style requires yourself. */
-    public val None: MapOverlay = MapOverlay {}
   }
 }
 
 @Composable
 internal fun MapOverlayHost(
-  overlay: MapOverlay,
+  overlay: @Composable @UiComposable MapOverlayScope.() -> Unit,
   mapState: MapState,
   contentWindowInsets: WindowInsets,
   modifier: Modifier = Modifier,
@@ -184,7 +174,10 @@ internal fun MapOverlayHost(
     remember(mapState, contentWindowInsets) {
       MapOverlayScopeImpl(mapState, contentWindowInsets)
     }
-  Layout(modifier = modifier, content = { overlay.content(scope) }) { measurables, constraints ->
+  Layout(
+    modifier = modifier,
+    content = { overlay(scope) },
+  ) { measurables, constraints ->
     val width = if (constraints.hasBoundedWidth) constraints.maxWidth else 0
     val height = if (constraints.hasBoundedHeight) constraints.maxHeight else 0
     val spacing = MapOverlay.Spacing.roundToPx()
@@ -213,15 +206,14 @@ internal fun MapOverlayHost(
       // Aligned children stay put when the camera moves. Reading the viewport here would
       // invalidate this layout on every frame of a camera ease, so it is read only when a child
       // needs placing; the read is also what re-runs this layout when the transform changes.
-      val presentation = if (hasPlacedAt) mapState.presentation else null
-      val viewport = presentation?.viewport
+      val viewport = if (hasPlacedAt) mapState.viewport else null
       measurables.forEachIndexed { index, measurable ->
         val placeable = placeables[index]
         when (val child = measurable.parentData as? OverlayChildData) {
           is OverlayChildData.PlacedAt -> {
             if (viewport == null || width == 0 || height == 0) return@forEachIndexed
             val screen =
-              presentation.screenLocationFromPosition(child.position) ?: return@forEachIndexed
+              mapState.screenLocationFromPosition(child.position) ?: return@forEachIndexed
             val aligned =
               child.alignment.align(
                 size = IntSize(placeable.width, placeable.height),
@@ -241,7 +233,7 @@ internal fun MapOverlayHost(
             val intersection =
               if (viewport == null || innerWidth == 0 || innerHeight == 0) null
               else {
-                presentation.screenLocationFromPosition(child.position)?.let { screen ->
+                mapState.screenLocationFromPosition(child.position)?.let { screen ->
                   findEllipseIntersection(
                     area =
                       Rect(

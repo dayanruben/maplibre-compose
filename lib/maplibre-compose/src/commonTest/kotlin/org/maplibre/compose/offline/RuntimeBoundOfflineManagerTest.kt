@@ -6,40 +6,36 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
-import org.maplibre.compose.map.MapRuntimeCapabilities
-import org.maplibre.compose.map.MapRuntimeClosedException
+import kotlinx.io.files.Path
 import org.maplibre.compose.map.MapRuntimeResources
 import org.maplibre.compose.map.RuntimeImplementation
 import org.maplibre.spatialk.geojson.BoundingBox
 
-class OfflineManagerCapabilitiesTest {
+class RuntimeBoundOfflineManagerTest {
   @Test
-  fun offline_pack_operations_require_only_the_offline_pack_capability() = runTest {
-    val backend = RecordingOfflineManager()
-    val runtime =
-      runtime(backend, supportsOfflinePacks = false, supportsAmbientCacheManagement = true)
+  fun unsupported_backend_rejects_every_operation() = runTest {
+    val pack = RecordingOfflineManager().pack
+    val runtime = runtime(UnsupportedOfflineManager)
     val manager = runtime.offlineManager
 
     assertEquals(emptySet(), manager.packs)
     assertFailsWith<UnsupportedOperationException> { manager.create(definition) }
-    assertFailsWith<UnsupportedOperationException> { manager.resume(backend.pack) }
-    assertFailsWith<UnsupportedOperationException> { manager.pause(backend.pack) }
-    assertFailsWith<UnsupportedOperationException> { manager.delete(backend.pack) }
-    assertFailsWith<UnsupportedOperationException> { manager.invalidate(backend.pack) }
-    assertEquals(emptyList(), backend.calls)
-
-    manager.invalidateAmbientCache()
-    manager.clearAmbientCache()
-    manager.setMaximumAmbientCacheSize(1)
-    assertEquals(listOf("invalidate ambient", "clear ambient", "set ambient size"), backend.calls)
+    assertFailsWith<UnsupportedOperationException> { manager.resume(pack) }
+    assertFailsWith<UnsupportedOperationException> { manager.pause(pack) }
+    assertFailsWith<UnsupportedOperationException> { manager.delete(pack) }
+    assertFailsWith<UnsupportedOperationException> { manager.invalidate(pack) }
+    assertFailsWith<UnsupportedOperationException> { manager.mergeDatabase(databaseFile) }
+    assertFailsWith<UnsupportedOperationException> { manager.invalidateAmbientCache() }
+    assertFailsWith<UnsupportedOperationException> { manager.clearAmbientCache() }
+    assertFailsWith<UnsupportedOperationException> { manager.setMaximumAmbientCacheSize(1) }
     runtime.close()
+    runtime.awaitClosed()
   }
 
   @Test
-  fun ambient_cache_operations_require_only_the_ambient_cache_capability() = runTest {
+  fun supported_backend_receives_every_operation() = runTest {
     val backend = RecordingOfflineManager()
-    val runtime =
-      runtime(backend, supportsOfflinePacks = true, supportsAmbientCacheManagement = false)
+    val runtime = runtime(backend)
     val manager = runtime.offlineManager
 
     assertSame(backend.pack, manager.packs.single())
@@ -48,16 +44,31 @@ class OfflineManagerCapabilitiesTest {
     manager.pause(backend.pack)
     manager.delete(backend.pack)
     manager.invalidate(backend.pack)
+    assertEquals(setOf(backend.mergedPack), manager.mergeDatabase(databaseFile))
     assertEquals(
-      listOf("create", "resume", "pause", "delete", "invalidate"),
+      listOf("create", "resume", "pause", "delete", "invalidate", "merge"),
       backend.calls,
     )
 
-    assertFailsWith<UnsupportedOperationException> { manager.invalidateAmbientCache() }
-    assertFailsWith<UnsupportedOperationException> { manager.clearAmbientCache() }
-    assertFailsWith<UnsupportedOperationException> { manager.setMaximumAmbientCacheSize(1) }
-    assertEquals(5, backend.calls.size)
+    manager.invalidateAmbientCache()
+    manager.clearAmbientCache()
+    manager.setMaximumAmbientCacheSize(1)
+    assertEquals(
+      listOf(
+        "create",
+        "resume",
+        "pause",
+        "delete",
+        "invalidate",
+        "merge",
+        "invalidate ambient",
+        "clear ambient",
+        "set ambient size",
+      ),
+      backend.calls,
+    )
     runtime.close()
+    runtime.awaitClosed()
   }
 
   @Test
@@ -67,8 +78,6 @@ class OfflineManagerCapabilitiesTest {
     val runtime =
       runtime(
         backend,
-        supportsOfflinePacks = true,
-        supportsAmbientCacheManagement = true,
         resources = MapRuntimeResources { releaseCleanup.await() },
       )
     val manager = runtime.offlineManager
@@ -78,16 +87,17 @@ class OfflineManagerCapabilitiesTest {
 
     runtime.close()
 
-    assertFailsWith<MapRuntimeClosedException> { manager.create(definition) }
-    assertFailsWith<MapRuntimeClosedException> { manager.resume(backend.pack) }
-    assertFailsWith<MapRuntimeClosedException> { manager.pause(backend.pack) }
-    assertFailsWith<MapRuntimeClosedException> { manager.delete(backend.pack) }
-    assertFailsWith<MapRuntimeClosedException> { manager.invalidate(backend.pack) }
-    assertFailsWith<MapRuntimeClosedException> { manager.invalidateAmbientCache() }
-    assertFailsWith<MapRuntimeClosedException> { manager.clearAmbientCache() }
-    assertFailsWith<MapRuntimeClosedException> { manager.setMaximumAmbientCacheSize(1) }
-    assertFailsWith<MapRuntimeClosedException> { retainedPack.setMetadata(byteArrayOf(1)) }
-    assertFailsWith<MapRuntimeClosedException> { createdPack.setMetadata(byteArrayOf(1)) }
+    assertFailsWith<IllegalStateException> { manager.create(definition) }
+    assertFailsWith<IllegalStateException> { manager.resume(backend.pack) }
+    assertFailsWith<IllegalStateException> { manager.pause(backend.pack) }
+    assertFailsWith<IllegalStateException> { manager.delete(backend.pack) }
+    assertFailsWith<IllegalStateException> { manager.invalidate(backend.pack) }
+    assertFailsWith<IllegalStateException> { manager.mergeDatabase(databaseFile) }
+    assertFailsWith<IllegalStateException> { manager.invalidateAmbientCache() }
+    assertFailsWith<IllegalStateException> { manager.clearAmbientCache() }
+    assertFailsWith<IllegalStateException> { manager.setMaximumAmbientCacheSize(1) }
+    assertFailsWith<IllegalStateException> { retainedPack.setMetadata(byteArrayOf(1)) }
+    assertFailsWith<IllegalStateException> { createdPack.setMetadata(byteArrayOf(1)) }
     assertEquals(emptyList(), backend.calls)
 
     releaseCleanup.complete(Unit)
@@ -96,19 +106,12 @@ class OfflineManagerCapabilitiesTest {
 
   private fun runtime(
     backend: OfflineManager,
-    supportsOfflinePacks: Boolean,
-    supportsAmbientCacheManagement: Boolean,
     resources: MapRuntimeResources = MapRuntimeResources {},
   ) =
     RuntimeImplementation(
       platformOptions = null,
       resources = resources,
       logger = null,
-      capabilities =
-        MapRuntimeCapabilities(
-          supportsOfflinePacks = supportsOfflinePacks,
-          supportsAmbientCacheManagement = supportsAmbientCacheManagement,
-        ),
       offlineManagerBackend = backend,
     )
 
@@ -116,6 +119,7 @@ class OfflineManagerCapabilitiesTest {
     val calls = mutableListOf<String>()
     val pack = pack(regionId = 1)
     val createdPack = pack(regionId = 2)
+    val mergedPack = pack(regionId = 3)
 
     override val packs: Set<OfflinePack> = setOf(pack)
 
@@ -139,6 +143,9 @@ class OfflineManagerCapabilitiesTest {
     override suspend fun invalidate(pack: OfflinePack) {
       calls += "invalidate"
     }
+
+    override suspend fun mergeDatabase(databaseFile: Path): Set<OfflinePack> =
+      setOf(mergedPack).also { calls += "merge" }
 
     override suspend fun invalidateAmbientCache() {
       calls += "invalidate ambient"
@@ -168,5 +175,7 @@ class OfflineManagerCapabilitiesTest {
         bounds = BoundingBox(west = -1.0, south = -1.0, east = 1.0, north = 1.0),
         pixelRatio = 1f,
       )
+
+    val databaseFile = Path("source-offline.db")
   }
 }

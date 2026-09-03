@@ -43,7 +43,7 @@ internal fun MlnFfiMapView(
   onReset: () -> Unit,
   logger: Logger?,
   callbacks: MapAdapter.Callbacks,
-  options: MapPresentationOptions,
+  options: MapViewOptions,
 ) {
   val density = LocalDensity.current
 
@@ -87,7 +87,7 @@ internal fun MlnFfiMapView(
   onReset: () -> Unit,
   logger: Logger?,
   callbacks: MapAdapter.Callbacks,
-  options: MapPresentationOptions,
+  options: MapViewOptions,
 ) {
   val applicationOptions = state.runtime.nativeRuntimeOptions
   val layoutDirection = LocalLayoutDirection.current
@@ -136,15 +136,15 @@ internal fun MlnFfiMapView(
       session.attachPresentation()
       if (!session.isPresentationPublished) {
         currentUpdate.value(session)
-        if (state.presentation?.adapter !== session) return@LaunchedEffect
+        if (state.currentMapAttachment?.adapter !== session) return@LaunchedEffect
       }
       session.publishRetainedStyle()
-    } catch (error: CancellationException) {
-      throw error
     } catch (_: MapClosedException) {
       // A still-mounted UI on a closed map is inert.
     } catch (_: MapLeaseInvalidatedException) {
       // Detach or close won before attach finished.
+    } catch (error: CancellationException) {
+      throw error
     } catch (error: Throwable) {
       callbacks.onMapFailLoading(session, error.message)
     }

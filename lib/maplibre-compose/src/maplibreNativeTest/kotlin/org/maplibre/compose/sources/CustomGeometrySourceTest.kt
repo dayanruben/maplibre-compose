@@ -171,18 +171,17 @@ class CustomGeometrySourceTest {
         requests += tile
         cover(tile.bounds, featureName)
       }
-    binding.install(source)
+    val handle = state.style.sources.add(source)
     binding.install(FillLayer(id = "custom-fill", source = source))
     state.desiredStyleRevision =
       DesiredStyleRevision(listOf(source.definition()), emptyList(), emptyList())
-    return assertIs<CustomGeometrySourceHandle>(state.style.source(SOURCE_ID))
+    return assertIs<CustomGeometrySourceHandle>(handle)
   }
 
   private suspend fun BridgeMapFixture.queryCenter() =
     session.queryRenderedFeatures(offset = CENTER, layerIds = null, predicate = null)
 
-  private suspend fun MlnFfiMapFixture.queryCenter() =
-    presentation.queryRenderedFeatures(offset = CENTER)
+  private suspend fun MlnFfiMapFixture.queryCenter() = state.queryRenderedFeatures(offset = CENTER)
 
   private fun BridgeMapFixture.awaitCustomFeatures() {
     pumpUntil("the custom geometry source to request a tile") { requests.isNotEmpty() }

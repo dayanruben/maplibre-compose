@@ -41,7 +41,7 @@ class PlatformMapAccessTest {
 
       assertEquals("maplibre-compose-map", callbackThread)
       assertTrue(callbackThread != callerThread)
-      assertNull(state.presentation)
+      assertNull(state.currentMapAttachment)
     }
   }
 
@@ -80,7 +80,7 @@ class PlatformMapAccessTest {
       state.awaitClosed()
 
       var callbackRan = false
-      assertFailsWith<MapStateClosedException> {
+      assertFailsWith<IllegalStateException> {
         state.withPlatformMap {
           callbackRan = true
           map
@@ -147,7 +147,7 @@ class PlatformMapAccessTest {
         state.publishPresentation(token, replacement)
         releaseOwner.open()
 
-        val failure = assertFailsWith<IllegalStateException> { access.await() }
+        val failure = assertFailsWith<CancellationException> { access.await() }
         assertEquals("The native platform map changed before access could begin", failure.message)
       }
       assertFalse(callbackRan)
@@ -203,7 +203,7 @@ class PlatformMapAccessTest {
         resources = MapRuntimeResources {},
         logger = null,
       )
-    val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
+    val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
     try {
       block(state, runtime)
     } finally {

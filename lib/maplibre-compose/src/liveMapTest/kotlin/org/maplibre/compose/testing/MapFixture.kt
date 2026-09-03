@@ -9,8 +9,8 @@ import kotlin.time.TimeSource
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.map.GestureTarget
 import org.maplibre.compose.map.MapAdapter
+import org.maplibre.compose.map.MapAttachment
 import org.maplibre.compose.map.MapExtent
-import org.maplibre.compose.map.MapPresentation
 import org.maplibre.compose.map.MapState
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.StyleBinding
@@ -26,9 +26,6 @@ internal interface MapFixture : AutoCloseable {
 
   /** Public logical-map surface exercised by style-handle tests. */
   val state: MapState
-
-  /** Public lease surface exercised by viewport-bound tests. */
-  val presentation: MapPresentation
 
   val gestures: GestureTarget
 
@@ -131,9 +128,11 @@ expect class MapTestResult
 
 internal expect fun runMapTest(block: suspend () -> Unit): MapTestResult
 
-internal class RecordingMapCallbacks : MapAdapter.Callbacks {
+internal class RecordingMapCallbacks(
+  private val beforeStyleChanged: (MapAdapter, StyleBinding?) -> Unit = { _, _ -> }
+) : MapAdapter.Callbacks {
 
-  var presentation: MapPresentation? = null
+  var attachment: MapAttachment? = null
 
   val events: MutableList<String> = RecordingList()
 
@@ -145,8 +144,9 @@ internal class RecordingMapCallbacks : MapAdapter.Callbacks {
     private set
 
   override fun onStyleChanged(map: MapAdapter, style: StyleBinding?) {
+    beforeStyleChanged(map, style)
     this.style = style
-    presentation?.updateViewport(map.getViewport())
+    attachment?.updateViewport(map.getViewport())
     events += if (style == null) "styleChanged(null)" else MapFixture.STYLE_LOADED
   }
 
@@ -163,17 +163,17 @@ internal class RecordingMapCallbacks : MapAdapter.Callbacks {
   }
 
   override fun onCameraMoveStarted(map: MapAdapter, reason: CameraMoveReason) {
-    presentation?.cameraMoveStarted(reason)
+    attachment?.cameraMoveStarted(reason)
     events += "cameraMoveStarted($reason)"
   }
 
   override fun onCameraMoved(map: MapAdapter) {
-    presentation?.cameraMoved(map.getViewport())
+    attachment?.cameraMoved(map.getViewport())
     events += "cameraMoved"
   }
 
   override fun onCameraMoveEnded(map: MapAdapter) {
-    presentation?.let {
+    attachment?.let {
       it.cameraMoved(map.getViewport())
       it.cameraMoveEnded()
     }
@@ -189,6 +189,6 @@ internal class RecordingMapCallbacks : MapAdapter.Callbacks {
   }
 
   override fun onFrame(fps: Double) {
-    presentation?.let { it.cameraMoved(it.adapter.getViewport()) }
+    attachment?.let { it.cameraMoved(it.adapter.getViewport()) }
   }
 }

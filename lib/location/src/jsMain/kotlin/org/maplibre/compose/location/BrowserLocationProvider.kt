@@ -49,8 +49,7 @@ import web.permissions.query
  * no distance threshold.
  *
  * A missing Geolocation API maps [LocationProvider.backendAvailability] to
- * [LocationBackendAvailability.Unsupported], and collection emits
- * [LocationUnavailableReason.Unsupported].
+ * [LocationBackendAvailability.Unsupported].
  * [`GeolocationPositionError.PERMISSION_DENIED`](https://developer.mozilla.org/en-US/docs/Web/API/GeolocationPositionError/code#geolocationpositionerror.permission_denied)
  * maps to [LocationUnavailableReason.PermissionDenied].
  * [`POSITION_UNAVAILABLE`](https://developer.mozilla.org/en-US/docs/Web/API/GeolocationPositionError/code#geolocationpositionerror.position_unavailable)
@@ -93,10 +92,8 @@ internal constructor(
   override fun requestPermission(): Unit = requester.requestForegroundPermission()
 
   override fun updates(request: LocationRequest): Flow<LocationEvent> = callbackFlow {
-    if (!boundary.supported) {
-      trySend(LocationEvent.Unavailable(LocationUnavailableReason.Unsupported))
-      close()
-      return@callbackFlow
+    check(backendAvailability == LocationBackendAvailability.Available) {
+      "Location updates require an available backend: $backendAvailability"
     }
     var previous: BrowserPosition? = null
     fun publish(result: BrowserResult) {
@@ -403,7 +400,7 @@ private fun BrowserPosition.asLocationMeasurement(): LocationMeasurement =
     position = Position(longitude, latitude, altitude),
     horizontalAccuracy = horizontalAccuracyMeters.meters,
     altitudeAccuracy = if (altitude != null) altitudeAccuracyMeters?.meters else null,
-    speed = speedMetersPerSecond?.meters,
+    distancePerSecond = speedMetersPerSecond?.meters,
     course = headingDegrees?.takeIf { it.isFinite() }?.let { Bearing.North + it.degrees },
     measuredAt = capturedAt,
   )

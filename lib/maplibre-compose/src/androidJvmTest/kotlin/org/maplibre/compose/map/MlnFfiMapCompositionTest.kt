@@ -35,7 +35,6 @@ import kotlin.math.abs
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -58,6 +57,7 @@ import org.maplibre.compose.mlnffi.runFfiComposeUiTest
 import org.maplibre.compose.mlnffi.setFfiTestMapContent
 import org.maplibre.compose.offline.rememberOfflinePacksSource
 import org.maplibre.compose.overlay.MapOverlay
+import org.maplibre.compose.overlay.include
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.RasterSource
 import org.maplibre.compose.sources.rememberGeoJsonSource
@@ -101,14 +101,14 @@ class MlnFfiMapCompositionTest {
   @Test
   fun map_state_renders_a_base_style_and_publishes_one_presentation() = runFfiComposeUiTest {
     val runtime = createNativeMapRuntime(runtimeOptions)
-    val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
+    val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
 
-    setFfiTestMapContent(runtimeOptions) { MaplibreMap(state) }
+    setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-      state.presentation != null && state.style.loadState == StyleLoadState.Ready
+      state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
     }
 
-    assertTrue(state.presentation?.isValid == true)
+    assertTrue(state.currentMapAttachment?.isValid == true)
     assertTrue(
       onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty(),
       "the load placeholder should be absent after the base style is ready",
@@ -117,28 +117,32 @@ class MlnFfiMapCompositionTest {
     runtime.close()
     runtime.awaitClosed()
     assertTrue(state.isClosed)
-    assertNull(state.presentation)
+    assertNull(state.currentMapAttachment)
   }
 
   @Test
-  fun presentation_options_update_without_replacing_the_native_map() = runFfiComposeUiTest {
+  fun camera_constraints_update_without_replacing_the_native_map() = runFfiComposeUiTest {
     val runtime = createNativeMapRuntime(runtimeOptions)
-    val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
-    var options by mutableStateOf(MapPresentationOptions())
+    val state =
+      runtime.createMapState(
+        initialCameraPosition = CameraPosition(zoom = 1.0),
+        baseStyle = BaseStyle.Empty,
+      )
+    var constraints by mutableStateOf(CameraConstraints())
 
     setFfiTestMapContent(runtimeOptions) {
-      MaplibreMap(state, presentationOptions = options)
+      MaplibreMap(state = state, cameraConstraints = constraints)
     }
-    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.presentation != null }
-    val session = requireNotNull(state.presentation).adapter
-    val updated = MapPresentationOptions(zoomRange = 2f..18f, pitchRange = 3f..45f)
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.currentMapAttachment != null }
+    val session = requireNotNull(state.currentMapAttachment).adapter
+    val updated = CameraConstraints(minZoom = 2.0, maxZoom = 18.0, minPitch = 3.0, maxPitch = 45.0)
 
-    options = updated
+    constraints = updated
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-      state.presentation?.options == updated
+      session.getCameraPosition().zoom >= updated.minZoom
     }
 
-    assertSame(session, requireNotNull(state.presentation).adapter)
+    assertSame(session, requireNotNull(state.currentMapAttachment).adapter)
     runtime.close()
     runtime.awaitClosed()
   }
@@ -146,8 +150,6 @@ class MlnFfiMapCompositionTest {
   @Test
   fun one_style_composition_is_evaluated_independently_for_two_maps() = runFfiComposeUiTest {
     val runtime = createNativeMapRuntime(runtimeOptions)
-    val first = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
-    val second = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
     val evaluatorIdentities = mutableSetOf<Any>()
     var showFirst by mutableStateOf(true)
     val style = StyleComposition {
@@ -166,25 +168,33 @@ class MlnFfiMapCompositionTest {
         onDispose {}
       }
     }
+    val first = runtime.createMapState(baseStyle = BaseStyle.Empty, styleComposition = style)
+    val second = runtime.createMapState(baseStyle = BaseStyle.Empty, styleComposition = style)
 
     setFfiTestMapContent(runtimeOptions, presentationCount = 2) {
-      if (showFirst) MaplibreMap(first, style) else MaplibreMap(second, style)
+      if (showFirst) {
+        MaplibreMap(state = first)
+      } else {
+        MaplibreMap(state = second)
+      }
     }
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-      first.presentation != null &&
+      first.currentMapAttachment != null &&
         evaluatorIdentities.size == 1 &&
         first.desiredStyleRevision.layers.any { it.definition.id == "shared-layer" }
     }
-    val firstSession = first.presentation?.adapter as MlnFfiMapSession
+    val firstSession = first.currentMapAttachment?.adapter as MlnFfiMapSession
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
       "shared-layer" in firstSession.currentStyleLayerIds()
     }
 
     showFirst = false
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-      first.presentation == null && second.presentation != null && evaluatorIdentities.size == 2
+      first.currentMapAttachment == null &&
+        second.currentMapAttachment != null &&
+        evaluatorIdentities.size == 2
     }
-    val secondSession = second.presentation?.adapter as MlnFfiMapSession
+    val secondSession = second.currentMapAttachment?.adapter as MlnFfiMapSession
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
       "shared-layer" in secondSession.currentStyleLayerIds()
     }
@@ -208,7 +218,6 @@ class MlnFfiMapCompositionTest {
   fun one_style_composition_is_evaluated_independently_for_a_map_and_snapshotter() =
     runFfiComposeUiTest {
       val runtime = createNativeMapRuntime(runtimeOptions)
-      val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
       val evaluatorIdentities = mutableSetOf<Any>()
       val composition = StyleComposition {
         val evaluatorIdentity = remember { Any() }
@@ -218,10 +227,12 @@ class MlnFfiMapCompositionTest {
           onDispose {}
         }
       }
+      val state =
+        runtime.createMapState(baseStyle = BaseStyle.Empty, styleComposition = composition)
 
-      setFfiTestMapContent(runtimeOptions) { MaplibreMap(state, composition) }
+      setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-        state.presentation != null &&
+        state.currentMapAttachment != null &&
           state.style.loadState == StyleLoadState.Ready &&
           evaluatorIdentities.size == 1
       }
@@ -241,7 +252,6 @@ class MlnFfiMapCompositionTest {
   fun detached_native_map_keeps_its_applied_revision_until_current_state_is_reattached() =
     runFfiComposeUiTest {
       val runtime = createNativeMapRuntime(runtimeOptions)
-      val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
       var presented by mutableStateOf(true)
       var latest by mutableStateOf(false)
       val composition = StyleComposition {
@@ -250,27 +260,29 @@ class MlnFfiMapCompositionTest {
           color = const(if (latest) Color.Blue else Color.Red),
         )
       }
+      val state =
+        runtime.createMapState(baseStyle = BaseStyle.Empty, styleComposition = composition)
 
       setFfiTestMapContent(runtimeOptions, presentationCount = 2) {
-        if (presented) MaplibreMap(state, composition)
+        if (presented) MaplibreMap(state = state)
       }
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-        state.style.loadState == StyleLoadState.Ready && state.presentation != null
+        state.style.loadState == StyleLoadState.Ready && state.currentMapAttachment != null
       }
-      val session = requireNotNull(state.presentation).adapter as MlnFfiMapSession
+      val session = requireNotNull(state.currentMapAttachment).adapter as MlnFfiMapSession
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
         "initial-background" in session.currentStyleLayerIds()
       }
 
       presented = false
-      waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.presentation == null }
+      waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.currentMapAttachment == null }
       latest = true
       assertTrue("initial-background" in session.currentStyleLayerIds())
       assertTrue("latest-background" !in session.currentStyleLayerIds())
 
       presented = true
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-        state.presentation != null &&
+        state.currentMapAttachment != null &&
           state.desiredStyleRevision.layers.any {
             it.definition.id == "latest-background"
           }
@@ -288,7 +300,6 @@ class MlnFfiMapCompositionTest {
   fun a_later_revision_supersedes_reconciliation_failure_before_the_surface_is_revealed() =
     runFfiComposeUiTest {
       val runtime = createNativeMapRuntime(runtimeOptions)
-      val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
       var invalidAnchor by mutableStateOf(true)
       val composition = StyleComposition {
         if (invalidAnchor) {
@@ -299,8 +310,10 @@ class MlnFfiMapCompositionTest {
           BackgroundLayer(id = "application-background", color = const(Color.Blue))
         }
       }
+      val state =
+        runtime.createMapState(baseStyle = BaseStyle.Empty, styleComposition = composition)
 
-      setFfiTestMapContent(runtimeOptions) { MaplibreMap(state, composition) }
+      setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
         state.style.loadState is StyleLoadState.Failed
       }
@@ -313,7 +326,7 @@ class MlnFfiMapCompositionTest {
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
         state.style.loadState == StyleLoadState.Ready
       }
-      val session = requireNotNull(state.presentation).adapter as MlnFfiMapSession
+      val session = requireNotNull(state.currentMapAttachment).adapter as MlnFfiMapSession
       assertTrue("application-background" in session.currentStyleLayerIds())
       assertTrue(onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty())
 
@@ -325,43 +338,41 @@ class MlnFfiMapCompositionTest {
   fun a_map_state_retains_its_native_map_between_presentations() = runFfiComposeUiTest {
     val runtime = createNativeMapRuntime(runtimeOptions)
     val camera = CameraPosition(target = Position(longitude = 11.0, latitude = 47.0), zoom = 6.0)
-    val state =
-      runtime.createMapState(initialCameraPosition = camera, initialBaseStyle = BaseStyle.Empty)
+    val state = runtime.createMapState(initialCameraPosition = camera, baseStyle = BaseStyle.Empty)
     var presented by mutableStateOf(true)
 
     setFfiTestMapContent(runtimeOptions, presentationCount = 2) {
-      if (presented) MaplibreMap(state)
+      if (presented) MaplibreMap(state = state)
     }
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-      state.presentation != null && state.style.loadState == StyleLoadState.Ready
+      state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
     }
-    val firstPresentation = requireNotNull(state.presentation)
-    val firstMap = firstPresentation.adapter
+    val firstAttachment = requireNotNull(state.currentMapAttachment)
+    val firstMap = firstAttachment.adapter
 
     presented = false
-    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.presentation == null }
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.currentMapAttachment == null }
 
-    assertTrue(!firstPresentation.isValid)
-    assertFailsWith<IllegalStateException> { firstPresentation.setCameraPosition(CameraPosition()) }
+    assertTrue(!firstAttachment.isValid)
     assertEquals(StyleLoadState.Ready, state.style.loadState)
     state.style.baseStyle = BaseStyle.Json("{")
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-      state.presentation == null && state.style.loadState is StyleLoadState.Failed
+      state.currentMapAttachment == null && state.style.loadState is StyleLoadState.Failed
     }
     state.style.baseStyle = RETAINED_STYLE
     assertEquals(StyleLoadState.Loading, state.style.loadState)
 
     presented = true
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-      state.presentation != null && state.style.loadState == StyleLoadState.Ready
+      state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
     }
 
-    assertSame(firstMap, requireNotNull(state.presentation).adapter)
+    assertSame(firstMap, requireNotNull(state.currentMapAttachment).adapter)
     assertCameraEquals(camera, state.cameraPosition)
     assertTrue("retained-style" in (firstMap as MlnFfiMapSession).currentStyleLayerIds())
 
     presented = false
-    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.presentation == null }
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.currentMapAttachment == null }
     runtime.close()
     runtime.awaitClosed()
   }
@@ -375,33 +386,33 @@ class MlnFfiMapCompositionTest {
       val state =
         runtime.createMapState(
           initialCameraPosition = camera,
-          initialBaseStyle = REPLACEMENT_STYLE,
+          baseStyle = REPLACEMENT_STYLE,
         )
       var presented by mutableStateOf(true)
       var scaleFactor by mutableStateOf(1f)
 
       setFfiTestMapContent(runtimeOptions, presentationCount = 2) {
         CompositionLocalProvider(LocalDensity provides Density(scaleFactor)) {
-          if (presented) MaplibreMap(state)
+          if (presented) MaplibreMap(state = state)
         }
       }
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-        state.presentation != null && state.style.loadState == StyleLoadState.Ready
+        state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
       }
-      val firstPresentation = requireNotNull(state.presentation)
+      val firstPresentation = requireNotNull(state.currentMapAttachment)
       val firstMap = firstPresentation.adapter
 
       presented = false
-      waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.presentation == null }
+      waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.currentMapAttachment == null }
       scaleFactor = 2f
       presented = true
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-        state.presentation != null && state.style.loadState == StyleLoadState.Ready
+        state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
       }
 
-      val replacementMap = requireNotNull(state.presentation).adapter
+      val replacementMap = requireNotNull(state.currentMapAttachment).adapter
       assertTrue(!firstPresentation.isValid)
-      assertNotSame(firstPresentation, state.presentation)
+      assertNotSame(firstPresentation, state.currentMapAttachment)
       assertNotSame(firstMap, replacementMap)
       assertCameraEquals(camera, state.cameraPosition)
       assertTrue("replacement-style" in (replacementMap as MlnFfiMapSession).currentStyleLayerIds())
@@ -454,7 +465,7 @@ class MlnFfiMapCompositionTest {
       onMapLoadFailed = { errors += "mapLoadFailed: $it" },
       onFrame = { onFrame() },
     ) {
-      val offlineManager = rememberMapRuntime().offlineManager
+      val offlineManager = rememberDefaultMapRuntime().offlineManager
       FillLayer(
         id = "offline-packs",
         source = rememberOfflinePacksSource(offlineManager.packs),
@@ -533,7 +544,7 @@ class MlnFfiMapCompositionTest {
     runBridgeMapTest(
       body = {
         val session =
-          requireNotNull(mapState.presentation?.adapter as? MlnFfiMapSession) {
+          requireNotNull(mapState.currentMapAttachment?.adapter as? MlnFfiMapSession) {
             "no native session"
           }
         waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
@@ -579,12 +590,12 @@ class MlnFfiMapCompositionTest {
 
     runBridgeMapTest(
       body = {
-        val session = requireNotNull(mapState.presentation?.adapter as? MlnFfiMapSession)
+        val session = requireNotNull(mapState.currentMapAttachment?.adapter as? MlnFfiMapSession)
 
         layoutDirection = LayoutDirection.Rtl
         waitForIdle()
 
-        assertSame(session, mapState.presentation?.adapter)
+        assertSame(session, mapState.currentMapAttachment?.adapter)
         assertEquals(LayoutDirection.Rtl, session.layoutDirection)
       }
     ) { errors, onFrame ->
@@ -612,7 +623,8 @@ class MlnFfiMapCompositionTest {
 
     runBridgeMapTest(
       body = {
-        val map = requireNotNull(mapState.presentation?.adapter) { "The map never published" }
+        val map =
+          requireNotNull(mapState.currentMapAttachment?.adapter) { "The map never published" }
         val actual = map.getCameraPosition()
         assertEquals(
           firstPosition.target.longitude,
@@ -753,19 +765,20 @@ private fun TestMap(
   val state =
     rememberMapState(
       initialCameraPosition = initialCameraPosition,
-      initialBaseStyle = baseStyle,
-    )
-  val styleComposition = remember(content) { StyleComposition(content) }
+      baseStyle = baseStyle,
+    ) {
+      content()
+    }
   val loadState = state.style.loadState
   LaunchedEffect(loadState) {
     if (loadState is StyleLoadState.Failed) onMapLoadFailed(loadState.reason)
   }
   MaplibreMap(
     state = state,
-    styleComposition = styleComposition,
     modifier = modifier,
-    callbacks = MapPresentationCallbacks(onFrame = onFrame),
-    overlay = overlay,
-  )
+    onFrame = onFrame,
+  ) {
+    include(overlay)
+  }
   return state
 }

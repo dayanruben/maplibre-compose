@@ -12,15 +12,15 @@ import kotlin.math.abs
 import kotlin.test.Test
 import kotlin.test.assertNotSame
 import kotlin.test.assertTrue
+import org.maplibre.compose.map.DefaultMapRuntime
 import org.maplibre.compose.map.MapAdapter
 import org.maplibre.compose.map.MapRuntime
 import org.maplibre.compose.map.MapState
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.StyleLoadState
-import org.maplibre.compose.map.rememberMapRuntime
+import org.maplibre.compose.map.rememberDefaultMapRuntime
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.mlnffi.FfiTestPlatform
-import org.maplibre.compose.mlnffi.MlnFfiApplication
 import org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.spatialk.geojson.Position
@@ -31,27 +31,29 @@ class AndroidMapStateRecreationTest {
   @Test
   fun camera_position_survives_activity_recreation() {
     val cacheFile = FfiTestPlatform.createCacheFile()
-    MlnFfiApplication.configure(
+    DefaultMapRuntime.installForTest(
       MlnFfiRuntimeOptions(cacheFile = cacheFile, maximumCacheSizeBytes = null)
     )
 
     try {
       runAndroidComposeUiTest<MapStateRecreationActivity> {
-        waitUntil(timeoutMillis = TIMEOUT_MILLIS) { activity?.mapState?.presentation != null }
+        waitUntil(timeoutMillis = TIMEOUT_MILLIS) {
+          activity?.mapState?.currentMapAttachment != null
+        }
         val firstActivity = requireNotNull(activity)
         val firstState = requireNotNull(firstActivity.mapState)
         assertTrue(firstActivity.defaultRuntimeIsShared)
 
-        runOnIdle { requireNotNull(firstState.presentation).setCameraPosition(EXPECTED_CAMERA) }
+        runOnIdle { firstState.setCameraPosition(EXPECTED_CAMERA) }
         waitUntil(timeoutMillis = TIMEOUT_MILLIS) {
-          firstState.presentation?.adapter?.hasCamera(EXPECTED_CAMERA) == true
+          firstState.currentMapAttachment?.adapter?.hasCamera(EXPECTED_CAMERA) == true
         }
 
         runOnIdle { firstActivity.recreate() }
         waitUntil(timeoutMillis = TIMEOUT_MILLIS) {
           activity != null &&
             activity !== firstActivity &&
-            activity?.mapState?.presentation?.adapter?.hasCamera(EXPECTED_CAMERA) == true
+            activity?.mapState?.currentMapAttachment?.adapter?.hasCamera(EXPECTED_CAMERA) == true
         }
 
         val replacementActivity = requireNotNull(activity)
@@ -61,7 +63,7 @@ class AndroidMapStateRecreationTest {
         assertCamera(EXPECTED_CAMERA, restoredState.cameraPosition, "restored MapState")
         assertCamera(
           EXPECTED_CAMERA,
-          requireNotNull(restoredState.presentation).adapter.getCameraPosition(),
+          requireNotNull(restoredState.currentMapAttachment).adapter.getCameraPosition(),
           "replacement native map",
         )
         assertTrue(restoredState.style.baseStyle == BaseStyle.Empty)
@@ -71,7 +73,7 @@ class AndroidMapStateRecreationTest {
         )
       }
     } finally {
-      MlnFfiApplication.resetForTest()
+      DefaultMapRuntime.resetForTest()
       FfiTestPlatform.deleteCacheFile(cacheFile)
     }
   }
@@ -120,9 +122,9 @@ class MapStateRecreationActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     setContent {
-      val firstRuntime: MapRuntime = rememberMapRuntime()
-      val secondRuntime: MapRuntime = rememberMapRuntime()
-      val state = rememberMapState(firstRuntime, initialBaseStyle = BaseStyle.Empty)
+      val firstRuntime: MapRuntime = rememberDefaultMapRuntime()
+      val secondRuntime: MapRuntime = rememberDefaultMapRuntime()
+      val state = rememberMapState(firstRuntime, baseStyle = BaseStyle.Empty)
       SideEffect {
         mapState = state
         defaultRuntimeIsShared = firstRuntime === secondRuntime

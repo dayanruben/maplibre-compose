@@ -2,6 +2,7 @@ package org.maplibre.compose.location
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.time.Duration.Companion.seconds
@@ -11,6 +12,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -26,6 +28,7 @@ class BrowserLocationProviderTest {
     val provider = BrowserLocationProvider(boundary, backgroundScope)
 
     assertEquals(LocationBackendAvailability.Unsupported, provider.backendAvailability)
+    assertFailsWith<IllegalStateException> { provider.updates(LocationRequest()).first() }
     provider.requestPermission()
     runCurrent()
     assertEquals(emptyList(), boundary.requestedOptions)
@@ -54,7 +57,7 @@ class BrowserLocationProviderTest {
     assertEquals(12.0, first.position.altitude)
     assertEquals(4.0, first.horizontalAccuracy?.inMeters)
     assertEquals(2.0, first.altitudeAccuracy?.inMeters)
-    assertEquals(3.0, first.speed?.inMeters)
+    assertEquals(3.0, first.distancePerSecond?.inMeters)
     assertEquals(Bearing.North + 45.degrees, first.course)
 
     collection.cancel()

@@ -445,10 +445,10 @@ internal class GlJsMapSession(
   internal suspend fun <T> withPlatformMap(block: PlatformMapScope.() -> T): T {
     val engine =
       lifecycle.engineIdentity
-        ?: throw IllegalStateException("The Web platform map changed before access could begin")
+        ?: throw CancellationException("The Web platform map changed before access could begin")
     val lease =
       lifecycle.renderLease
-        ?: throw IllegalStateException("The Web platform map changed before access could begin")
+        ?: throw CancellationException("The Web platform map changed before access could begin")
     return suspendCancellableCoroutine { continuation ->
       val invocation = PlatformMapInvocation(continuation)
       lateinit var action: PendingMapAction
@@ -464,13 +464,13 @@ internal class GlJsMapSession(
                       result = runCatching { PlatformMapScope(map).block() }
                     }
                   if (!authorityAccepted) {
-                    throw IllegalStateException(
+                    throw CancellationException(
                       "The Web platform map changed before access could begin"
                     )
                   }
                 }
               if (!presentationAccepted) {
-                throw IllegalStateException(
+                throw CancellationException(
                   "The Web platform map changed before access could begin"
                 )
               }
@@ -479,7 +479,7 @@ internal class GlJsMapSession(
           },
           abandon = {
             invocation.fail(
-              IllegalStateException("The Web platform map changed before access could begin")
+              CancellationException("The Web platform map changed before access could begin")
             )
           },
         )
@@ -852,7 +852,7 @@ internal class GlJsMapSession(
     onMap { map -> map.jumpTo(unsafeJso<JumpToOptions> { this.padding = resolved }) }
   }
 
-  override fun setCameraPosition(
+  override fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
@@ -880,7 +880,7 @@ internal class GlJsMapSession(
     }
   }
 
-  override suspend fun animateCameraPosition(
+  override suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,

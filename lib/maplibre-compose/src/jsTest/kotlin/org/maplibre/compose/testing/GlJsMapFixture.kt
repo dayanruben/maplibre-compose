@@ -21,7 +21,6 @@ import org.maplibre.compose.map.GestureTarget
 import org.maplibre.compose.map.GlJsMapSession
 import org.maplibre.compose.map.MapAdapter
 import org.maplibre.compose.map.MapExtent
-import org.maplibre.compose.map.MapPresentation
 import org.maplibre.compose.map.mapRuntimeForTest
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.DesiredStyleRevision
@@ -35,7 +34,7 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
   override val state =
     runtime.createMapState(
       initialCameraPosition = CameraPosition(zoom = 0.0),
-      initialBaseStyle = BaseStyle.Empty,
+      baseStyle = BaseStyle.Empty,
     )
   private val glJsSession =
     GlJsMapSession(state.lifecycle, recorder, Logger.withTag("gljs-map"), LayoutDirection.Ltr)
@@ -43,9 +42,6 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
 
   override val session: MapAdapter
     get() = glJsSession
-
-  override val presentation: MapPresentation
-    get() = requireNotNull(state.presentation)
 
   override val gestures: GestureTarget
     get() = glJsSession
@@ -75,7 +71,7 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
       }
     )
     state.publishPresentation(token, glJsSession)
-    recorder.presentation = requireNotNull(state.presentation)
+    recorder.attachment = requireNotNull(state.currentMapAttachment)
   }
 
   private fun frame(): Boolean {

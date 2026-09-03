@@ -34,9 +34,6 @@ import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.vectorResource
 import org.maplibre.compose.demoapp.generated.Res
 import org.maplibre.compose.demoapp.generated.filter_center_focus_24px
-import org.maplibre.compose.map.MapPresentation
-import org.maplibre.compose.map.MapPresentationCallbacks
-import org.maplibre.compose.map.MapPresentationOptions
 import org.maplibre.compose.map.MapState
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.StyleLoadState
@@ -44,7 +41,6 @@ import org.maplibre.compose.material3.Material3
 import org.maplibre.compose.material3.PointerPinButton
 import org.maplibre.compose.overlay.MapOverlay
 import org.maplibre.compose.overlay.include
-import org.maplibre.compose.style.StyleComposition
 import org.maplibre.spatialk.geojson.Position
 
 /** How long the camera takes to fly to a newly selected demo. */
@@ -54,15 +50,14 @@ val DemoFlightDuration = 2.seconds
 val DemoBoundsPadding = PaddingValues(48.dp)
 
 internal suspend fun MapState.flyTo(destination: DemoDestination) {
-  val currentPresentation = presentation ?: return
   when (destination) {
     is DemoDestination.ExactCamera ->
-      currentPresentation.animateCameraPosition(
+      animateCameraPosition(
         position = destination.position,
         duration = DemoFlightDuration,
       )
     is DemoDestination.FitBounds ->
-      currentPresentation.animateCameraPosition(
+      animateCameraToBounds(
         boundingBox = destination.bounds,
         padding = DemoBoundsPadding,
         duration = DemoFlightDuration,
@@ -77,10 +72,7 @@ fun DemoMap(state: DemoAppState, viewportInsets: MapViewportInsets) {
   val scope = rememberCoroutineScope()
   val appliedStyle = state.appliedStyle
   val appliedBase = appliedStyle.base
-  SideEffect {
-    state.appliedStyleSnapshot = appliedStyle
-    state.mapState.style.baseStyle = appliedBase
-  }
+  SideEffect { state.appliedStyleSnapshot = appliedStyle }
   // Composing the map with a base means its load is in flight until noteStyleLoad clears it.
   DisposableEffect(appliedBase) {
     state.pendingStyleLoad = appliedBase
@@ -89,12 +81,6 @@ fun DemoMap(state: DemoAppState, viewportInsets: MapViewportInsets) {
     }
   }
   val selectedDemo = state.selectedDemo
-  val styleComposition =
-    remember(state.mapState, selectedDemo) {
-      StyleComposition {
-        selectedDemo?.let { demo -> key(demo) { demo.MapContent(state.mapState) } }
-      }
-    }
   LaunchedEffect(state.mapState.style.loadState, appliedBase) {
     when (state.mapState.style.loadState) {
       StyleLoadState.Ready,
@@ -114,48 +100,40 @@ fun DemoMap(state: DemoAppState, viewportInsets: MapViewportInsets) {
   Box(Modifier.fillMaxSize()) {
     MaplibreMap(
       state = state.mapState,
-      styleComposition = styleComposition,
-      presentationOptions =
-        MapPresentationOptions(
-          cameraPadding = viewportInsets.asPaddingValues(),
-          renderOptions = state.settings.renderOptions,
-          gestureOptions = state.settings.gestureOptions,
-          tileLodOptions = state.settings.tileLodOptions,
-        ),
-      callbacks = MapPresentationCallbacks(onFrame = { state.frameRateState.record() }),
+      cameraPadding = viewportInsets.asPaddingValues(),
+      renderOptions = state.settings.renderOptions,
+      gestureOptions = state.settings.gestureOptions,
+      tileLodOptions = state.settings.tileLodOptions,
+      onFrame = { state.frameRateState.record() },
       contentWindowInsets = viewportInsets.asWindowInsets(),
-      overlay =
-        MapOverlay {
-          include(
-            if (state.settings.useMaterial3Controls) MapOverlay.Material3 else MapOverlay.Default
-          )
-          selectedDemo?.let { demo ->
-            key(demo) {
-              with(demo) { Overlay(state) }
-              pointerPin?.let {
-                PointerPinButton(
-                  targetPosition = it.target,
-                  onClick = { scope.launch { state.mapState.flyTo(it.destination) } },
-                ) {
-                  Icon(
-                    vectorResource(Res.drawable.filter_center_focus_24px),
-                    contentDescription = "Fly back to ${demo.name}",
-                  )
-                }
-              }
+    ) {
+      include(if (state.settings.useMaterial3Controls) MapOverlay.Material3 else MapOverlay.Default)
+      selectedDemo?.let { demo ->
+        key(demo) {
+          with(demo) { Overlay(state) }
+          pointerPin?.let {
+            PointerPinButton(
+              targetPosition = it.target,
+              onClick = { scope.launch { state.mapState.flyTo(it.destination) } },
+            ) {
+              Icon(
+                vectorResource(Res.drawable.filter_center_focus_24px),
+                contentDescription = "Fly back to ${demo.name}",
+              )
             }
           }
-        },
-    )
+        }
+      }
+    }
 
     if (state.settings.showPointerPinDiagnostics && pointerPin != null) {
       PointerPinDestinationOverlay(
-        presentation = state.mapState.presentation,
+        mapState = state.mapState,
         destination = pointerPin.destination,
         modifier = Modifier.fillMaxSize(),
       )
       PointerPinPlacementOverlay(
-        presentation = state.mapState.presentation,
+        mapState = state.mapState,
         target = pointerPin.target,
         placementPadding = placementPadding,
         modifier = Modifier.fillMaxSize(),
@@ -170,17 +148,17 @@ fun DemoMap(state: DemoAppState, viewportInsets: MapViewportInsets) {
 
 @Composable
 private fun PointerPinDestinationOverlay(
-  presentation: MapPresentation?,
+  mapState: MapState,
   destination: DemoDestination,
   modifier: Modifier = Modifier,
 ) {
   // The viewport read recomputes the projection when the camera changes.
-  val viewport = presentation?.viewport
+  val viewport = mapState.viewport
   val projected =
     remember(destination, viewport) {
       when (destination) {
         is DemoDestination.ExactCamera ->
-          presentation?.screenLocationFromPosition(destination.position.target)?.let(::listOf)
+          mapState.screenLocationFromPosition(destination.position.target)?.let(::listOf)
         is DemoDestination.FitBounds -> {
           val bounds = destination.bounds
           listOf(
@@ -189,7 +167,7 @@ private fun PointerPinDestinationOverlay(
               Position(longitude = bounds.east, latitude = bounds.south),
               Position(longitude = bounds.west, latitude = bounds.south),
             )
-            .mapNotNull { presentation?.screenLocationFromPosition(it) }
+            .mapNotNull { mapState.screenLocationFromPosition(it) }
             .takeIf { it.size == 4 }
         }
         DemoDestination.None -> null
@@ -222,13 +200,13 @@ private fun PointerPinDestinationOverlay(
 
 @Composable
 private fun PointerPinPlacementOverlay(
-  presentation: MapPresentation?,
+  mapState: MapState,
   target: Position,
   placementPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
-  val viewport = presentation?.viewport
-  val projected = remember(target, viewport) { presentation?.screenLocationFromPosition(target) }
+  val viewport = mapState.viewport
+  val projected = remember(target, viewport) { mapState.screenLocationFromPosition(target) }
   val layoutDirection = LocalLayoutDirection.current
 
   Canvas(modifier) {

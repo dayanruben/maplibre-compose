@@ -31,7 +31,7 @@ class GeoJsonSourceUpdateTest {
     runMapTest {
       createMapFixture().use { fixture ->
         fixture.loadStyle(STYLE)
-        fixture.presentation.setCameraPosition(CameraPosition(target = ORIGIN, zoom = 14.0))
+        fixture.state.setCameraPosition(CameraPosition(target = ORIGIN, zoom = 14.0))
         val style = checkNotNull(fixture.style) { "Errors: ${fixture.errors}" }
         val source =
           GeoJsonSource(
@@ -39,13 +39,13 @@ class GeoJsonSourceUpdateTest {
             GeoJsonData.Features(pointAt(ORIGIN)),
             GeoJsonOptions(),
           )
-        style.install(source)
+        fixture.state.style.sources.add(source)
         val layer = CircleLayer(LAYER_ID, source)
         layer.setCircleRadius(const(16.dp).compile(ExpressionContext.None))
         layer.setCircleColor(const(Color.Black))
         layer.setCircleOpacity(const(1.0f))
         style.install(layer)
-        val sourceHandle = assertIs<GeoJsonSourceHandle>(fixture.state.style.source(SOURCE_ID))
+        val sourceHandle = assertIs<GeoJsonSourceHandle>(fixture.state.style.sources[SOURCE_ID])
 
         val centerX = 256
         val centerY = 256
@@ -70,8 +70,8 @@ class GeoJsonSourceUpdateTest {
     runMapTest {
       createMapFixture().use { fixture ->
         fixture.loadStyle(CLUSTERED_STYLE)
-        fixture.presentation.setCameraPosition(CameraPosition(target = ORIGIN, zoom = 14.0))
-        val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.source(SOURCE_ID))
+        fixture.state.setCameraPosition(CameraPosition(target = ORIGIN, zoom = 14.0))
+        val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.sources[SOURCE_ID])
         fixture.pumpUntil("the base-style point to render") {
           fixture.readPixel(256, 256).isNear(CIRCLE)
         }
@@ -88,8 +88,8 @@ class GeoJsonSourceUpdateTest {
   fun a_base_style_update_preserves_the_loaded_sources_minimum_zoom(): MapTestResult = runMapTest {
     createMapFixture().use { fixture ->
       fixture.loadStyle(MIN_ZOOM_STYLE)
-      fixture.presentation.setCameraPosition(CameraPosition(target = ORIGIN, zoom = 6.0))
-      val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.source(SOURCE_ID))
+      fixture.state.setCameraPosition(CameraPosition(target = ORIGIN, zoom = 6.0))
+      val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.sources[SOURCE_ID])
       fixture.pumpUntil("the source to stay hidden below its minimum zoom") {
         fixture.readPixel(256, 256).isNear(BACKGROUND)
       }
@@ -108,14 +108,14 @@ class GeoJsonSourceUpdateTest {
       createMapFixture().use { fixture ->
         fixture.loadStyle(STYLE)
         val style = checkNotNull(fixture.style)
-        style.install(
+        fixture.state.style.sources.add(
           GeoJsonSource(
             SOURCE_ID,
             GeoJsonData.Features(pointAt(ORIGIN)),
             GeoJsonOptions(),
           )
         )
-        val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.source(SOURCE_ID))
+        val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.sources[SOURCE_ID])
         style.removeSource(SOURCE_ID)
         style.install(
           GeoJsonSource(

@@ -12,6 +12,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.supervisorScope
 import org.maplibre.compose.gljs.runBrowserMapTest
+import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.testing.GlJsMapFixture
 
 @OptIn(DelicateMapApi::class, ExperimentalTestApi::class)
@@ -19,12 +20,12 @@ class BrowserPlatformMapAccessTest {
   @Test
   fun web_access_requires_a_current_presentation() = runBrowserMapTest {
     val runtime = createMapRuntime(MapRuntimeOptions())
-    val state = runtime.createMapState()
+    val state = runtime.createMapState(BaseStyle.Demo)
 
     val failure = assertFailsWith<IllegalStateException> { state.withPlatformMap { map.getZoom() } }
 
-    assertEquals("Platform map access requires a current Web presentation", failure.message)
-    assertNull(state.presentation)
+    assertEquals("Platform map access requires an attached Web map surface", failure.message)
+    assertNull(state.currentMapAttachment)
     runtime.close()
     runtime.awaitClosed()
   }
@@ -38,7 +39,7 @@ class BrowserPlatformMapAccessTest {
       val zoom = fixture.state.withPlatformMap { map.getZoom() }
 
       assertEquals(0.0, zoom)
-      assertTrue(fixture.state.presentation?.isValid == true)
+      assertTrue(fixture.state.currentMapAttachment?.isValid == true)
     } finally {
       fixture.close()
     }
@@ -60,7 +61,7 @@ class BrowserPlatformMapAccessTest {
 
         fixture.detachPresentationForTest()
 
-        val failure = assertFailsWith<IllegalStateException> { access.await() }
+        val failure = assertFailsWith<CancellationException> { access.await() }
         assertEquals("The Web platform map changed before access could begin", failure.message)
       }
       assertFalse(callbackRan)

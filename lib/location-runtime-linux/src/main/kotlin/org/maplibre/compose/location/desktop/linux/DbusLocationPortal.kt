@@ -49,8 +49,7 @@ internal class DbusLocationPortal(private val window: XdgPortalWindow? = null) :
 
   override suspend fun requestPermission(): PortalPermissionResult =
     withContext(Dispatchers.IO) {
-      if (!available)
-        return@withContext PortalPermissionResult.Unavailable(LocationUnavailableReason.Unsupported)
+      check(available) { "Location permission requires an available XDG Location portal" }
 
       var connection: DBusConnection? = null
       var session: PortalSession? = null
@@ -79,11 +78,7 @@ internal class DbusLocationPortal(private val window: XdgPortalWindow? = null) :
     }
 
   override fun updates(request: LocationRequest): Flow<LocationEvent> = callbackFlow {
-    if (!available) {
-      trySend(LocationEvent.Unavailable(LocationUnavailableReason.Unsupported))
-      close()
-      return@callbackFlow
-    }
+    check(available) { "Location updates require an available XDG Location portal" }
 
     var connection: DBusConnection? = null
     var session: PortalSession? = null
@@ -282,7 +277,7 @@ internal fun Map<String, Variant<*>>.toLocationEvent(): LocationEvent.Update {
           altitude = number("Altitude")?.takeIf { it != -Double.MAX_VALUE },
         ),
       horizontalAccuracy = number("Accuracy")?.meters,
-      speed = number("Speed")?.takeIf { it >= 0.0 }?.meters,
+      distancePerSecond = number("Speed")?.takeIf { it >= 0.0 }?.meters,
       course = number("Heading")?.takeIf { it >= 0.0 }?.let { Bearing.North + it.degrees },
       measuredAt = capturedAt,
     )

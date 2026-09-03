@@ -8,8 +8,10 @@ import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.io.files.Path
 import org.maplibre.compose.mlnffi.MlnFfiGate
 import org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions
+import org.maplibre.compose.mlnffi.normalizeMlnFfiPath
 import org.maplibre.compose.resource.MapResourceConfig
 import org.maplibre.nativeffi.error.MaplibreException
 import org.maplibre.nativeffi.error.MaplibreStatus
@@ -164,6 +166,23 @@ internal class MlnFfiOfflineManager(
     )
   }
 
+  override suspend fun mergeDatabase(databaseFile: Path): Set<OfflinePack> {
+    val sourceFile = normalizeMlnFfiPath(databaseFile)
+    require(sourceFile != options.cacheFile) {
+      "The source database must differ from this manager's database"
+    }
+    return runOperation(
+      description = "merge offline database $sourceFile",
+      start = { it.startMergeOfflineRegionsDatabase(sourceFile.toString()) },
+      finish = { nativeRuntime, handle ->
+        nativeRuntime
+          .takeMergeOfflineRegionsDatabaseResult(handle)
+          .mapNotNull(::registerRegion)
+          .toSet()
+      },
+    )
+  }
+
   override suspend fun invalidateAmbientCache() {
     runAmbientCacheOperation("invalidate the ambient cache", AmbientCacheOperation.INVALIDATE)
   }
@@ -210,12 +229,16 @@ internal class MlnFfiOfflineManager(
   // region owner-thread bookkeeping
 
   /**
-   * Adopts a region MapLibre reported, or returns null when its definition cannot be represented.
-   * Runs on the owner thread; there is at most one [OfflinePack] per region.
+   * Adopts or reuses a region that MapLibre reported, or returns null when its definition cannot be
+   * represented. Runs on the owner thread; there is at most one [OfflinePack] per region.
    */
   private fun registerRegion(info: OfflineRegionInfo): OfflinePack? {
     val existing = packsById[info.id]
-    if (existing != null) return existing
+    if (existing != null) {
+      // An operation such as a database merge can change the resources of an existing region.
+      refreshStatus(info.id)
+      return existing
+    }
 
     val definition = info.definition.toOfflinePackDefinition(logger) ?: return null
     val pack = OfflinePack(this, info.id, definition, info.metadata.copyOf())
@@ -405,18 +428,18 @@ internal class MlnFfiOfflineManager(
   private fun Throwable.toOfflineManagerException(description: String): Throwable =
     when (this) {
       is OfflineManagerException,
-      is CancellationException -> this
+      is CancellationException,
+      is Error -> this
       is MaplibreException -> {
-        // OfflineManagerException carries no cause, so the native detail is logged before it is
-        // flattened into the message.
         logger?.d(this) { "Native failure while trying to $description" }
         val detail = diagnostic.ifBlank { message.orEmpty() }
-        OfflineManagerException("Failed to $description: $detail")
+        OfflineManagerException("Failed to $description: $detail", this)
       }
       else -> {
         logger?.d(this) { "Failure while trying to $description" }
         OfflineManagerException(
-          "Failed to $description: ${message ?: this::class.simpleName.orEmpty()}"
+          "Failed to $description: ${message ?: this::class.simpleName.orEmpty()}",
+          this,
         )
       }
     }

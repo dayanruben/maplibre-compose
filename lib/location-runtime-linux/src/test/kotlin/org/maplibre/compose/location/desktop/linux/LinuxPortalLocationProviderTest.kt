@@ -3,6 +3,7 @@ package org.maplibre.compose.location.desktop.linux
 import java.util.ServiceLoader
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -100,6 +101,7 @@ class LinuxPortalLocationProviderTest {
     val provider = LinuxPortalLocationProvider(portal, backgroundScope)
 
     assertEquals(LocationBackendAvailability.Unsupported, provider.backendAvailability)
+    assertFailsWith<IllegalStateException> { provider.updates(LocationRequest()).first() }
     provider.requestPermission()
     runCurrent()
     assertEquals(0, portal.permissionRequests)
@@ -146,7 +148,7 @@ class LinuxPortalLocationProviderTest {
     assertEquals(13.0, event.measurement.position.longitude)
     assertEquals(40.0, event.measurement.position.altitude)
     assertEquals(8.0, event.measurement.horizontalAccuracy?.inMeters)
-    assertEquals(3.0, event.measurement.speed?.inMeters)
+    assertEquals(3.0, event.measurement.distancePerSecond?.inMeters)
     assertEquals(Bearing.North + 90.degrees, event.measurement.course)
     assertTrue(event.measurementMark.elapsedNow() < 1.seconds)
   }
@@ -164,7 +166,7 @@ class LinuxPortalLocationProviderTest {
         .toLocationEvent()
 
     assertEquals(null, event.measurement.position.altitude)
-    assertEquals(null, event.measurement.speed)
+    assertEquals(null, event.measurement.distancePerSecond)
     assertEquals(null, event.measurement.course)
   }
 
