@@ -3,7 +3,6 @@
 package org.maplibre.compose.mlnffi
 
 import androidx.compose.ui.unit.LayoutDirection
-import co.touchlab.kermit.Logger
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.time.Duration
@@ -15,10 +14,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.io.files.Path
-import org.maplibre.compose.map.MapAttachment
+import org.maplibre.compose.logging.MapLog
+import org.maplibre.compose.map.MapEvent
 import org.maplibre.compose.map.MapExtent
+import org.maplibre.compose.map.MapState
 import org.maplibre.compose.map.MlnFfiMapSession
 import org.maplibre.compose.map.mapRuntimeForTest
+import org.maplibre.compose.resource.MapResourceConfig
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.StyleBinding
 import org.maplibre.compose.testing.MapFixture
@@ -34,6 +36,7 @@ private constructor(
   private val driver: FfiTestRenderDriver,
   private val cacheFile: Path,
   private val initialExtent: MapExtent,
+  resourceConfig: MapResourceConfig,
 ) : AutoCloseable {
 
   private val stylePublishedBeforeSessionReady = AtomicBoolean(false)
@@ -45,6 +48,9 @@ private constructor(
 
   val events: MutableList<String>
     get() = recorder.events
+
+  val engineEvents: MutableList<MapEvent>
+    get() = recorder.engineEvents
 
   val sourceChanges: MutableList<String?>
     get() = recorder.sourceChanges
@@ -65,15 +71,17 @@ private constructor(
     MlnFfiMapSession(
       lifecycleAuthority = state.lifecycle,
       callbacks = recorder,
-      logger = Logger.withTag("bridge-map"),
+      logger = MapLog,
       renderBackend = driver.backends.producer,
       scaleFactor = initialExtent.scaleFactor,
       layoutDirection = LayoutDirection.Ltr,
       cacheFile = cacheFile,
+      resourceConfig = resourceConfig,
     )
 
-  fun bindAttachment(attachment: MapAttachment) {
-    recorder.attachment = attachment
+  fun bindState(state: MapState) {
+    recorder.attachment = requireNotNull(state.currentMapAttachment)
+    recorder.state = state
   }
 
   private val hostSession =
@@ -300,12 +308,15 @@ private constructor(
     val RETINA_EXTENT: MapExtent = MapFixture.RETINA_EXTENT
 
     /** Creates a fixture for the one native runtime packaged into this test process. */
-    fun create(initialExtent: MapExtent = DEFAULT_EXTENT): BridgeMapFixture {
+    fun create(
+      initialExtent: MapExtent = DEFAULT_EXTENT,
+      resourceConfig: MapResourceConfig = MapResourceConfig(),
+    ): BridgeMapFixture {
       FfiTestPlatform.initialize()
       val driver = FfiTestPlatform.createRenderDriver()
       val cacheFile = FfiTestPlatform.createCacheFile()
       return try {
-        BridgeMapFixture(driver, cacheFile, initialExtent)
+        BridgeMapFixture(driver, cacheFile, initialExtent, resourceConfig)
       } catch (error: Throwable) {
         runCatching { driver.close() }
         FfiTestPlatform.deleteCacheFile(cacheFile)

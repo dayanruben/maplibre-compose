@@ -14,7 +14,7 @@ internal external interface Subscription {
 }
 
 /** Only the `error` event carries an [error]. */
-internal external interface MapEvent {
+internal external interface GlJsMapEvent {
   val error: JsError?
   val sourceId: String?
   val sourceDataType: String?
@@ -50,6 +50,26 @@ internal external interface StyleSource
 internal external interface StyleSpecification {
   val layers: Array<LayerSpecification>
   val sources: JsRecord<SourceSpecification>
+  var transition: TransitionSpecification?
+}
+
+/** Milliseconds; MapLibre fills in the style-spec defaults when it reads the style's own. */
+internal external interface TransitionSpecification {
+  var duration: Double?
+  var delay: Double?
+}
+
+/** A style-spec `light` object; keys index it. */
+internal external interface LightSpecification
+
+/** A style-spec `sky` object; keys index it. */
+internal external interface SkySpecification
+
+/** A style-spec `projection` object; keys index it. */
+internal external interface ProjectionSpecification
+
+internal external interface StyleSetterOptions {
+  var validate: Boolean?
 }
 
 internal external interface LayerSpecification {

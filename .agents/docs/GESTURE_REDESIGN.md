@@ -12,6 +12,11 @@ prototype will change them.
 This ships against the ownership API: `MaplibreMap(state)` with the camera on
 `MapState`. `GestureOptions` is deleted, with no compatibility layer.
 
+Engine events such as style load, idle, and frames are a separate surface, in
+[EVENT_CALLBACK_REDESIGN.md](./EVENT_CALLBACK_REDESIGN.md). That work moved
+click dispatch out of `MapAdapter.Callbacks` and into Compose; this gesture
+chain replaces the click handlers.
+
 ## What the current code is
 
 `MapInput.kt` fuses three separable concerns into one state machine:

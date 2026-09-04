@@ -14,8 +14,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
-import co.touchlab.kermit.Logger
 import kotlinx.coroutines.CancellationException
+import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.mlnffi.MapRenderBackend
 import org.maplibre.compose.mlnffi.MlnFfiMapHostFactory
 import org.maplibre.compose.mlnffi.MlnFfiMapHostResult
@@ -41,8 +41,9 @@ internal fun MlnFfiMapView(
   style: BaseStyle,
   update: (map: MapAdapter) -> Unit,
   onReset: () -> Unit,
-  logger: Logger?,
+  logger: MapLog?,
   callbacks: MapAdapter.Callbacks,
+  clicks: MapClickTarget,
   options: MapViewOptions,
 ) {
   val density = LocalDensity.current
@@ -71,6 +72,7 @@ internal fun MlnFfiMapView(
     onReset = onReset,
     logger = logger,
     callbacks = callbacks,
+    clicks = clicks,
     options = options,
   )
 }
@@ -79,14 +81,15 @@ internal fun MlnFfiMapView(
 @Composable
 internal fun MlnFfiMapView(
   renderBackend: MapRenderBackend,
-  surface: @Composable (MlnFfiMapRenderer, Modifier, Logger?, Boolean) -> Unit,
+  surface: @Composable (MlnFfiMapRenderer, Modifier, MapLog?, Boolean) -> Unit,
   modifier: Modifier,
   state: MapState,
   style: BaseStyle,
   update: (map: MapAdapter) -> Unit,
   onReset: () -> Unit,
-  logger: Logger?,
+  logger: MapLog?,
   callbacks: MapAdapter.Callbacks,
+  clicks: MapClickTarget,
   options: MapViewOptions,
 ) {
   val applicationOptions = state.runtime.nativeRuntimeOptions
@@ -146,7 +149,7 @@ internal fun MlnFfiMapView(
     } catch (error: CancellationException) {
       throw error
     } catch (error: Throwable) {
-      callbacks.onMapFailLoading(session, error.message)
+      callbacks.onStyleFailed(session, error.message)
     }
   }
 
@@ -161,13 +164,20 @@ internal fun MlnFfiMapView(
   val continuation = remember(session, inputScope) { GestureContinuation(inputScope) }
 
   // MapLibre renders black until a style loads.
-  val revealSurface = session.hasLoadedFirstStyle
+  val revealSurface = session.hasPresentableStyle
 
   // Before the first render target attaches, gestures would project through the bootstrap 1x1
   // viewport and jump the camera.
   val inputModifier =
     if (revealSurface) {
-      modifier.mapInput(session, options.gestureOptions, density, focusRequester, continuation)
+      modifier.mapInput(
+        session,
+        clicks,
+        options.gestureOptions,
+        density,
+        focusRequester,
+        continuation,
+      )
     } else {
       modifier
     }
@@ -223,7 +233,7 @@ private fun selectHost(
  * Reports which backends the packaged MapLibre Native FFI runtime was built with. Empty rather than
  * throwing when no runtime is on the classpath; negotiation reports that as a diagnostic.
  */
-internal fun loadRuntimeBackends(logger: Logger?): Set<MapRenderBackend> =
+internal fun loadRuntimeBackends(logger: MapLog?): Set<MapRenderBackend> =
   try {
     Maplibre.loadNativeLibrary()
     Maplibre.supportedRenderBackends().mapNotNullTo(mutableSetOf()) { it.toComposeBackend() }

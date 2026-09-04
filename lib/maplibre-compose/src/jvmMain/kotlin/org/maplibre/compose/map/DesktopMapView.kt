@@ -3,9 +3,9 @@ package org.maplibre.compose.map
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import co.touchlab.kermit.Logger
 import org.maplibre.compose.desktop.LocalComposeMapPresentationHost
 import org.maplibre.compose.desktop.bridge.ComposeMapPresentationHostFactory
+import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.style.BaseStyle
 
 /** Gives Compose value-based keys reference-identity semantics for physical host resources. */
@@ -26,8 +26,9 @@ internal actual fun ComposableMapView(
   style: BaseStyle,
   update: (map: MapAdapter) -> Unit,
   onReset: () -> Unit,
-  logger: Logger?,
+  logger: MapLog?,
   callbacks: MapAdapter.Callbacks,
+  clicks: MapClickTarget,
   options: MapViewOptions,
 ) {
   val hostFactory =
@@ -46,6 +47,7 @@ internal actual fun ComposableMapView(
     onReset = onReset,
     logger = logger,
     callbacks = callbacks,
+    clicks = clicks,
     options = options,
   )
 }

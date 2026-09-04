@@ -1,7 +1,6 @@
 package org.maplibre.compose.testing
 
 import androidx.compose.ui.unit.LayoutDirection
-import co.touchlab.kermit.Logger
 import kotlin.js.Date
 import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineScope
@@ -17,9 +16,11 @@ import org.maplibre.compose.gljs.GlJsRuntime
 import org.maplibre.compose.gljs.GlJsSurfaceSession
 import org.maplibre.compose.gljs.LOCAL_WORKER_URL
 import org.maplibre.compose.gljs.yieldToBrowser
+import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.map.GestureTarget
 import org.maplibre.compose.map.GlJsMapSession
 import org.maplibre.compose.map.MapAdapter
+import org.maplibre.compose.map.MapEvent
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.map.mapRuntimeForTest
 import org.maplibre.compose.style.BaseStyle
@@ -36,8 +37,7 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
       initialCameraPosition = CameraPosition(zoom = 0.0),
       baseStyle = BaseStyle.Empty,
     )
-  private val glJsSession =
-    GlJsMapSession(state.lifecycle, recorder, Logger.withTag("gljs-map"), LayoutDirection.Ltr)
+  private val glJsSession = GlJsMapSession(state.lifecycle, recorder, MapLog, LayoutDirection.Ltr)
   private val token = state.reservePresentation()
 
   override val session: MapAdapter
@@ -51,6 +51,9 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
 
   override val events: MutableList<String>
     get() = recorder.events
+
+  override val engineEvents: MutableList<MapEvent>
+    get() = recorder.engineEvents
 
   override val sourceChanges: MutableList<String?>
     get() = recorder.sourceChanges
@@ -72,6 +75,7 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
     )
     state.publishPresentation(token, glJsSession)
     recorder.attachment = requireNotNull(state.currentMapAttachment)
+    recorder.state = state
   }
 
   private fun frame(): Boolean {
@@ -92,7 +96,6 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
       }
     }
     glJsSession.reconcileStyleRevision(DesiredStyleRevision.Empty)
-    state.updateLoadedStyle(glJsSession, recorder.style)
     state.markStyleReady(glJsSession)
   }
 

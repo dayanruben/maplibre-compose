@@ -21,12 +21,14 @@ internal external class MaplibreMap(options: MapOptions) {
 
   val painter: Painter
 
+  val style: Style
+
   var showTileBoundaries: Boolean
   var showCollisionBoxes: Boolean
   var showPadding: Boolean
   var showOverdrawInspector: Boolean
 
-  fun on(type: String, listener: (event: MapEvent) -> Unit): Subscription
+  fun on(type: String, listener: (event: GlJsMapEvent) -> Unit): Subscription
 
   fun fire(type: String, properties: Any)
 
@@ -43,6 +45,18 @@ internal external class MaplibreMap(options: MapOptions) {
   fun setStyle(style: StyleSource, options: SetStyleOptions)
 
   fun getStyle(): StyleSpecification
+
+  fun setLight(light: LightSpecification, options: StyleSetterOptions = definedExternally)
+
+  fun getLight(): LightSpecification
+
+  fun setSky(sky: SkySpecification?, options: StyleSetterOptions = definedExternally)
+
+  fun getSky(): SkySpecification?
+
+  fun setProjection(projection: ProjectionSpecification?)
+
+  fun getProjection(): ProjectionSpecification?
 
   fun isStyleLoaded(): Boolean
 
@@ -148,6 +162,12 @@ internal external class MaplibreMap(options: MapOptions) {
   fun hasImage(id: String): Boolean
 
   fun removeImage(id: String)
+
+  /**
+   * MapLibre awaits the promise that the resolver returns before it treats the image as missing. A
+   * null [resolver] removes the one in place; MapLibre exposes no separate remover.
+   */
+  fun setMissingStyleImageResolver(resolver: ((id: String) -> Promise<*>?)?)
 }
 
 internal external class LngLat(lng: Double, lat: Double) {
@@ -159,4 +179,31 @@ internal external class LngLatBounds(sw: LngLat, ne: LngLat) {
   fun getSouthWest(): LngLat
 
   fun getNorthEast(): LngLat
+}
+
+/**
+ * MapLibre exposes no transition setter, and its style diff treats `setTransition` as a no-op, so
+ * the only runtime lever is [stylesheet], a public field that [getTransition] reads every frame.
+ */
+internal external class Style {
+  var stylesheet: StyleSpecification
+
+  val light: Light
+
+  val sky: Sky
+
+  fun getTransition(): TransitionSpecification
+}
+
+/**
+ * The style's light validates its input and reports a rejected write as an `error` event on itself,
+ * with no evented parent, so a listener on the map never hears it.
+ */
+internal external class Light {
+  fun on(type: String, listener: (event: GlJsMapEvent) -> Unit): Subscription
+}
+
+/** The style's sky reports a rejected write the same way as [Light]. */
+internal external class Sky {
+  fun on(type: String, listener: (event: GlJsMapEvent) -> Unit): Subscription
 }

@@ -1,8 +1,10 @@
 package org.maplibre.compose.style
 
 import androidx.compose.ui.graphics.ImageBitmap
-import co.touchlab.kermit.Logger
 import kotlin.concurrent.Volatile
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.DurationUnit
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonObjectBuilder
@@ -17,6 +19,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import org.maplibre.compose.layers.Layer
 import org.maplibre.compose.layers.UnknownLayer
+import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.mlnffi.MlnFfiLock
 import org.maplibre.compose.mlnffi.withLock
 import org.maplibre.compose.sources.CustomGeometrySourceOptions
@@ -80,7 +83,7 @@ import org.maplibre.spatialk.geojson.toJson
  */
 internal open class MlnFfiStyleBinding(
   override val identity: StyleIdentity = StyleIdentity.create(),
-  private val loggerProvider: () -> Logger? = { null },
+  private val loggerProvider: () -> MapLog? = { null },
   private val sessionOpen: () -> Boolean = { false },
   private val accessMap: ((MapHandle) -> Unit) -> Boolean = { false },
   private val accessRenderSession: ((RenderSessionHandle) -> Unit) -> Boolean = { false },
@@ -103,7 +106,7 @@ internal open class MlnFfiStyleBinding(
   override val isLoaded: Boolean
     get() = loaded && sessionOpen()
 
-  override val logger: Logger?
+  override val logger: MapLog?
     get() = loggerProvider()
 
   override fun addImage(definition: StyleImageDefinition) {
@@ -836,12 +839,89 @@ internal open class MlnFfiStyleBinding(
     }
   }
 
+  /** An unset native duration applies paint changes instantly, so it reads as zero. */
+  override fun transition(): TransitionOptions? = readMap { map ->
+    val options = map.styleTransitionOptions()
+    TransitionOptions(
+      duration = options.durationMs?.milliseconds ?: Duration.ZERO,
+      delay = options.delayMs?.milliseconds ?: Duration.ZERO,
+    )
+  }
+
+  /** Native replaces every field on write, so the placement flag is read back first. */
+  override fun setTransition(options: TransitionOptions) {
+    mutateMap { map ->
+      map.setStyleTransitionOptions(
+        map.styleTransitionOptions().copy {
+          durationMs = options.duration.toDouble(DurationUnit.MILLISECONDS)
+          delayMs = options.delay.toDouble(DurationUnit.MILLISECONDS)
+        }
+      )
+    }
+  }
+
+  override val supportsPlacementTransitions: Boolean = true
+
+  override fun placementTransitions(): Boolean? = readMap { map ->
+    map.styleTransitionOptions().enablePlacementTransitions ?: true
+  }
+
+  override fun setPlacementTransitions(enabled: Boolean) {
+    mutateMap { map ->
+      map.setStyleTransitionOptions(
+        map.styleTransitionOptions().copy { enablePlacementTransitions = enabled }
+      )
+    }
+  }
+
+  override fun lightProperty(name: String): JsonElement? = readMap { map ->
+    map.styleLightProperty(name)?.toJsonElement()
+  }
+
+  override fun setLight(light: JsonObject) {
+    mutateMap { map ->
+      try {
+        map.setStyleLightJson(light.toJsonBytes())
+      } catch (error: MaplibreException) {
+        throw StyleMutationException(error.message, error)
+      }
+    }
+  }
+
+  override val supportsSky: Boolean = false
+
+  override fun skyProperty(name: String): JsonElement? {
+    requireLoadedStyle()
+    return null
+  }
+
+  override fun setSky(sky: JsonObject?) {
+    requireLoadedStyle()
+    if (sky != null) logger?.w { "MapLibre Native does not support the sky" }
+  }
+
+  override val supportsProjection: Boolean = false
+
+  override fun projectionProperty(name: String): JsonElement? {
+    requireLoadedStyle()
+    return null
+  }
+
+  override fun setProjection(projection: JsonObject) {
+    requireLoadedStyle()
+    if (projection["type"] != JsonPrimitive("mercator")) {
+      logger?.w { "MapLibre Native supports only the Mercator projection" }
+    }
+  }
+
   override fun layerExists(layerId: String): Boolean? = readMap { map ->
     map.styleLayerIds().contains(layerId)
   }
 
+  // A property's transition travels the same write path, and native refuses it as hard as the
+  // property itself.
   override fun unsupportedLayerPropertyReason(layerType: String, name: String): String? =
-    UNSUPPORTED_LAYER_PROPERTIES[layerType to name]
+    UNSUPPORTED_LAYER_PROPERTIES[layerType to name.removeSuffix(TRANSITION_SUFFIX)]
 
   companion object {
     /** The only extension MapLibre answers for a GeoJSON source; anything else returns nothing. */

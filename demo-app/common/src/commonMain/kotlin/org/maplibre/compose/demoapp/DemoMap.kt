@@ -30,14 +30,18 @@ import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.vectorResource
 import org.maplibre.compose.demoapp.generated.Res
 import org.maplibre.compose.demoapp.generated.filter_center_focus_24px
+import org.maplibre.compose.map.MapEvent
 import org.maplibre.compose.map.MapState
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.StyleLoadState
 import org.maplibre.compose.material3.Material3
+import org.maplibre.compose.material3.Material3Full
 import org.maplibre.compose.material3.PointerPinButton
 import org.maplibre.compose.overlay.MapOverlay
 import org.maplibre.compose.overlay.include
@@ -89,6 +93,13 @@ fun DemoMap(state: DemoAppState, viewportInsets: MapViewportInsets) {
       StyleLoadState.Pending -> Unit
     }
   }
+  LaunchedEffect(state.mapState) {
+    withContext(Dispatchers.Default) {
+      state.mapState.events.collect {
+        if (it is MapEvent.FrameRendered) state.frameRateState.record()
+      }
+    }
+  }
   val pointerPin = selectedDemo?.pointerPin
   val placementPadding =
     PaddingValues.Absolute(
@@ -104,10 +115,17 @@ fun DemoMap(state: DemoAppState, viewportInsets: MapViewportInsets) {
       renderOptions = state.settings.renderOptions,
       gestureOptions = state.settings.gestureOptions,
       tileLodOptions = state.settings.tileLodOptions,
-      onFrame = { state.frameRateState.record() },
       contentWindowInsets = viewportInsets.asWindowInsets(),
     ) {
-      include(if (state.settings.useMaterial3Controls) MapOverlay.Material3 else MapOverlay.Default)
+      include(
+        when {
+          state.settings.useMaterial3Controls && state.settings.showZoomButtons ->
+            MapOverlay.Material3Full
+          state.settings.useMaterial3Controls -> MapOverlay.Material3
+          state.settings.showZoomButtons -> MapOverlay.Full
+          else -> MapOverlay.Default
+        }
+      )
       selectedDemo?.let { demo ->
         key(demo) {
           with(demo) { Overlay(state) }

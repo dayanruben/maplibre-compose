@@ -35,6 +35,7 @@ import kotlin.math.abs
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -437,22 +438,87 @@ class MlnFfiMapCompositionTest {
     assertEquals(expected.zoom, actual.zoom, POSITION_TOLERANCE, "zoom")
   }
 
+  @Test
+  fun a_base_style_switch_does_not_cover_the_map_with_the_load_placeholder() = runFfiComposeUiTest {
+    val runtime = createNativeMapRuntime(runtimeOptions)
+    val first =
+      BaseStyle.Json("""{"version":8,"sources":{},"layers":[{"id":"bg-a","type":"background"}]}""")
+    val second =
+      BaseStyle.Json("""{"version":8,"sources":{},"layers":[{"id":"bg-b","type":"background"}]}""")
+    val state = runtime.createMapState(baseStyle = first)
+
+    setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+      state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
+    }
+    val session = requireNotNull(state.currentMapAttachment).adapter as MlnFfiMapSession
+    assertTrue(session.hasPresentableStyle)
+    assertTrue(onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty())
+
+    runOnUiThread { state.style.baseStyle = second }
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.style.baseStyle == second }
+    assertTrue(
+      session.hasPresentableStyle,
+      "a later style switch must keep the first loaded style on screen",
+    )
+    assertTrue(
+      onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty(),
+      "a style switch must not cover the map with the load placeholder",
+    )
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+      state.style.loadState == StyleLoadState.Ready && "bg-b" in session.currentStyleLayerIds()
+    }
+    assertTrue(onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty())
+
+    runtime.close()
+    runtime.awaitClosed()
+  }
+
+  @Test
+  fun a_failed_replacement_style_hides_the_native_map() = runFfiComposeUiTest {
+    val runtime = createNativeMapRuntime(runtimeOptions)
+    val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
+
+    setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+      state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
+    }
+    val session = requireNotNull(state.currentMapAttachment).adapter as MlnFfiMapSession
+    assertTrue(session.hasPresentableStyle)
+
+    runOnUiThread { state.style.baseStyle = BaseStyle.Json("{") }
+    waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+      state.style.loadState is StyleLoadState.Failed
+    }
+
+    assertTrue(!session.hasPresentableStyle)
+    onNodeWithTag(MAP_LOAD_PLACEHOLDER_TAG).assertExists()
+
+    runtime.close()
+    runtime.awaitClosed()
+  }
+
   /** Style loading needs no rendering, so no frame runs — and none is drawn — before a style. */
   @Test
   fun an_unloaded_style_keeps_the_transparent_load_placeholder() = runFfiComposeUiTest {
     val errors = RecordingList<String>()
-    val frames = AtomicInt(0)
+    lateinit var mapState: MapState
     setFfiTestMapContent(runtimeOptions) {
-      TestMap(
-        modifier = Modifier,
-        baseStyle = BaseStyle.Uri("https://example.invalid/style.json"),
-        onMapLoadFailed = { errors += "mapLoadFailed: $it" },
-        onFrame = { frames.incrementAndFetch() },
-      )
+      mapState =
+        TestMap(
+          modifier = Modifier,
+          baseStyle = BaseStyle.Uri("https://example.invalid/style.json"),
+          onMapLoadFailed = { errors += "mapLoadFailed: $it" },
+        )
     }
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { errors.isNotEmpty() }
     onNodeWithTag(MAP_LOAD_PLACEHOLDER_TAG).assertExists()
-    assertEquals(0, frames.load(), "A frame was rendered before the style loaded: $errors")
+    // The session, because an event collector misses a frame that renders before it subscribes.
+    val session = mapState.currentMapAttachment?.adapter as? MlnFfiMapSession
+    assertFalse(
+      session?.hasRenderedAFrame == true,
+      "A frame was rendered before the style loaded: $errors",
+    )
     assertTrue(errors.any { it.startsWith("mapLoadFailed") }, "The load was not reported: $errors")
   }
 
@@ -758,7 +824,7 @@ private fun TestMap(
   modifier: Modifier = Modifier,
   initialCameraPosition: CameraPosition = CameraPosition(),
   onMapLoadFailed: (String?) -> Unit = {},
-  onFrame: (Double) -> Unit = {},
+  onFrame: () -> Unit = {},
   overlay: MapOverlay = MapOverlay.Default,
   content: @Composable () -> Unit = {},
 ): MapState {
@@ -773,10 +839,12 @@ private fun TestMap(
   LaunchedEffect(loadState) {
     if (loadState is StyleLoadState.Failed) onMapLoadFailed(loadState.reason)
   }
+  LaunchedEffect(state) {
+    state.events.collect { if (it is MapEvent.FrameRendered) onFrame() }
+  }
   MaplibreMap(
     state = state,
     modifier = modifier,
-    onFrame = onFrame,
   ) {
     include(overlay)
   }
