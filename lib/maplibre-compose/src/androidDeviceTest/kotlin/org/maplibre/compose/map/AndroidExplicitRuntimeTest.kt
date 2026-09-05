@@ -5,23 +5,20 @@ import kotlin.test.Test
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import kotlinx.io.files.Path
 import org.maplibre.compose.mlnffi.AndroidMlnFfiPlatform
 import org.maplibre.compose.style.BaseStyle
 
 @OptIn(DelicateMapApi::class)
 class AndroidExplicitRuntimeTest {
   @Test
-  fun explicit_runtime_initializes_android_platform() = runBlocking {
+  fun explicit_runtime_uses_the_application_context() = runBlocking {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     val cacheDirectory = context.cacheDir.resolve("explicit-runtime-${System.nanoTime()}")
     check(cacheDirectory.mkdirs()) { "Could not create test directory $cacheDirectory" }
-    AndroidMlnFfiPlatform.resetForTest()
     val runtime =
       createMapRuntime(
-        MapRuntimeOptions(
-          context = context,
-          cacheFile = cacheDirectory.resolve("cache.db"),
-        )
+        MapRuntimeOptions(cacheFile = Path(cacheDirectory.resolve("cache.db").absolutePath))
       )
     val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
 
