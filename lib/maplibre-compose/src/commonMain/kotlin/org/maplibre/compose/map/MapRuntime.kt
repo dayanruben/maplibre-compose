@@ -61,7 +61,6 @@ import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.offline.OfflineManager
 import org.maplibre.compose.offline.RuntimeBoundOfflineManager
 import org.maplibre.compose.offline.UnsupportedOfflineManager
-import org.maplibre.compose.resource.MapRequestInterceptor
 import org.maplibre.compose.resource.MapResourceConfig
 import org.maplibre.compose.sources.Source
 import org.maplibre.compose.sources.SourceHandle
@@ -78,6 +77,9 @@ import org.maplibre.compose.style.StyleHandleOperationGuard
 import org.maplibre.compose.style.StyleMutationException
 import org.maplibre.compose.style.TransitionOptions
 import org.maplibre.compose.style.canUpdateTo
+import org.maplibre.compose.style.scaledBy
+import org.maplibre.compose.style.systemAnimatorDurationScale
+import org.maplibre.compose.style.withScaledTransitions
 import org.maplibre.compose.util.ImageStretch
 import org.maplibre.compose.util.MaplibreComposable
 import org.maplibre.compose.util.VisibleRegion
@@ -89,8 +91,9 @@ import org.maplibre.spatialk.geojson.Position
 /**
  * Configuration for one [MapRuntime].
  *
- * Every platform accepts a request interceptor and a resource provider. The MapLibre Native
- * platforms also accept a cache file and a cache size limit.
+ * Every platform accepts a request interceptor and a resource provider, fixed for the lifetime of
+ * the runtime. They apply to its maps, snapshotters, and supported offline operations. The MapLibre
+ * Native platforms also accept a cache file and a cache size limit.
  */
 public expect class MapRuntimeOptions
 
@@ -104,14 +107,6 @@ public expect fun createMapRuntime(options: MapRuntimeOptions): MapRuntime
 public interface MapRuntime {
   /** The offline packs and ambient cache managed by this runtime. */
   public val offlineManager: OfflineManager
-
-  /**
-   * Replaces the request interceptor for every map and snapshotter on this runtime.
-   *
-   * A null [interceptor] stops rewriting URLs and adding headers. A request that starts after this
-   * call returns uses the new interceptor. A request in flight may use either interceptor.
-   */
-  public fun setRequestInterceptor(interceptor: MapRequestInterceptor?)
 
   /**
    * Creates a logical map with [baseStyle] and the sources, layers, and images that [content]
@@ -233,7 +228,7 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
   internal fun transitionOptions(): TransitionOptions? = readStyle { it.transition() }
 
   internal fun setTransitionOptions(options: TransitionOptions) {
-    mutateStyle("the transition") { it.setTransition(options) }
+    mutateStyle("the transition") { it.setTransition(options.scaledBy(it.animatorDurationScale)) }
   }
 
   internal fun placementTransitions(): Boolean? = readStyle { it.placementTransitions() }
@@ -245,13 +240,17 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
   internal fun lightProperty(name: String): JsonElement? = readStyle { it.lightProperty(name) }
 
   internal fun setLight(light: Light) {
-    mutateStyle("the light") { it.setLight(light.toJson()) }
+    mutateStyle("the light") {
+      it.setLight(light.toJson().withScaledTransitions(it.animatorDurationScale))
+    }
   }
 
   internal fun skyProperty(name: String): JsonElement? = readStyle { it.skyProperty(name) }
 
   internal fun setSky(sky: Sky?) {
-    mutateStyle("the sky") { it.setSky(sky?.toJson()) }
+    mutateStyle("the sky") {
+      it.setSky(sky?.toJson()?.withScaledTransitions(it.animatorDurationScale))
+    }
   }
 
   internal fun projectionProperty(name: String): JsonElement? = readStyle {
@@ -517,8 +516,12 @@ internal constructor(
   private var gestureActiveState: Boolean by mutableStateOf(false)
   private var cameraChangingState: Boolean by mutableStateOf(false)
   private var moveReasonState: CameraMoveReason by mutableStateOf(CameraMoveReason.NONE)
+  private var engagedState: Boolean by mutableStateOf(false)
   val isValid: Boolean
     get() = validState
+
+  val isEngaged: Boolean
+    get() = engagedState
 
   val viewport: Viewport?
     get() = viewportState
@@ -609,6 +612,10 @@ internal constructor(
     }
   }
 
+  internal fun setEngaged(engaged: Boolean) {
+    owner.lifecycle.serialized { engagedState = engaged }
+  }
+
   internal fun cameraChangeStarted() {
     owner.lifecycle.serialized {
       cameraChangingState = true
@@ -626,6 +633,7 @@ internal constructor(
       viewportState = null
       gestureActiveState = false
       cameraChangingState = false
+      engagedState = false
       invalidated.complete(Unit)
     }
   }
@@ -771,6 +779,16 @@ internal constructor(
     get() = currentMapAttachment?.cameraMoveReason ?: CameraMoveReason.NONE
 
   /**
+   * Returns true while the focused map consumes the keys that pan, zoom, rotate, and tilt. Enter,
+   * numpad Enter, D-pad center, and a pointer press engage the map. Escape disengages it, and Back
+   * disengages it when a key engaged it. Focus loss disengages it. A focused map that is not
+   * engaged passes direction keys to focus traversal. The value is false while no map surface is
+   * attached.
+   */
+  public val isEngaged: Boolean
+    get() = currentMapAttachment?.isEngaged == true
+
+  /**
    * Emits each [MapEvent] that the engine behind this map reports.
    *
    * A collector receives the events that the map reports after it subscribes. The flow replays
@@ -856,16 +874,26 @@ internal constructor(
     it.fitCameraToBounds(boundingBox, bearing, tilt, padding)
   }
 
-  /** Waits for an attached map, then animates to [position]. A new animation replaces this one. */
+  /**
+   * Waits for an attached map, then animates to [position]. A new animation replaces this one.
+   *
+   * On Android, the system animator duration scale multiplies [duration]. A scale of zero jumps to
+   * [position].
+   */
   public suspend fun animateCameraPosition(
     position: CameraPosition,
     duration: Duration = 300.milliseconds,
   ): Unit = cameraMutation.mutate {
-    retryAcrossAttachments { it.animateCameraPosition(position, duration) }
+    retryAcrossAttachments {
+      it.animateCameraPosition(position, duration.scaledBy(systemAnimatorDurationScale()))
+    }
   }
 
   /**
    * Waits for a viewport, then animates to fit [boundingBox]. A new animation replaces this one.
+   *
+   * On Android, the system animator duration scale multiplies [duration]. A scale of zero jumps to
+   * fit [boundingBox].
    */
   public suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
@@ -875,7 +903,13 @@ internal constructor(
     duration: Duration = 300.milliseconds,
   ): Unit = cameraMutation.mutate {
     retryAcrossAttachments {
-      it.animateCameraToBounds(boundingBox, bearing, tilt, padding, duration)
+      it.animateCameraToBounds(
+        boundingBox,
+        bearing,
+        tilt,
+        padding,
+        duration.scaledBy(systemAnimatorDurationScale()),
+      )
     }
   }
 
@@ -892,7 +926,11 @@ internal constructor(
     it.screenLocationFromPosition(position)
   }
 
-  /** Unprojects [offset] into a geographic position, or returns null without a viewport. */
+  /**
+   * Unprojects [offset] into a geographic position, or returns null without a viewport.
+   *
+   * Longitude preserves the visible world copy and may extend past ±180°.
+   */
   public fun positionFromScreenLocation(offset: DpOffset): Position? = withAttachmentRead {
     it.positionFromScreenLocation(offset)
   }
@@ -1456,6 +1494,7 @@ internal constructor(
         is MapEvent.FrameRendered -> lifecycle.acceptsPresentation(adapter)
         MapEvent.StyleLoaded,
         is MapEvent.StyleLoadFailed,
+        is MapEvent.SourceDataFailed,
         MapEvent.Idle -> lifecycle.acceptsAdapter(adapter)
       }
     if (accepted) eventsFlow.tryEmit(event)
@@ -1464,6 +1503,11 @@ internal constructor(
   /** Reports whether a gesture holds the camera of [adapter]. */
   internal fun setGestureActive(adapter: MapAdapter, active: Boolean) {
     presentedAttachment(adapter)?.setGestureActive(active)
+  }
+
+  /** Reports the engagement of the input node over [adapter]. */
+  internal fun setEngaged(adapter: MapAdapter, engaged: Boolean) {
+    presentedAttachment(adapter)?.setEngaged(engaged)
   }
 
   /** Ends a camera change that the engine behind [adapter] will never finish. */
@@ -1806,13 +1850,6 @@ internal class RuntimeImplementation(
   ): MapSnapshotter = lock.withLock {
     requireOpenLocked()
     MapSnapshotterImplementation(this, baseStyle, content).also(snapshotters::add)
-  }
-
-  final override fun setRequestInterceptor(interceptor: MapRequestInterceptor?) {
-    lock.withLock {
-      requireOpenLocked()
-      resourceConfig.setInterceptor(interceptor)
-    }
   }
 
   private fun requireOpen() {

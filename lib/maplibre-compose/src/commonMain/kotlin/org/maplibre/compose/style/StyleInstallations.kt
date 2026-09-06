@@ -2,20 +2,12 @@
 
 package org.maplibre.compose.style
 
-import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.concurrent.atomics.incrementAndFetch
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.GeometryTileProvider
 import org.maplibre.compose.sources.VectorTileProvider
 
@@ -24,7 +16,7 @@ internal class SourceInstallation(
   private val style: StyleBinding,
   definition: SourceDefinition,
 ) {
-  private val current = AtomicReference(InstalledDefinition(0L, definition))
+  private val current = AtomicReference(definition)
   private val geometryProvider =
     AtomicReference((definition as? SourceDefinition.CustomGeometry)?.provider)
   private val vectorProvider =
@@ -37,9 +29,6 @@ internal class SourceInstallation(
     checkNotNull(vectorProvider.load()) { "Custom vector source '$id' has no provider" }
       .loadTile(tile)
   }
-  private val dataGeneration = AtomicLong(0L)
-  private val pendingGeoJson = AtomicReference<PendingGeoJson?>(null)
-  private val geoJsonMutex = Mutex()
 
   val id: String = definition.id
 
@@ -57,14 +46,15 @@ internal class SourceInstallation(
   suspend fun update(definition: SourceDefinition) {
     style.requireCurrent()
     require(definition.id == id) { "A source handle cannot change resource identity" }
-    val previousDefinition = current.load().definition
+    val previousDefinition = current.load()
     if (definition == previousDefinition) return
     when {
       previousDefinition is SourceDefinition.GeoJson && definition is SourceDefinition.GeoJson -> {
         require(previousDefinition.options == definition.options) {
           "GeoJSON source options cannot change without replacing source '$id'"
         }
-        publishGeoJson(definition)
+        style.submitGeoJsonData(id, definition.data, definition.options)
+        current.store(definition)
       }
       previousDefinition is SourceDefinition.Image && definition is SourceDefinition.Image -> {
         val previous = previousDefinition
@@ -80,7 +70,7 @@ internal class SourceInstallation(
               (definition.value["url"] as? JsonPrimitive)?.content.orEmpty(),
             )
         }
-        storeDefinition(definition)
+        current.store(definition)
       }
       previousDefinition is SourceDefinition.CustomGeometry &&
         definition is SourceDefinition.CustomGeometry -> {
@@ -88,7 +78,7 @@ internal class SourceInstallation(
           "Custom geometry source options cannot change without replacing source '$id'"
         }
         geometryProvider.store(definition.provider)
-        storeDefinition(definition)
+        current.store(definition)
       }
       previousDefinition is SourceDefinition.CustomVector &&
         definition is SourceDefinition.CustomVector -> {
@@ -96,7 +86,7 @@ internal class SourceInstallation(
           "Custom vector source options cannot change without replacing source '$id'"
         }
         vectorProvider.store(definition.provider)
-        storeDefinition(definition)
+        current.store(definition)
       }
       else -> error("Source '$id' changed type or immutable options while it was installed")
     }
@@ -107,81 +97,26 @@ internal class SourceInstallation(
     style.removeSource(id)
   }
 
-  private suspend fun publishGeoJson(definition: SourceDefinition.GeoJson) {
-    val generation = dataGeneration.incrementAndFetch()
-    val data = definition.data
-    if (data is GeoJsonData.Uri) {
-      pendingGeoJson.store(null)
-      withContext(NonCancellable) {
-        style.setGeoJsonSourceUrl(id, data.uri) { claimGeoJson(generation, definition) }
-      }
-      return
-    }
-    storePendingIfNewer(PendingGeoJson(generation, definition))
-    geoJsonMutex.withLock {
-      val pending = pendingGeoJson.exchange(null) ?: return
-      withContext(NonCancellable + Dispatchers.Default) {
-        style.prepareGeoJson(pending.definition.data, pending.definition.options).use { prepared ->
-          style.setGeoJsonSourceData(id, prepared) {
-            claimGeoJson(pending.generation, pending.definition)
-          }
-        }
-      }
-    }
-  }
-
-  private fun claimGeoJson(
-    generation: Long,
-    definition: SourceDefinition.GeoJson,
-  ): Boolean {
-    while (true) {
-      val installed = current.load()
-      if (generation <= installed.generation) return false
-      if (current.compareAndSet(installed, InstalledDefinition(generation, definition))) return true
-    }
-  }
-
-  private fun storeDefinition(definition: SourceDefinition) {
-    while (true) {
-      val installed = current.load()
-      if (current.compareAndSet(installed, installed.copy(definition = definition))) return
-    }
-  }
-
-  private fun storePendingIfNewer(next: PendingGeoJson) {
-    while (true) {
-      val current = pendingGeoJson.load()
-      if (current != null && current.generation >= next.generation) return
-      if (pendingGeoJson.compareAndSet(current, next)) return
-    }
-  }
-
   private fun SourceDefinition.forInstallation(): SourceDefinition =
     when (this) {
       is SourceDefinition.CustomGeometry -> copy(provider = forwardingGeometryProvider)
       is SourceDefinition.CustomVector -> copy(provider = forwardingVectorProvider)
       else -> this
     }
-
-  private data class PendingGeoJson(
-    val generation: Long,
-    val definition: SourceDefinition.GeoJson,
-  )
-
-  private data class InstalledDefinition(
-    val generation: Long,
-    val definition: SourceDefinition,
-  )
 }
 
-/** A layer installed in exactly one loaded-style generation. */
+/**
+ * A layer installed in exactly one loaded-style generation. The animator duration scale scales the
+ * layer's paint transitions for the engine; a changed scale rewrites them on the next update.
+ */
 internal class LayerInstallation(
   private val style: StyleBinding,
   definition: LayerDefinition,
   beforeLayerId: String,
+  animatorDurationScale: Float = 1f,
 ) {
   val id: String = definition.id
-  private var current = definition.resolveFor(style)
+  private var current = definition.resolveFor(style, animatorDurationScale)
   private val reportedUnsupported = mutableSetOf<String>()
 
   init {
@@ -190,10 +125,10 @@ internal class LayerInstallation(
     reportUnsupported(definition)
   }
 
-  fun update(definition: LayerDefinition) {
+  fun update(definition: LayerDefinition, animatorDurationScale: Float = 1f) {
     style.requireCurrent()
     require(definition.id == id) { "A layer handle cannot change resource identity" }
-    val next = definition.resolveFor(style)
+    val next = definition.resolveFor(style, animatorDurationScale)
     if (next == current) return
     val previousValue = current.value
     val nextValue = next.value
@@ -248,19 +183,24 @@ internal class LayerInstallation(
     next: JsonObject?,
     kind: LayerPropertyKind,
   ) {
-    (previous.orEmpty().keys + next.orEmpty().keys).forEach { name ->
-      val oldValue = previous?.get(name)
-      val newValue = next?.get(name)
-      if (oldValue == newValue) return@forEach
-      try {
-        style.setLayerProperty(id, name, newValue ?: clearingValue(kind, name), kind)
-      } catch (error: StyleMutationException) {
-        style.logger?.w(error) {
-          "Layer '$id' of type '${current.type}' kept its previous '$name': MapLibre rejected " +
-            "$newValue."
+    // A transition goes before the value it times, so an engine that updates between the two
+    // writes animates the new value with the new timing.
+    val names = previous.orEmpty().keys + next.orEmpty().keys
+    names
+      .sortedByDescending { it.endsWith(TRANSITION_SUFFIX) }
+      .forEach { name ->
+        val oldValue = previous?.get(name)
+        val newValue = next?.get(name)
+        if (oldValue == newValue) return@forEach
+        try {
+          style.setLayerProperty(id, name, newValue ?: clearingValue(kind, name), kind)
+        } catch (error: StyleMutationException) {
+          style.logger?.w(error) {
+            "Layer '$id' of type '${current.type}' kept its previous '$name': MapLibre rejected " +
+              "$newValue."
+          }
         }
       }
-    }
   }
 
   private fun reportUnsupported(definition: LayerDefinition) {
@@ -294,7 +234,14 @@ private fun clearingValue(kind: LayerPropertyKind, name: String): JsonElement =
   if (kind == LayerPropertyKind.PAINT && name.endsWith(TRANSITION_SUFFIX)) CLEARED_TRANSITION
   else JsonNull
 
-private fun LayerDefinition.resolveFor(style: StyleBinding): LayerDefinition {
+/**
+ * The layer JSON that [style] receives: without the properties its engine does not support, and
+ * with every paint transition scaled by [animatorDurationScale].
+ */
+private fun LayerDefinition.resolveFor(
+  style: StyleBinding,
+  animatorDurationScale: Float,
+): LayerDefinition {
   fun JsonObject.withoutUnsupported(): JsonObject =
     JsonObject(filterKeys { style.unsupportedLayerPropertyReason(type, it) == null })
 
@@ -302,8 +249,9 @@ private fun LayerDefinition.resolveFor(style: StyleBinding): LayerDefinition {
   (resolved["layout"] as? JsonObject)?.withoutUnsupported()?.let {
     if (it.isEmpty()) resolved.remove("layout") else resolved["layout"] = it
   }
-  (resolved["paint"] as? JsonObject)?.withoutUnsupported()?.let {
-    if (it.isEmpty()) resolved.remove("paint") else resolved["paint"] = it
-  }
+  (resolved["paint"] as? JsonObject)
+    ?.withoutUnsupported()
+    ?.withScaledTransitions(animatorDurationScale)
+    ?.let { if (it.isEmpty()) resolved.remove("paint") else resolved["paint"] = it }
   return copy(value = JsonObject(resolved))
 }

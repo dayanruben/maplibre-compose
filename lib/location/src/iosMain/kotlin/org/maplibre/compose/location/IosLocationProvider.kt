@@ -28,45 +28,29 @@ import platform.Foundation.NSError
 import platform.darwin.NSObject
 
 /**
- * A [LocationProvider] built on
- * [`CLLocationManager`](https://developer.apple.com/documentation/corelocation/cllocationmanager).
+ * Foreground location from Core Location.
  *
- * [LocationProvider.permission] and [LocationProvider.requestPermission] delegate to an
- * [IosLocationPermissionRequester].
+ * Applies the requested accuracy and minimum distance. [LocationRequest.minimumInterval] is
+ * ignored. See [IosLocationPermissionRequester] for permission behavior.
  *
- * Each collection creates a
- * [`CLLocationManager`](https://developer.apple.com/documentation/corelocation/cllocationmanager)
- * on the main dispatcher, applies the request's accuracy and distance preferences, and stops the
- * manager when collection ends.
+ * Create the provider, request permission, and close it on the main thread.
  *
- * [LocationAccuracy.BestForNavigation] maps to
- * [`kCLLocationAccuracyBestForNavigation`](https://developer.apple.com/documentation/corelocation/kcllocationaccuracybestfornavigation),
- * [LocationAccuracy.High] maps to
- * [`kCLLocationAccuracyBest`](https://developer.apple.com/documentation/corelocation/kcllocationaccuracybest),
- * [LocationAccuracy.Balanced] maps to
- * [`kCLLocationAccuracyHundredMeters`](https://developer.apple.com/documentation/corelocation/kcllocationaccuracyhundredmeters),
- * [LocationAccuracy.Low] maps to
- * [`kCLLocationAccuracyKilometer`](https://developer.apple.com/documentation/corelocation/kcllocationaccuracykilometer),
- * and [LocationAccuracy.Lowest] maps to
- * [`kCLLocationAccuracyReduced`](https://developer.apple.com/documentation/corelocation/kcllocationaccuracyreduced).
- *
- * [`kCLErrorDenied`](https://developer.apple.com/documentation/corelocation/clerror/denied) maps to
- * [LocationUnavailableReason.ServicesDisabled] when location services are disabled and to
- * [LocationUnavailableReason.PermissionDenied] otherwise.
- * [`kCLErrorPromptDeclined`](https://developer.apple.com/documentation/corelocation/clerror/promptdeclined)
- * also maps to [LocationUnavailableReason.PermissionDenied].
- * [`kCLErrorLocationUnknown`](https://developer.apple.com/documentation/corelocation/clerror/locationunknown)
- * and [`kCLErrorNetwork`](https://developer.apple.com/documentation/corelocation/clerror/network)
- * map to [LocationUnavailableReason.TemporarilyUnavailable]. Other Core Location errors map to
- * [LocationUnavailableReason.UnexpectedFailure].
+ * Disabled location services report [LocationUnavailableReason.ServicesDisabled]. Denied or
+ * declined permission reports [LocationUnavailableReason.PermissionDenied]. Network failures and
+ * unknown locations report [LocationUnavailableReason.TemporarilyUnavailable]. Other failures
+ * report [LocationUnavailableReason.UnexpectedFailure].
  */
-public class IosLocationProvider : LocationProvider {
-  private val requester = IosLocationPermissionRequester()
+public class IosLocationProvider
+internal constructor(private val requester: IosLocationPermissionRequester) : LocationProvider {
+  /** Creates a provider with its own permission requester. */
+  public constructor() : this(IosLocationPermissionRequester())
 
   override val permission: StateFlow<LocationPermission>
     get() = requester.status
 
   override fun requestPermission(): Unit = requester.requestForegroundPermission()
+
+  override fun close(): Unit = requester.close()
 
   override fun updates(request: LocationRequest): Flow<LocationEvent> =
     callbackFlow<IosLocationCallback> {

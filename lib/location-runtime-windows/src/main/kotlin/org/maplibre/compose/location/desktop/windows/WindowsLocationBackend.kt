@@ -1,7 +1,6 @@
 package org.maplibre.compose.location.desktop.windows
 
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.TimeSource
 import kotlinx.coroutines.channels.awaitClose
@@ -33,53 +32,51 @@ public class WindowsLocationBackend : DesktopLocationBackend {
 }
 
 /**
- * A [LocationProvider] backed by `Windows.Devices.Geolocation.Geolocator`.
+ * Foreground location from Windows geolocation.
  *
- * Each [updates] collector owns an independent `Geolocator`. The provider configures its scalar
- * desired accuracy to 1, 10, 100, 1,000, or 5,000 meters from [LocationAccuracy.BestForNavigation]
- * through [LocationAccuracy.Lowest], configures `ReportInterval`, and also enforces
- * [LocationRequest.minimumInterval] and [LocationRequest.minimumDistance] before delivery. The
- * first valid measurement is always delivered. Cancelling collection removes both native event
- * handlers and releases the geolocator.
+ * Requests accuracy of 1, 10, 100, 1,000, or 5,000 meters for [LocationAccuracy.BestForNavigation]
+ * through [LocationAccuracy.Lowest]. Applies [LocationRequest.minimumInterval] and
+ * [LocationRequest.minimumDistance] after the first valid measurement.
  *
- * `Initializing`, `NoData`, and `NotInitialized` report
- * [LocationUnavailableReason.TemporarilyUnavailable]. `Disabled` reports
- * [LocationUnavailableReason.PermissionDenied] when access is denied and
- * [LocationUnavailableReason.ServicesDisabled] when access remains granted. `NotAvailable` reports
- * [LocationUnavailableReason.Unsupported]. Unexpected native failures report
+ * An initializing service or missing data reports
+ * [LocationUnavailableReason.TemporarilyUnavailable]. A disabled service reports
+ * [LocationUnavailableReason.PermissionDenied] when access is denied, and
+ * [LocationUnavailableReason.ServicesDisabled] otherwise. Unavailable hardware reports
+ * [LocationUnavailableReason.Unsupported]. Other failures report
  * [LocationUnavailableReason.UnexpectedFailure].
- *
- * Ordinary Windows Runtime calls run in a dedicated multithreaded apartment. Permission requests
- * start on the AWT event-dispatch thread because Windows requires a foreground UI-thread request.
  */
 public class WindowsLocationProvider
 internal constructor(private val client: WindowsLocationClient) : DesktopLocationProvider {
   public constructor() : this(SystemWindowsLocationClient())
 
   private val requester = WindowsLocationPermissionRequester(client, ownsClient = false)
-  private val sessions = ConcurrentHashMap.newKeySet<WindowsCloseable>()
-  private val closed = AtomicBoolean()
+  private val lifecycleLock = Any()
+  private val sessions = mutableSetOf<Session>()
+  private var closed = false
+  // Keep the client alive across native calls without holding the lifecycle lock in callbacks.
+  private var activeOperations = 0
+  private var clientClosed = false
 
   override val backendAvailability: LocationBackendAvailability = client.backendAvailability
 
   override val permission: StateFlow<LocationPermission>
     get() = requester.status
 
-  override fun requestPermission(): Unit = requester.requestForegroundPermission()
+  override fun requestPermission() {
+    synchronized(lifecycleLock) {
+      check(!closed) { "The Windows location provider is closed" }
+      activeOperations++
+    }
+    try {
+      requester.requestForegroundPermission()
+    } finally {
+      finishOperation()
+    }
+  }
 
   override fun updates(request: LocationRequest): Flow<LocationEvent> = callbackFlow {
     check(backendAvailability == LocationBackendAvailability.Available) {
       "Location updates require an available backend: $backendAvailability"
-    }
-    if (closed.get()) {
-      trySend(
-        LocationEvent.Unavailable(
-          LocationUnavailableReason.UnexpectedFailure,
-          IllegalStateException("The Windows location provider is closed"),
-        )
-      )
-      close()
-      return@callbackFlow
     }
 
     val filter = WindowsLocationFilter(request.minimumInterval, request.minimumDistance.inMeters)
@@ -109,8 +106,14 @@ internal constructor(private val client: WindowsLocationClient) : DesktopLocatio
           trySend(LocationEvent.Unavailable(LocationUnavailableReason.UnexpectedFailure, error))
         }
       }
-    val session =
-      try {
+    val session = Session { close() }
+    synchronized(lifecycleLock) {
+      check(!closed) { "The Windows location provider is closed" }
+      sessions += session
+      activeOperations++
+    }
+    try {
+      val nativeSession =
         client.createSession(
           WindowsLocationConfiguration(
             desiredAccuracyMeters = request.accuracy.toDesiredAccuracyMeters(),
@@ -118,24 +121,74 @@ internal constructor(private val client: WindowsLocationClient) : DesktopLocatio
           ),
           listener,
         )
-      } catch (error: Throwable) {
-        trySend(LocationEvent.Unavailable(LocationUnavailableReason.UnexpectedFailure, error))
-        close()
-        return@callbackFlow
-      }
-    sessions += session
-    awaitClose {
-      if (sessions.remove(session)) session.close()
+      val retained =
+        synchronized(lifecycleLock) {
+          if (session in sessions) {
+            session.nativeSession = nativeSession
+            true
+          } else {
+            false
+          }
+        }
+      if (!retained) nativeSession.close()
+    } catch (error: Throwable) {
+      trySend(LocationEvent.Unavailable(LocationUnavailableReason.UnexpectedFailure, error))
+      closeSession(session)
+    } finally {
+      finishOperation()
     }
+    awaitClose { closeSession(session) }
   }
 
   override fun close() {
-    if (!closed.compareAndSet(false, true)) return
-    sessions.toList().forEach {
-      if (sessions.remove(it)) runCatching(it::close)
+    val activeSessions =
+      synchronized(lifecycleLock) {
+        if (closed) return
+        closed = true
+        activeOperations++
+        sessions.toList()
+      }
+    try {
+      activeSessions.forEach(::closeSession)
+    } finally {
+      finishOperation()
     }
-    runCatching(requester::close)
-    runCatching(client::close)
+  }
+
+  private fun closeSession(session: Session) {
+    val nativeSession =
+      synchronized(lifecycleLock) {
+        if (!sessions.remove(session)) return
+        activeOperations++
+        session.nativeSession
+      }
+    try {
+      session.closeFlow()
+      nativeSession?.let { runCatching(it::close) }
+    } finally {
+      finishOperation()
+    }
+  }
+
+  private fun finishOperation() {
+    val releaseClient =
+      synchronized(lifecycleLock) {
+        activeOperations--
+        if (closed && activeOperations == 0 && sessions.isEmpty() && !clientClosed) {
+          clientClosed = true
+          true
+        } else {
+          false
+        }
+      }
+    if (releaseClient) {
+      runCatching(requester::close)
+      runCatching(client::close)
+    }
+  }
+
+  private class Session(val closeFlow: () -> Unit) {
+    var nativeSession: WindowsCloseable? = null
   }
 }
 

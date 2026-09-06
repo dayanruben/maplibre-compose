@@ -6,6 +6,7 @@ import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -31,7 +32,7 @@ import org.maplibre.spatialk.units.extensions.degrees
 public class LocationState
 internal constructor(
   initialAvailability: LocationBackendAvailability = LocationBackendAvailability.Available,
-  initialPermission: LocationPermission = LocationPermission.NotGranted(null),
+  initialPermission: LocationPermission = LocationPermission.Unknown,
 ) {
   /** The user's last known location measurement. */
   public var lastLocation: LocationMeasurement? by mutableStateOf(null)
@@ -62,7 +63,7 @@ internal constructor(
 
   internal var requestPermissionAction: () -> Unit = {}
 
-  internal var retryKey: Int by mutableStateOf(0)
+  internal var retryKey: Int by mutableIntStateOf(0)
     private set
 
   /** Requests foreground permission; the result is published to [permission]. */
@@ -131,6 +132,9 @@ public sealed interface LocationTrackingStatus {
  * provider setup, [LocationState.permission] reports foreground authorization, and
  * [LocationState.status] reports only the tracking session.
  *
+ * Unknown permission allows collection to retry a non-prompting permission check. A known denial
+ * stops location collection. Heading collection requires granted permission.
+ *
  * @param provider The [LocationProvider] to use for obtaining location updates and for observing
  *   and requesting foreground location permission. A custom provider whose
  *   [LocationProvider.permission] keeps the granted default needs no permission handling.
@@ -163,6 +167,12 @@ public fun rememberLocationState(
       )
     }
   val permission by provider.permission.collectAsState()
+  val canCollectLocation =
+    when (permission) {
+      LocationPermission.Unknown,
+      is LocationPermission.Granted -> true
+      is LocationPermission.NotGranted -> false
+    }
   SideEffect {
     state.permission = permission
     state.requestPermissionAction = provider::requestPermission
@@ -172,16 +182,14 @@ public fun rememberLocationState(
     enabled,
     provider,
     request,
-    permission,
+    canCollectLocation,
     state,
     state.retryKey,
     lifecycleOwner.lifecycle,
     minActiveState,
   ) {
     if (
-      !enabled ||
-        state.availability != LocationBackendAvailability.Available ||
-        permission !is LocationPermission.Granted
+      !enabled || state.availability != LocationBackendAvailability.Available || !canCollectLocation
     ) {
       state.status = LocationTrackingStatus.Stopped
       return@LaunchedEffect
@@ -265,13 +273,9 @@ public fun rememberLocationState(
 /**
  * Returns the most accurate bearing measurement available.
  *
- * This function considers bearings from two potential sources:
- * 1. The [LocationMeasurement] course indicates the direction of travel.
- * 2. The device [HeadingMeasurement] indicates the direction that the top of the device faces.
- *
- * It compares the accuracy of these two measurements and returns the one with the smallest accuracy
- * value (i.e., the most precise). If a measurement has no accuracy specified (`null`), it is
- * treated as having infinite (the worst possible) accuracy.
+ * Compares the travel course from [LocationMeasurement] with the device heading from
+ * [HeadingMeasurement]. Returns the measurement with the smallest estimated error, treating an
+ * unknown error as infinite.
  *
  * @return The bearing with the highest accuracy, or `null` when neither source provides a bearing.
  */

@@ -73,6 +73,9 @@ internal class GlJsStyleBinding(
 
   override val identity: StyleIdentity = StyleIdentity.create()
 
+  override val animatorDurationScale: Float
+    get() = systemAnimatorDurationScale()
+
   private var loaded = true
   private val customVectorAttachments = mutableMapOf<String, GlJsCustomVectorAttachment>()
 
@@ -332,26 +335,17 @@ internal class GlJsStyleBinding(
     }
   }
 
-  override fun prepareGeoJson(data: GeoJsonData, options: GeoJsonOptions): PreparedGeoJson =
-    GlJsPreparedGeoJson(data.toDataJson().toJsValue())
-
-  override fun setGeoJsonSourceData(
+  override fun submitGeoJsonData(
     sourceId: String,
-    prepared: PreparedGeoJson,
-    claim: () -> Boolean,
+    data: GeoJsonData,
+    fallbackOptions: GeoJsonOptions,
   ) {
-    if (!claim()) return
     requireLoaded()
     mutate("set data on source '$sourceId'") {
-      map.getSource<GlJsGeoJsonSource>(sourceId)?.setData((prepared as GlJsPreparedGeoJson).data)
-    }
-  }
-
-  override fun setGeoJsonSourceUrl(sourceId: String, url: String, claim: () -> Boolean) {
-    if (!claim()) return
-    requireLoaded()
-    mutate("set data on source '$sourceId'") {
-      map.getSource<GlJsGeoJsonSource>(sourceId)?.setData(url.unsafeCast<GeoJsonSourceData>())
+      val value =
+        if (data is GeoJsonData.Uri) data.uri.unsafeCast<GeoJsonSourceData>()
+        else data.toDataJson().toJsValue<GeoJsonSourceData>()
+      map.getSource<GlJsGeoJsonSource>(sourceId)?.setData(value)
     }
   }
 
@@ -519,10 +513,7 @@ internal class GlJsStyleBinding(
     }
   }
 
-  /**
-   * GL JS fixes a layer's own keys at construction, except the zoom range, which moves as a pair —
-   * so the half that was not asked for is read back off the live layer.
-   */
+  /** GL JS sets both zoom bounds together, so preserve the bound that the caller did not change. */
   private fun setRootProperty(layerId: String, name: String, value: JsonElement) {
     val number = (value as? JsonPrimitive)?.takeUnless { it.isString }?.doubleOrNull
     val layer = map.getLayer(layerId)
@@ -677,11 +668,6 @@ internal class GlJsStyleBinding(
   override fun layerExists(layerId: String): Boolean? {
     requireLoaded()
     return map.getLayer(layerId) != null
-  }
-
-  /** The engine parses in a web worker of its own, so there is nothing to prepare here. */
-  private class GlJsPreparedGeoJson(val data: GeoJsonSourceData) : PreparedGeoJson {
-    override fun close() = Unit
   }
 
   private inline fun mutate(what: String, action: () -> Unit) {

@@ -8,8 +8,6 @@ import kotlin.time.Instant
 import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -38,42 +36,21 @@ import web.permissions.prompt
 import web.permissions.query
 
 /**
- * A browser location provider backed by the
- * [Geolocation API](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation_API).
+ * Foreground location from the browser's Geolocation API.
  *
- * [LocationAccuracy.BestForNavigation] and [LocationAccuracy.High] set
- * [`PositionOptions.enableHighAccuracy`](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation/getCurrentPosition#enablehighaccuracy)
- * to `true`. The remaining accuracy values set it to `false`. The provider applies
- * [LocationRequest.minimumInterval] after delivery. It ignores [LocationRequest.minimumDistance]
- * because [`PositionOptions`](https://developer.mozilla.org/en-US/docs/Web/API/PositionOptions) has
- * no distance threshold.
+ * [LocationAccuracy.BestForNavigation] and [LocationAccuracy.High] request high accuracy. Applies
+ * [LocationRequest.minimumInterval] and ignores [LocationRequest.minimumDistance].
  *
- * A missing Geolocation API maps [LocationProvider.backendAvailability] to
- * [LocationBackendAvailability.Unsupported].
- * [`GeolocationPositionError.PERMISSION_DENIED`](https://developer.mozilla.org/en-US/docs/Web/API/GeolocationPositionError/code#geolocationpositionerror.permission_denied)
- * maps to [LocationUnavailableReason.PermissionDenied].
- * [`POSITION_UNAVAILABLE`](https://developer.mozilla.org/en-US/docs/Web/API/GeolocationPositionError/code#geolocationpositionerror.position_unavailable)
- * and
- * [`TIMEOUT`](https://developer.mozilla.org/en-US/docs/Web/API/GeolocationPositionError/code#geolocationpositionerror.timeout)
- * map to [LocationUnavailableReason.TemporarilyUnavailable]. An exception thrown while starting the
- * live watch maps to [LocationUnavailableReason.UnexpectedFailure].
- *
- * [LocationProvider.permission] and [LocationProvider.requestPermission] delegate to a
- * [BrowserLocationPermissionRequester] that shares the provider's boundary, so a permission denial
- * during an active watch updates [LocationProvider.permission].
+ * A missing Geolocation API reports [LocationBackendAvailability.Unsupported]. Permission denial
+ * reports [LocationUnavailableReason.PermissionDenied] and updates [permission]. Timeouts and
+ * unavailable positions report [LocationUnavailableReason.TemporarilyUnavailable]. Failure to start
+ * location updates reports [LocationUnavailableReason.UnexpectedFailure].
  */
 public class BrowserLocationProvider
 internal constructor(
   private val boundary: BrowserGeolocationBoundary,
   coroutineScope: CoroutineScope,
 ) : LocationProvider {
-  /**
-   * Creates a provider that observes permission in a coroutine scope that lives as long as the
-   * provider.
-   */
-  public constructor() :
-    this(BrowserGeolocation, CoroutineScope(SupervisorJob() + Dispatchers.Default))
-
   /** Creates a provider that observes permission in [coroutineScope]. */
   public constructor(coroutineScope: CoroutineScope) : this(BrowserGeolocation, coroutineScope)
 
@@ -100,10 +77,8 @@ internal constructor(
       when (result) {
         is BrowserResult.Position -> {
           val current = result.value
-          if (
-            previous == null ||
-              current.capturedAt - previous!!.capturedAt >= request.minimumInterval
-          ) {
+          val last = previous
+          if (last == null || current.capturedAt - last.capturedAt >= request.minimumInterval) {
             previous = current
             trySend(
               LocationEvent.Update(

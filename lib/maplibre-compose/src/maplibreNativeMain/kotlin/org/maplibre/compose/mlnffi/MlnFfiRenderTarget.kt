@@ -7,8 +7,8 @@ import org.maplibre.nativeffi.render.OpenGLClientApi
 import org.maplibre.nativeffi.render.OpenGLContextOwnership
 
 /**
- * A borrowed native handle, as an opaque address. The host owns whatever this points at; MapLibre
- * Compose never frees, retains, or dereferences it.
+ * A borrowed pointer address or 64-bit Vulkan handle. The host owns the resource; MapLibre Compose
+ * never frees, retains, or dereferences it.
  */
 @JvmInline
 public value class NativeHandle(public val address: Long) {
@@ -35,11 +35,10 @@ internal sealed interface MlnFfiRenderTarget {
   val extent: MapExtent
 
   /**
-   * Identifies the underlying target object.
+   * Identifies the underlying target allocation.
    *
-   * A host must bump this any time the handles it reports stop referring to the same allocation —
-   * after a reallocating resize, after surface loss, or when rotating through a pool — and must
-   * keep the retired allocation readable until it has been asked to draw a different one.
+   * Increment this when handles change allocation, including after resize, surface loss, or pool
+   * rotation. Keep the retired allocation readable until asked to draw a different one.
    */
   val generation: Long
 }

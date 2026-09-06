@@ -1,5 +1,7 @@
 package org.maplibre.compose.style
 
+import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -36,12 +38,20 @@ internal class RecordingStyleBinding(
   private val beforeAddImage: ((String) -> Unit)? = null,
   private val beforeClusterExpansionZoomResult: suspend () -> Unit = {},
   private val onInvalidate: () -> Unit = {},
+  /** The fake platform's animator duration scale; a test changes it to simulate the setting. */
+  val animatorDurationScaleState: MutableState<Float> = mutableStateOf(1f),
 ) : StyleBinding {
+
+  override val animatorDurationScale: Float
+    get() = animatorDurationScaleState.value
 
   override val identity: StyleIdentity = StyleIdentity.create()
 
   val sources: MutableMap<String, JsonObject> = mutableMapOf()
   val layers: MutableMap<String, JsonObject> = mutableMapOf()
+
+  /** Every layer property write after installation, as layer ID to property name, in order. */
+  val layerPropertyWrites: MutableList<Pair<String, String>> = mutableListOf()
   private val images =
     images.associate { (id, bitmap) -> id to ImageSnapshot.capture(bitmap) }.toMutableMap()
   private val baseSources = sources.associateBy { it.id }.toMutableMap()
@@ -148,24 +158,15 @@ internal class RecordingStyleBinding(
   override fun imageSourceCoordinates(sourceId: String): List<Position>? = null
 
   /** The GeoJSON data each install applied, in order, keyed by source. */
-  val installedGeoJson: MutableMap<String, MutableList<Any>> = mutableMapOf()
+  val installedGeoJson: MutableMap<String, MutableList<GeoJsonData>> = mutableMapOf()
 
-  override fun prepareGeoJson(data: GeoJsonData, options: GeoJsonOptions): PreparedGeoJson =
-    RecordedPreparedGeoJson(data)
-
-  override fun setGeoJsonSourceData(
+  override fun submitGeoJsonData(
     sourceId: String,
-    prepared: PreparedGeoJson,
-    claim: () -> Boolean,
+    data: GeoJsonData,
+    fallbackOptions: GeoJsonOptions,
   ) {
-    if (!claim()) return
-    installedGeoJson.getOrPut(sourceId) { mutableListOf() } +=
-      (prepared as RecordedPreparedGeoJson).data
-  }
-
-  override fun setGeoJsonSourceUrl(sourceId: String, url: String, claim: () -> Boolean) {
-    if (!claim()) return
-    installedGeoJson.getOrPut(sourceId) { mutableListOf() } += url
+    requireCurrent()
+    installedGeoJson.getOrPut(sourceId) { mutableListOf() } += data
   }
 
   override fun addCustomGeometrySource(
@@ -214,15 +215,6 @@ internal class RecordingStyleBinding(
     offset: Long,
   ): FeatureCollection<Geometry, JsonObject?>? = null
 
-  class RecordedPreparedGeoJson(val data: GeoJsonData) : PreparedGeoJson {
-    var closed: Boolean = false
-      private set
-
-    override fun close() {
-      closed = true
-    }
-  }
-
   override fun addLayer(layer: JsonObject, beforeLayerId: String): Boolean {
     val id = (layer["id"] as JsonPrimitive).content
     check(id !in layers) { "Layer ID '$id' already exists in style" }
@@ -255,6 +247,7 @@ internal class RecordingStyleBinding(
     kind: LayerPropertyKind,
   ) {
     val layer = checkNotNull(layers[layerId]) { "Layer ID '$layerId' not found in style" }
+    layerPropertyWrites += layerId to name
     val section =
       when (kind) {
         LayerPropertyKind.LAYOUT -> "layout"

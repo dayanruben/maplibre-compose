@@ -1,6 +1,7 @@
 package org.maplibre.compose.location
 
 import android.content.Context
+import androidx.annotation.MainThread
 import java.util.ServiceConfigurationError
 import java.util.ServiceLoader
 import kotlinx.coroutines.flow.Flow
@@ -33,7 +34,7 @@ public interface AndroidLocationBackend {
   public fun isAvailable(context: Context): Boolean
 
   /** Creates this backend's location provider. */
-  public fun createLocationProvider(context: Context): LocationProvider
+  @MainThread public fun createLocationProvider(context: Context): LocationProvider
 
   /**
    * Creates this backend's heading provider, or returns null so the default framework heading
@@ -81,7 +82,7 @@ internal object AndroidLocationBackendResolver {
   }
 }
 
-internal class MisconfiguredLocationProvider(private val cause: Throwable) : LocationProvider {
+internal class MisconfiguredLocationProvider(cause: Throwable) : LocationProvider {
   override val backendAvailability: LocationBackendAvailability =
     LocationBackendAvailability.Misconfigured(cause)
 

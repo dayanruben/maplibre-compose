@@ -14,6 +14,7 @@ import android.location.LocationRequest as AndroidLocationRequest
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import androidx.annotation.MainThread
 import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresPermission
 import kotlinx.coroutines.channels.awaitClose
@@ -23,35 +24,21 @@ import kotlinx.coroutines.flow.callbackFlow
 import org.maplibre.spatialk.units.extensions.inMeters
 
 /**
- * A [LocationProvider] built on the [LocationManager] platform APIs.
+ * Foreground location from Android's location service.
  *
- * Each collection selects a provider and request settings from [LocationRequest], emits the last
- * known location when one exists, and removes its listener when collection ends.
+ * Uses fused location on Android 12 and later, and an available provider matching the requested
+ * accuracy on earlier versions. [LocationAccuracy.Lowest] receives passive updates.
  *
- * On Android 12 and newer, [LocationAccuracy.BestForNavigation] and [LocationAccuracy.High] map to
- * [`LocationRequest.QUALITY_HIGH_ACCURACY`](https://developer.android.com/reference/android/location/LocationRequest#QUALITY_HIGH_ACCURACY),
- * [LocationAccuracy.Balanced] maps to
- * [`LocationRequest.QUALITY_BALANCED_POWER_ACCURACY`](https://developer.android.com/reference/android/location/LocationRequest#QUALITY_BALANCED_POWER_ACCURACY),
- * and [LocationAccuracy.Low] maps to
- * [`LocationRequest.QUALITY_LOW_POWER`](https://developer.android.com/reference/android/location/LocationRequest#QUALITY_LOW_POWER).
- * Earlier versions use the corresponding
- * [`Criteria`](https://developer.android.com/reference/android/location/Criteria) accuracy and
- * power requirements. [LocationAccuracy.Lowest] uses
- * [`LocationManager.PASSIVE_PROVIDER`](https://developer.android.com/reference/android/location/LocationManager#PASSIVE_PROVIDER)
- * on every version.
+ * Disabled location services report [LocationUnavailableReason.ServicesDisabled]. Missing
+ * permission reports [LocationUnavailableReason.PermissionDenied]. Invalid provider registration
+ * reports [LocationUnavailableReason.UnexpectedFailure].
  *
- * A disabled location service or
- * [`LocationListener.onProviderDisabled`](https://developer.android.com/reference/android/location/LocationListener#onProviderDisabled(java.lang.String))
- * maps to [LocationUnavailableReason.ServicesDisabled]. A `SecurityException` maps to
- * [LocationUnavailableReason.PermissionDenied]. An `IllegalArgumentException` while registering the
- * selected provider maps to [LocationUnavailableReason.UnexpectedFailure], because this provider
- * constructs and validates every request argument itself.
+ * See [AndroidLocationPermissionRequester] for permission request requirements.
  *
- * [permission] and [requestPermission] delegate to an [AndroidLocationPermissionRequester]; see its
- * documentation for when the system permission dialog can be shown.
+ * Create the provider, request permission, and close it on the main thread.
  *
- * @param context Context used to obtain the platform [LocationManager].
- * @param requester Permission requester that backs [permission] and [requestPermission].
+ * @param context Context used to access location services.
+ * @param requester Handles [permission] and [requestPermission].
  */
 public class AndroidLocationProvider
 internal constructor(context: Context, private val requester: AndroidLocationPermissionRequester) :
@@ -61,12 +48,15 @@ internal constructor(context: Context, private val requester: AndroidLocationPer
   override val backendId: String = "android-framework"
 
   /** Creates a provider with its own [AndroidLocationPermissionRequester]. */
+  @MainThread
   public constructor(context: Context) : this(context, AndroidLocationPermissionRequester(context))
 
   override val permission: StateFlow<LocationPermission>
     get() = requester.status
 
-  override fun requestPermission(): Unit = requester.requestForegroundPermission()
+  @MainThread override fun requestPermission(): Unit = requester.requestForegroundPermission()
+
+  @MainThread override fun close(): Unit = requester.close()
 
   @RequiresPermission(
     anyOf = [Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION]
@@ -229,6 +219,7 @@ internal constructor(context: Context, private val requester: AndroidLocationPer
  * available, a provider that reports the failure when discovery is misconfigured, and the framework
  * [AndroidLocationProvider] otherwise.
  */
+@MainThread
 public fun createDefaultLocationProvider(context: Context): LocationProvider =
   when (val resolution = AndroidLocationBackendResolver.discover(context)) {
     is AndroidBackendResolution.Discovered ->

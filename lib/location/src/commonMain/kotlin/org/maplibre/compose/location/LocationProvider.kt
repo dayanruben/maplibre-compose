@@ -12,19 +12,12 @@ import org.maplibre.spatialk.units.extensions.inMeters
 import org.maplibre.spatialk.units.extensions.meters
 
 /**
- * This is an intentionally very limited abstraction over the various platform APIs for geolocation.
- * It is specialized to the use case of maplibre-compose.
+ * Supplies foreground location updates and permission status.
  *
- * If you have a more general use case, prefer using the platform APIs directly or using a more
- * powerful wrapper. In that case, you may want to provide your own [LocationProvider]
- * implementation to unify the API underneath. This is an explicitly supported use case:
- * [permission] defaults to granted, so a source where permission is not a concept needs no
- * permission handling.
- *
- * Each collector of [updates] starts an independent platform location request. Cancelling
- * collection must stop that request and unregister its callbacks.
+ * Implement this interface for custom location sources. Sources without permission handling can use
+ * the default [permission] and [requestPermission] implementations.
  */
-public interface LocationProvider {
+public interface LocationProvider : AutoCloseable {
   /** A stable implementation name for diagnostics, when the provider declares one. */
   public val backendId: String?
     get() = null
@@ -66,6 +59,15 @@ public interface LocationProvider {
    * that request and unregisters its callbacks.
    */
   public fun updates(request: LocationRequest = LocationRequest()): Flow<LocationEvent>
+
+  /**
+   * Releases resources owned by this provider. Repeated calls have no effect.
+   *
+   * Cancel update collectors when disposing the provider. Implementations that own permission
+   * observers or platform clients release them here. Android and iOS providers require the main
+   * thread. The default does nothing.
+   */
+  override fun close(): Unit = Unit
 }
 
 private val AlwaysGrantedLocationPermission: StateFlow<LocationPermission> =
@@ -123,8 +125,7 @@ public data class LocationRequest(
 /**
  * Accuracy levels for [LocationRequest], which are mapped to platform accuracy and power levels.
  *
- * The recommended level for actively displaying the user location on screen is [High] or
- * [Balanced], if the location doesn't have to be perfectly accurate.
+ * Use [High] to display the user's location, or [Balanced] to reduce power usage.
  */
 public enum class LocationAccuracy {
   /**
@@ -230,6 +231,13 @@ public enum class LocationAccuracyAuthorization {
 
 /** Current foreground location authorization. */
 public sealed interface LocationPermission {
+  /**
+   * Authorization has not been determined. Collecting [LocationProvider.updates] retries the
+   * permission check without prompting. The provider must determine authorization before delivering
+   * measurements and report check failures through [LocationEvent.Unavailable].
+   */
+  public data object Unknown : LocationPermission
+
   /** Foreground authorization is granted at [accuracy]. */
   public data class Granted(val accuracy: LocationAccuracyAuthorization) : LocationPermission
 
