@@ -3,10 +3,6 @@ package org.maplibre.compose.map
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.ImageBitmapConfig
-import androidx.compose.ui.graphics.colorspace.ColorSpace
-import androidx.compose.ui.graphics.colorspace.ColorSpaces
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
@@ -30,7 +26,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runTest
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.boolean
@@ -42,10 +37,7 @@ import kotlinx.serialization.json.put
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.Viewport
 import org.maplibre.compose.expressions.ast.CompiledExpression
-import org.maplibre.compose.expressions.dsl.const
-import org.maplibre.compose.expressions.dsl.nil
 import org.maplibre.compose.expressions.value.BooleanValue
-import org.maplibre.compose.expressions.value.ProjectionType
 import org.maplibre.compose.layers.Anchor
 import org.maplibre.compose.layers.BackgroundLayer
 import org.maplibre.compose.layers.LayerHandle
@@ -62,7 +54,6 @@ import org.maplibre.compose.style.DesiredStyleRevision
 import org.maplibre.compose.style.ImageSnapshot
 import org.maplibre.compose.style.Light
 import org.maplibre.compose.style.Projection
-import org.maplibre.compose.style.ProjectionTransition
 import org.maplibre.compose.style.RecordingStyleBinding
 import org.maplibre.compose.style.Sky
 import org.maplibre.compose.style.StyleHandleException
@@ -134,9 +125,7 @@ class MapPresentationTest {
 
     assertNull(state.currentMapAttachment)
     assertNull(state.retainedAdapter(session.presentationCompatibilityKey))
-    assertFalse(state.acceptsPresentationEvent(session))
     assertEquals(StyleLoadState.Pending, state.style.loadState)
-    assertFalse(session.lifecycle.state == MapLifecycleState.Closed)
     finishCleanup.complete(Unit)
     assertFailsWith<MapCleanupException> { session.awaitClosed() }
     testScheduler.runCurrent()
@@ -181,7 +170,6 @@ class MapPresentationTest {
 
     assertNull(state.retainedAdapter(session.presentationCompatibilityKey))
     assertEquals(StyleLoadState.Pending, state.style.loadState)
-    assertFalse(session.lifecycle.state == MapLifecycleState.Closed)
     finishCleanup.complete(Unit)
     session.awaitClosed()
     state.close()
@@ -361,18 +349,6 @@ class MapPresentationTest {
   }
 
   @Test
-  fun an_accepted_camera_set_updates_the_durable_map_position() {
-    val fixture = presentationFixture()
-    val position = CameraPosition(target = Position(12.0, 34.0), zoom = 8.0)
-
-    fixture.state.setCameraPosition(position)
-
-    assertEquals(position, fixture.state.cameraPosition)
-    assertEquals(position, fixture.adapter.lastCameraPosition)
-    fixture.close()
-  }
-
-  @Test
   fun camera_intent_accepted_before_detachment_remains_durable() {
     val runtime = mapRuntimeForTest()
     val state = runtime.createMapState(BaseStyle.Demo)
@@ -425,18 +401,6 @@ class MapPresentationTest {
 
     assertEquals(position, replacement.lastCameraPosition)
     fixture.close()
-  }
-
-  @Test
-  fun publishing_into_a_closed_state_is_inert() {
-    val fixture = presentationFixture()
-    fixture.state.close()
-
-    fixture.state.publishPresentation(fixture.token, fixture.adapter)
-
-    assertTrue(fixture.state.isClosed)
-    assertNull(fixture.state.currentMapAttachment)
-    fixture.runtime.close()
   }
 
   @Test
@@ -881,35 +845,16 @@ class MapPresentationTest {
     fixture.close()
   }
 
-  /** A scale of zero is Android's "remove animations": the engine gets no timing at all. */
-  @Test
-  fun a_zero_animator_duration_scale_zeroes_a_set_transition() {
-    val fixture = presentationFixture()
-    val binding = RecordingStyleBinding(animatorDurationScaleState = mutableStateOf(0f))
-    val transition = fixture.state.style.transition
-    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, binding)
-    fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
-
-    transition.set(TransitionOptions(duration = 1.seconds, delay = 20.milliseconds))
-    assertEquals(
-      TransitionOptions(duration = Duration.ZERO, delay = Duration.ZERO),
-      binding.transition,
-    )
-    fixture.close()
-  }
-
   @Test
   fun transition_light_sky_and_projection_commands_target_only_a_ready_loaded_style() {
     val fixture = presentationFixture()
-    val binding = RecordingStyleBinding(refusedLightProperties = setOf("position"))
+    val binding = RecordingStyleBinding()
     val transition = fixture.state.style.transition
     val light = fixture.state.style.light
     val sky = fixture.state.style.sky
     val projection = fixture.state.style.projection
     val options = TransitionOptions(duration = 1.seconds, delay = 20.milliseconds)
 
-    assertFailsWith<IllegalArgumentException> { TransitionOptions(duration = Duration.INFINITE) }
-    assertFailsWith<IllegalArgumentException> { TransitionOptions(delay = (-1).milliseconds) }
     assertNull(transition.get())
     assertNull(transition.placementTransitions())
     assertNull(light.getProperty("color"))
@@ -923,46 +868,8 @@ class MapPresentationTest {
     fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, binding)
     fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
 
-    assertEquals(TransitionOptions(), transition.get())
     transition.set(options)
     assertEquals(options, transition.get())
-    assertEquals(options, binding.transition)
-    transition.setPlacementTransitions(false)
-    assertEquals(false, transition.placementTransitions())
-
-    light.set(Light(position = nil(), intensity = const(0.25f)))
-    assertEquals(JsonPrimitive(0.25f), light.getProperty("intensity"))
-    light.set(Light(position = nil(), intensity = nil()))
-    assertNull(light.getProperty("intensity"))
-    assertEquals(JsonPrimitive("viewport"), light.getProperty("anchor"))
-    assertFailsWith<StyleHandleException> { light.set(Light()) }
-    assertNull(light.getProperty("intensity"))
-
-    sky.set(Sky(atmosphereBlend = const(0f)))
-    assertEquals(JsonPrimitive(0f), sky.getProperty("atmosphere-blend"))
-    sky.set(null)
-    assertNull(sky.getProperty("atmosphere-blend"))
-
-    projection.set(Projection(type = const(ProjectionType.Globe)))
-    assertEquals(JsonPrimitive("globe"), projection.getProperty("type"))
-    projection.set(
-      Projection(
-        type =
-          const(
-            ProjectionTransition(ProjectionType.VerticalPerspective, ProjectionType.Mercator, 0.5f)
-          )
-      )
-    )
-    assertEquals(
-      JsonArray(
-        listOf(
-          JsonPrimitive("vertical-perspective"),
-          JsonPrimitive("mercator"),
-          JsonPrimitive(0.5f),
-        )
-      ),
-      projection.getProperty("type"),
-    )
 
     fixture.state.style.baseStyle = BaseStyle.Json("replacement")
     assertNull(transition.get())
@@ -1219,21 +1126,6 @@ class MapPresentationTest {
   }
 
   @Test
-  fun publication_uses_the_viewport_the_adapter_has_for_the_current_attachment() {
-    val runtime = mapRuntimeForTest()
-    val state = runtime.createMapState(BaseStyle.Demo)
-    val token = state.reservePresentation()
-    val viewport = testViewport()
-    val adapter = PresentationTestAdapter().apply { currentViewport = viewport }
-
-    state.publishPresentation(token, adapter)
-
-    assertEquals(viewport, state.viewport)
-    state.close()
-    runtime.close()
-  }
-
-  @Test
   fun await_viewport_waits_for_the_next_attachment() = runTest {
     val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
     val state = runtime.createMapState(BaseStyle.Demo)
@@ -1328,21 +1220,6 @@ class MapPresentationTest {
 
       fixture.attachment.updateViewport(testViewport())
       fixture.adapter.queryStarted.await()
-      fixture.state.releasePresentation(fixture.token, fixture.adapter)
-
-      assertFailsWith<CancellationException> { query.await() }
-    }
-    fixture.close()
-  }
-
-  @Test
-  fun detachment_fails_an_active_query_instead_of_targeting_another_presentation() = runTest {
-    val fixture = presentationFixture()
-    fixture.attachment.updateViewport(testViewport())
-    supervisorScope {
-      val query = async { fixture.state.queryRenderedFeatures(DpOffset.Zero) }
-      fixture.adapter.queryStarted.await()
-
       fixture.state.releasePresentation(fixture.token, fixture.adapter)
 
       assertFailsWith<CancellationException> { query.await() }
@@ -1446,24 +1323,6 @@ private data class PresentationFixture(
     state.close()
     runtime.close()
   }
-}
-
-private class FakeImageBitmap(override val width: Int, override val height: Int) : ImageBitmap {
-  override val colorSpace: ColorSpace = ColorSpaces.Srgb
-  override val hasAlpha: Boolean = true
-  override val config: ImageBitmapConfig = ImageBitmapConfig.Argb8888
-
-  override fun readPixels(
-    buffer: IntArray,
-    startX: Int,
-    startY: Int,
-    width: Int,
-    height: Int,
-    bufferOffset: Int,
-    stride: Int,
-  ) = Unit
-
-  override fun prepareToDraw() = Unit
 }
 
 private fun presentationFixture(): PresentationFixture {

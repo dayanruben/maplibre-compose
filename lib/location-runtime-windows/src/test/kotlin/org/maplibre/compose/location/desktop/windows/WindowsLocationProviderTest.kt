@@ -160,12 +160,7 @@ class WindowsLocationProviderTest {
 
   @Test
   fun convertsWindowsFixAndTimestamp() {
-    val currentTimeMillis = 1_700_000_000_000
-    val measurement =
-      sampleMeasurement(
-        windowsTimestampTicks =
-          WINDOWS_EPOCH_TICKS + (currentTimeMillis - 2_000) * TICKS_PER_MILLISECOND
-      )
+    val measurement = sampleMeasurement(windowsTimestampTicks = 133_444_735_980_000_000L)
     val location = checkNotNull(measurement.asMapLibreLocationMeasurement())
 
     assertEquals(52.0, location.position.latitude)
@@ -177,7 +172,7 @@ class WindowsLocationProviderTest {
     assertNull(location.distancePerSecondAccuracy)
     assertEquals(Bearing.North + 90.degrees, location.course)
     assertNull(location.courseAccuracy)
-    assertEquals(Instant.fromEpochMilliseconds(currentTimeMillis - 2_000), location.measuredAt)
+    assertEquals(Instant.parse("2023-11-14T22:13:18Z"), location.measuredAt)
   }
 
   @Test
@@ -440,10 +435,10 @@ private class FakeWindowsLocationClient(
     return access
   }
 
-  override fun observeAccess(onChanged: (WindowsAccessStatus) -> Unit): WindowsCloseable {
+  override fun observeAccess(onChanged: (WindowsAccessStatus) -> Unit): AutoCloseable {
     accessObserver = onChanged
     var closed = false
-    return WindowsCloseable {
+    return AutoCloseable {
       if (!closed) {
         closed = true
         observationCloses++
@@ -460,12 +455,12 @@ private class FakeWindowsLocationClient(
   override fun createSession(
     configuration: WindowsLocationConfiguration,
     listener: WindowsLocationListener,
-  ): WindowsCloseable {
+  ): AutoCloseable {
     onCreateSession?.invoke()
     sessionFailure?.let { throw it }
     val session = FakeWindowsSession(configuration, listener)
     sessions += session
-    return WindowsCloseable(session::close)
+    return AutoCloseable(session::close)
   }
 
   override fun close() {

@@ -5,6 +5,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import org.maplibre.compose.map.GestureTarget
 import org.maplibre.compose.map.MapAdapter
@@ -30,14 +31,14 @@ internal interface MapFixture : AutoCloseable {
 
   val style: StyleBinding?
 
-  val events: MutableList<String>
+  val events: RecordingList<String>
 
   /** Every [MapEvent] the session posted through the adapter callbacks. */
-  val engineEvents: MutableList<MapEvent>
+  val engineEvents: RecordingList<MapEvent>
 
-  val sourceChanges: MutableList<String?>
+  val sourceChanges: RecordingList<String?>
 
-  val errors: MutableList<String>
+  val errors: RecordingList<String>
 
   suspend fun loadStyle(style: BaseStyle, timeout: Duration = 60.seconds)
 
@@ -125,10 +126,12 @@ internal enum class MapLibreFlavor {
 
 internal expect val mapLibreFlavor: MapLibreFlavor
 
+internal expect fun skipMapTest(reason: String): Nothing
+
 /** What a suspending test body hands back: `Unit` on the JVM, and a `Promise` in the browser. */
 expect class MapTestResult
 
-internal expect fun runMapTest(block: suspend () -> Unit): MapTestResult
+internal expect fun runMapTest(block: suspend CoroutineScope.() -> Unit): MapTestResult
 
 internal class RecordingMapCallbacks(
   private val beforeStyleChanged: (MapAdapter, StyleBinding?) -> Unit = { _, _ -> }
@@ -139,13 +142,13 @@ internal class RecordingMapCallbacks(
   /** Set so the recorder exercises the real reactions rather than a copy of them. */
   var state: MapState? = null
 
-  val events: MutableList<String> = RecordingList()
+  val events: RecordingList<String> = RecordingList()
 
-  val engineEvents: MutableList<MapEvent> = RecordingList()
+  val engineEvents: RecordingList<MapEvent> = RecordingList()
 
-  val sourceChanges: MutableList<String?> = RecordingList()
+  val sourceChanges: RecordingList<String?> = RecordingList()
 
-  val errors: MutableList<String> = RecordingList()
+  val errors: RecordingList<String> = RecordingList()
 
   var style: StyleBinding? = null
     private set

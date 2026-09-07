@@ -1,13 +1,13 @@
 package org.maplibre.compose.offline
 
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.test.runTest
 import kotlinx.io.files.Path
-import org.maplibre.compose.map.MapRuntimeResources
 import org.maplibre.compose.map.RuntimeImplementation
 import org.maplibre.spatialk.geojson.BoundingBox
 
@@ -39,7 +39,10 @@ class RuntimeBoundOfflineManagerTest {
     val manager = runtime.offlineManager
 
     assertSame(backend.pack, manager.packs.single())
-    assertSame(backend.createdPack, manager.create(definition))
+    val metadata = byteArrayOf(1, 2)
+    assertSame(backend.createdPack, manager.create(definition, metadata))
+    assertEquals(definition, backend.createdDefinition)
+    assertContentEquals(metadata, backend.createdMetadata)
     manager.resume(backend.pack)
     manager.pause(backend.pack)
     manager.delete(backend.pack)
@@ -78,7 +81,7 @@ class RuntimeBoundOfflineManagerTest {
     val runtime =
       runtime(
         backend,
-        resources = MapRuntimeResources { releaseCleanup.await() },
+        closeResources = { releaseCleanup.await() },
       )
     val manager = runtime.offlineManager
     val retainedPack = manager.packs.single()
@@ -106,17 +109,19 @@ class RuntimeBoundOfflineManagerTest {
 
   private fun runtime(
     backend: OfflineManager,
-    resources: MapRuntimeResources = MapRuntimeResources {},
+    closeResources: suspend () -> Unit = {},
   ) =
     RuntimeImplementation(
-      platformOptions = null,
-      resources = resources,
+      platformContext = null,
+      closeResources = closeResources,
       logger = null,
       offlineManagerBackend = backend,
     )
 
   private class RecordingOfflineManager : OfflineManager {
     val calls = mutableListOf<String>()
+    var createdDefinition: OfflinePackDefinition? = null
+    var createdMetadata: ByteArray? = null
     val pack = pack(regionId = 1)
     val createdPack = pack(regionId = 2)
     val mergedPack = pack(regionId = 3)
@@ -126,26 +131,37 @@ class RuntimeBoundOfflineManagerTest {
     override suspend fun create(
       definition: OfflinePackDefinition,
       metadata: ByteArray,
-    ): OfflinePack = createdPack.also { calls += "create" }
+    ): OfflinePack = createdPack.also {
+      calls += "create"
+      createdDefinition = definition
+      createdMetadata = metadata.copyOf()
+    }
 
     override fun resume(pack: OfflinePack) {
+      assertSame(this.pack, pack)
       calls += "resume"
     }
 
     override fun pause(pack: OfflinePack) {
+      assertSame(this.pack, pack)
       calls += "pause"
     }
 
     override suspend fun delete(pack: OfflinePack) {
+      assertSame(this.pack, pack)
       calls += "delete"
     }
 
     override suspend fun invalidate(pack: OfflinePack) {
+      assertSame(this.pack, pack)
       calls += "invalidate"
     }
 
     override suspend fun mergeDatabase(databaseFile: Path): Set<OfflinePack> =
-      setOf(mergedPack).also { calls += "merge" }
+      setOf(mergedPack).also {
+        assertEquals(RuntimeBoundOfflineManagerTest.databaseFile, databaseFile)
+        calls += "merge"
+      }
 
     override suspend fun invalidateAmbientCache() {
       calls += "invalidate ambient"
@@ -156,6 +172,7 @@ class RuntimeBoundOfflineManagerTest {
     }
 
     override suspend fun setMaximumAmbientCacheSize(size: Long) {
+      assertEquals(1L, size)
       calls += "set ambient size"
     }
 

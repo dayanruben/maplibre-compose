@@ -9,7 +9,6 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -24,6 +23,7 @@ import org.maplibre.compose.resource.MapResourceConfig
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.StyleBinding
 import org.maplibre.compose.testing.MapFixture
+import org.maplibre.compose.testing.RecordingList
 import org.maplibre.compose.testing.RecordingMapCallbacks
 import org.maplibre.compose.testing.RgbaPixel
 
@@ -46,16 +46,16 @@ private constructor(
     }
   }
 
-  val events: MutableList<String>
+  val events: RecordingList<String>
     get() = recorder.events
 
-  val engineEvents: MutableList<MapEvent>
+  val engineEvents: RecordingList<MapEvent>
     get() = recorder.engineEvents
 
-  val sourceChanges: MutableList<String?>
+  val sourceChanges: RecordingList<String?>
     get() = recorder.sourceChanges
 
-  val errors: MutableList<String>
+  val errors: RecordingList<String>
     get() = recorder.errors
 
   /** The live style, once one has loaded. */
@@ -240,10 +240,10 @@ private constructor(
     description: String,
     timeout: Duration = 30.seconds,
     block: suspend () -> T,
-  ): T {
-    val work = CoroutineScope(Dispatchers.Default).async { block() }
+  ): T = runBlocking {
+    val work = async(Dispatchers.Default) { block() }
     pumpUntil(description, timeout) { work.isCompleted }
-    return runBlocking { work.await() }
+    work.await()
   }
 
   /**

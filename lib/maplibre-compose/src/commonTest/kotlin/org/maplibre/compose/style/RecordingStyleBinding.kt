@@ -32,11 +32,10 @@ internal class RecordingStyleBinding(
   override val supportsCustomDemEncoding: Boolean = false,
   override val supportsRasterDemScheme: Boolean = true,
   private val refusedSourceRemovals: Set<String> = emptySet(),
-  private val refusedLightProperties: Set<String> = emptySet(),
+  private val refusedLayerProperties: Set<String> = emptySet(),
   override val supportsSky: Boolean = true,
   override val supportsProjection: Boolean = true,
   private val beforeAddImage: ((String) -> Unit)? = null,
-  private val beforeClusterExpansionZoomResult: suspend () -> Unit = {},
   private val onInvalidate: () -> Unit = {},
   /** The fake platform's animator duration scale; a test changes it to simulate the setting. */
   val animatorDurationScaleState: MutableState<Float> = mutableStateOf(1f),
@@ -52,6 +51,9 @@ internal class RecordingStyleBinding(
 
   /** Every layer property write after installation, as layer ID to property name, in order. */
   val layerPropertyWrites: MutableList<Pair<String, String>> = mutableListOf()
+
+  /** Every [setLayerProperties] batch, for batching assertions. */
+  val layerPropertyBatches: MutableList<List<LayerPropertyWrite>> = mutableListOf()
   private val images =
     images.associate { (id, bitmap) -> id to ImageSnapshot.capture(bitmap) }.toMutableMap()
   private val baseSources = sources.associateBy { it.id }.toMutableMap()
@@ -71,9 +73,6 @@ internal class RecordingStyleBinding(
 
   val imageIds: Set<String>
     get() = images.keys
-
-  var customGeometryProvider: GeometryTileProvider? = null
-    private set
 
   var customVectorProvider: VectorTileProvider? = null
     private set
@@ -174,7 +173,6 @@ internal class RecordingStyleBinding(
     options: CustomGeometrySourceOptions,
     provider: GeometryTileProvider,
   ): Boolean {
-    customGeometryProvider = provider
     sources[sourceId] = JsonObject(mapOf("type" to JsonPrimitive("custom-geometry")))
     return true
   }
@@ -199,7 +197,6 @@ internal class RecordingStyleBinding(
     sourceId: String,
     feature: Feature<*, JsonObject?>,
   ): Double? {
-    beforeClusterExpansionZoomResult()
     return null
   }
 
@@ -246,6 +243,9 @@ internal class RecordingStyleBinding(
     value: JsonElement,
     kind: LayerPropertyKind,
   ) {
+    if ("$layerId:$name" in refusedLayerProperties) {
+      throw StyleMutationException("Property '$name' on layer '$layerId' was refused", null)
+    }
     val layer = checkNotNull(layers[layerId]) { "Layer ID '$layerId' not found in style" }
     layerPropertyWrites += layerId to name
     val section =
@@ -260,6 +260,11 @@ internal class RecordingStyleBinding(
         val properties = (layer[section] as? JsonObject).orEmpty()
         JsonObject(layer + (section to JsonObject(properties + (name to value))))
       }
+  }
+
+  override fun setLayerProperties(writes: List<LayerPropertyWrite>) {
+    layerPropertyBatches += writes
+    super.setLayerProperties(writes)
   }
 
   override fun setLayerFilter(layerId: String, filter: JsonElement) {
@@ -304,11 +309,6 @@ internal class RecordingStyleBinding(
     if (isLoaded) lightProperties[name] else null
 
   override fun setLight(light: JsonObject) {
-    light.keys
-      .firstOrNull { it in refusedLightProperties }
-      ?.let { name ->
-        throw StyleMutationException("Light property '$name' is not supported", null)
-      }
     lightProperties.clear()
     lightProperties.putAll(light)
   }
