@@ -4,11 +4,10 @@ import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.runBlocking
 import org.maplibre.compose.camera.CameraPosition
-import org.maplibre.compose.map.GestureTarget
+import org.maplibre.compose.camera.internal.CameraInputTarget
 import org.maplibre.compose.map.MapAdapter
 import org.maplibre.compose.map.MapEvent
 import org.maplibre.compose.map.MapExtent
-import org.maplibre.compose.map.mapRuntimeForTest
 import org.maplibre.compose.mlnffi.BridgeMapFixture
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.DesiredStyleRevision
@@ -18,15 +17,12 @@ import org.maplibre.compose.style.StyleBinding
 internal class MlnFfiMapFixture(val bridge: BridgeMapFixture, private val extent: MapExtent) :
   MapFixture {
 
-  private val runtime = mapRuntimeForTest()
-  override val state =
-    runtime.createMapState(
-      initialCameraPosition = CameraPosition(zoom = 0.0),
-      baseStyle = BaseStyle.Empty,
-    )
+  override val state = bridge.state
   private val token = state.reservePresentation()
 
   init {
+    state.setBaseStyle(BaseStyle.Empty)
+    state.setCameraPosition(CameraPosition(zoom = 0.0))
     state.publishPresentation(token, bridge.session)
     bridge.bindState(state)
   }
@@ -34,7 +30,7 @@ internal class MlnFfiMapFixture(val bridge: BridgeMapFixture, private val extent
   override val session: MapAdapter
     get() = bridge.session
 
-  override val gestures: GestureTarget
+  override val gestures: CameraInputTarget
     get() = bridge.session
 
   override val style: StyleBinding?
@@ -55,12 +51,8 @@ internal class MlnFfiMapFixture(val bridge: BridgeMapFixture, private val extent
   override suspend fun loadStyle(style: BaseStyle, timeout: Duration) {
     state.style.loadState = org.maplibre.compose.map.StyleLoadState.Loading
     state.updateLoadedStyle(bridge.session, null)
-    val styleReadyCountBefore = events.count { it == MapFixture.STYLE_READY }
     bridge.loadStyle(style, timeout, extent)
     bridge.session.reconcileStyleRevision(DesiredStyleRevision.Empty)
-    bridge.pumpUntil("style $style to finish reconciliation", timeout, extent) {
-      events.count { it == MapFixture.STYLE_READY } > styleReadyCountBefore
-    }
     state.updateLoadedStyle(bridge.session, checkNotNull(bridge.style))
     check(state.markStyleReady(bridge.session))
   }
@@ -106,7 +98,6 @@ internal class MlnFfiMapFixture(val bridge: BridgeMapFixture, private val extent
   }
 
   override fun close() {
-    runtime.close()
     bridge.close()
   }
 }

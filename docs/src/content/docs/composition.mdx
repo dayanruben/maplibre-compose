@@ -16,7 +16,7 @@ viewport, projection, and feature-query operations while the map is attached.
 
 ## The style is base plus content
 
-A MapLibre style is a document with sources and layers. The `baseStyle`
+A MapLibre style is a document with sources and layers. The `initialBaseStyle`
 parameter loads that document without modification. The trailing
 <Api of="rememberMapState" /> block declares your sources, layers, and their
 positions in the layer stack.
@@ -24,8 +24,24 @@ positions in the layer stack.
 <Code code={region(composition, "base-plus-content")} lang="kotlin" title="App.kt" />
 
 The library manages the sources and layers in the style block. It
-does not modify the rest of the base style. To change a base style layer,
-replace it with <Api of="Anchor.Replace" /> and declare its replacement yourself.
+does not modify the rest of the base style. To change a base style layer, use
+its <Api of="LayerHandle" /> from `mapState.style.layers`.
+
+`initialBaseStyle` seeds the map once. Changing that input does not reload the
+remembered map; assign `mapState.style.baseStyle` to switch styles.
+
+Composition owns the definitions and lifetimes of declared sources, layers, and
+images. Handles reject definition writes and removal commands for those resources.
+Use `mapState.style.sources[source]` to obtain a declared source's typed handle for
+feature state, cluster queries, and invalidation. These runtime operations do not
+change its declared definition. Handles belong to one loaded style generation;
+look them up again after a style reload or resource replacement.
+
+A handle write does not wait for the map to apply it. On MapLibre Native the
+write runs on the map's own thread after the call returns; MapLibre GL JS
+applies it during the call. When the engine rejects a written value, the
+library logs a warning and the previous value stays in place. The same applies
+to `mapState.style.transition`, `light`, `sky`, and `projection`.
 
 ## Recomposition updates the style
 
@@ -40,11 +56,10 @@ current state, and let the runtime reconcile it.
 
 ## Style switches re-apply your content
 
-When the `baseStyle` input changes, the map loads the new style and evaluates
+When you assign `mapState.style.baseStyle`, the map loads the new style and evaluates
 the style block against it. Each evaluation declares your
 sources and layers against the new style. They persist across the switch
-without extra code. An `Anchor` that names a base layer applies only when that
-layer exists in the new style.
+without extra code. An `Anchor` is resolved against the new style's layers.
 
 To share one definition between several maps, write the style content as a
 composable function and call that function from each style block. The same
@@ -64,4 +79,4 @@ read. Content that runs on both hosts branches on it.
 Layers and sources have string IDs because the underlying MapLibre style
 identifies them by ID. Within one map, each layer ID must be unique, including
 against the base style's layers. A feature query takes layer IDs to limit its
-scope, and an `Anchor` names a base style layer by its ID.
+scope, and an `Anchor` can select a base style layer by its ID.

@@ -15,17 +15,18 @@ import org.maplibre.compose.expressions.dsl.interpolate
 import org.maplibre.compose.expressions.dsl.zoom
 import org.maplibre.compose.expressions.value.LineCap
 import org.maplibre.compose.expressions.value.LineJoin
+import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.layers.Anchor
 import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.sources.GeoJsonData
+import org.maplibre.compose.sources.VectorTileSource
 import org.maplibre.compose.sources.getBaseSource
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.TransitionOptions
-import org.maplibre.compose.util.ClickResult
 import org.maplibre.spatialk.geojson.toJson
 
 @Composable
@@ -33,8 +34,10 @@ import org.maplibre.spatialk.geojson.toJson
 fun Layers() {
   // #region simple
   val baseState =
-    rememberMapState(baseStyle = BaseStyle.Uri("https://tiles.openfreemap.org/styles/liberty")) {
-      getBaseSource(id = "openmaptiles")?.let { tiles ->
+    rememberMapState(
+      initialBaseStyle = BaseStyle.Uri("https://tiles.openfreemap.org/styles/liberty")
+    ) {
+      getBaseSource<VectorTileSource>(id = "openmaptiles")?.let { tiles ->
         CircleLayer(id = "example", source = tiles, sourceLayer = "poi")
       }
     }
@@ -97,8 +100,13 @@ fun Layers() {
     // #region anchors
     val anchoredAmtrakRoutes =
       rememberGeoJsonSource(GeoJsonData.Uri(Res.getUri("files/data/amtrak_routes.geojson")))
-    Anchor.Above("road_motorway") {
+    // Below the base style's labels, whatever the style names them
+    Anchor.Below({ it.type == "symbol" }) {
       LineLayer(id = "amtrak-routes", source = anchoredAmtrakRoutes)
+    }
+    // Above one base layer, named by its ID
+    Anchor.Above("road_motorway") {
+      LineLayer(id = "amtrak-routes-casing", source = anchoredAmtrakRoutes)
     }
     // #endregion anchors
 
@@ -108,6 +116,7 @@ fun Layers() {
     CircleLayer(
       id = "amtrak-stations",
       source = interactiveAmtrakStations,
+      hitPadding = 12.dp,
       onClick = { features ->
         println("Clicked on ${features[0].toJson()}")
         ClickResult.Consume

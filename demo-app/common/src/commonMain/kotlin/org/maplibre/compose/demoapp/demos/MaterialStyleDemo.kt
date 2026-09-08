@@ -55,14 +55,13 @@ import org.maplibre.compose.expressions.value.LineCap
 import org.maplibre.compose.expressions.value.LineJoin
 import org.maplibre.compose.expressions.value.SymbolPlacement
 import org.maplibre.compose.expressions.value.TextTransform
-import org.maplibre.compose.layers.Anchor
 import org.maplibre.compose.layers.BackgroundLayer
 import org.maplibre.compose.layers.FillExtrusionLayer
 import org.maplibre.compose.layers.FillLayer
 import org.maplibre.compose.layers.LineLayer
 import org.maplibre.compose.layers.SymbolLayer
-import org.maplibre.compose.sources.Source
-import org.maplibre.compose.sources.rememberVectorSource
+import org.maplibre.compose.sources.VectorTileSource
+import org.maplibre.compose.sources.rememberVectorTileSource
 import org.maplibre.compose.style.BaseStyle
 
 /**
@@ -86,8 +85,6 @@ private enum class Material(override val isDark: Boolean = false) : DemoStyle {
     putJsonObject("sources") {}
     putJsonArray("layers") {}
   }
-
-  override val anchorBelowSymbols = Anchor.Top
 }
 
 /**
@@ -131,7 +128,7 @@ object MaterialStyleDemo : Demo {
 
   @Composable
   override fun MapContent() {
-    val tiles = rememberVectorSource("$TILES?key=$PROTOMAPS_API_KEY")
+    val tiles = rememberVectorTileSource("$TILES?key=$PROTOMAPS_API_KEY")
     val colors = MaterialTheme.colorScheme
 
     Terrain(tiles, colors)
@@ -142,7 +139,7 @@ object MaterialStyleDemo : Demo {
   }
 
   @Composable
-  private fun Terrain(tiles: Source, colors: ColorScheme) {
+  private fun Terrain(tiles: VectorTileSource, colors: ColorScheme) {
     BackgroundLayer(id = "material-background", color = const(colors.surfaceDim))
 
     FillLayer(
@@ -236,7 +233,7 @@ object MaterialStyleDemo : Demo {
   }
 
   @Composable
-  private fun Water(tiles: Source, colors: ColorScheme) {
+  private fun Water(tiles: VectorTileSource, colors: ColorScheme) {
     FillLayer(
       id = "material-water",
       source = tiles,
@@ -276,7 +273,7 @@ object MaterialStyleDemo : Demo {
    * renders tunnels at half opacity.
    */
   @Composable
-  private fun Roads(tiles: Source, colors: ColorScheme) {
+  private fun Roads(tiles: VectorTileSource, colors: ColorScheme) {
     val sourceLayer = "roads"
 
     val highwayWidth =
@@ -428,7 +425,7 @@ object MaterialStyleDemo : Demo {
   }
 
   @Composable
-  private fun Built(tiles: Source, colors: ColorScheme) {
+  private fun Built(tiles: VectorTileSource, colors: ColorScheme) {
     // Use the darker surface token in either color scheme.
     val buildingsColor =
       if (colors.surfaceDim.luminance() < colors.surfaceContainerLowest.luminance())
@@ -482,7 +479,7 @@ object MaterialStyleDemo : Demo {
   }
 
   @Composable
-  private fun Labels(tiles: Source, colors: ColorScheme) {
+  private fun Labels(tiles: VectorTileSource, colors: ColorScheme) {
     val regular = const(listOf("Noto Sans Regular"))
     val medium = const(listOf("Noto Sans Medium"))
     val italic = const(listOf("Noto Sans Italic"))

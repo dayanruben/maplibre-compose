@@ -38,7 +38,8 @@ class MlnFfiMapIdleTest {
 
       requireNotNull(fixture.style).also { style ->
         style.getSources()
-        style.getLayers()
+        style.layerIds()
+        style.layerSummaries()
         style.getSource("missing")
         style.getLayer("missing")
       }

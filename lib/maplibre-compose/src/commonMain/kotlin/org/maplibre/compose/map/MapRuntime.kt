@@ -2,15 +2,14 @@
 
 package org.maplibre.compose.map
 
-import androidx.compose.foundation.MutatorMutex
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.Saver
@@ -35,11 +34,13 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -50,11 +51,14 @@ import kotlinx.serialization.json.JsonObject
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.Viewport
+import org.maplibre.compose.camera.internal.CameraCommandGuard
+import org.maplibre.compose.camera.internal.CameraInputAuthority
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.ast.Expression
 import org.maplibre.compose.expressions.ast.ExpressionContext
 import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.expressions.value.BooleanValue
+import org.maplibre.compose.interaction.internal.select
 import org.maplibre.compose.layers.LayerHandle
 import org.maplibre.compose.layers.layerHandle
 import org.maplibre.compose.logging.MapLog
@@ -67,6 +71,7 @@ import org.maplibre.compose.sources.SourceHandle
 import org.maplibre.compose.sources.sourceHandle
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.DesiredStyleRevision
+import org.maplibre.compose.style.LayerSummary
 import org.maplibre.compose.style.Light
 import org.maplibre.compose.style.Projection
 import org.maplibre.compose.style.Sky
@@ -75,13 +80,14 @@ import org.maplibre.compose.style.StyleBinding
 import org.maplibre.compose.style.StyleHandleException
 import org.maplibre.compose.style.StyleHandleOperationGuard
 import org.maplibre.compose.style.StyleMutationException
+import org.maplibre.compose.style.StyleResourceChanges
 import org.maplibre.compose.style.TransitionOptions
-import org.maplibre.compose.style.canUpdateTo
 import org.maplibre.compose.style.scaledBy
 import org.maplibre.compose.style.systemAnimatorDurationScale
 import org.maplibre.compose.style.withScaledTransitions
 import org.maplibre.compose.util.ImageStretch
 import org.maplibre.compose.util.MaplibreComposable
+import org.maplibre.compose.util.VisibleBounds
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Feature
@@ -109,27 +115,27 @@ public interface MapRuntime {
   public val offlineManager: OfflineManager
 
   /**
-   * Creates a logical map with [baseStyle] and the sources, layers, and images that [content]
-   * declares. The caller must close the result.
+   * Creates a logical map with [initialBaseStyle] and the sources, layers, and images that
+   * [content] declares. The caller must close the result.
    *
    * [content] reads the returned state through [LocalMapState] and its viewport through
    * [LocalViewport].
    */
   public fun createMapState(
-    baseStyle: BaseStyle,
+    initialBaseStyle: BaseStyle,
     initialCameraPosition: CameraPosition = CameraPosition(),
     content: @Composable @MaplibreComposable () -> Unit = {},
   ): MapState
 
   /**
-   * Creates an independent non-UI map with [baseStyle] and the sources, layers, and images that
-   * [content] declares, for image capture. The caller must close the result.
+   * Creates an independent non-UI map with [initialBaseStyle] and the sources, layers, and images
+   * that [content] declares, for image capture. The caller must close the result.
    *
    * [content] reads the viewport of each capture request through [LocalViewport]. It has no
    * [MapState], so [LocalMapState] is null.
    */
   public fun createSnapshotter(
-    baseStyle: BaseStyle,
+    initialBaseStyle: BaseStyle,
     content: @Composable @MaplibreComposable () -> Unit = {},
   ): MapSnapshotter
 
@@ -155,10 +161,13 @@ public sealed interface StyleLoadState {
   /** Indicates that the current map surface is loading the desired style. */
   public data object Loading : StyleLoadState
 
-  /** Indicates that the current map surface loaded the desired style. */
+  /**
+   * The base style and initial composed content are ready. Ordinary content updates preserve this
+   * state; it does not indicate that tiles or animations have finished rendering.
+   */
   public data object Ready : StyleLoadState
 
-  /** Indicates that the current map surface failed to load the desired style. */
+  /** Loading the style or applying its composed content failed. A later revision may recover. */
   public data class Failed(public val reason: String?) : StyleLoadState
 }
 
@@ -166,6 +175,10 @@ internal interface MapStyleStateOwner {
   fun setBaseStyle(value: BaseStyle)
 
   fun desiredSourceDefinition(id: String): org.maplibre.compose.style.SourceDefinition?
+
+  fun requireSourceWritable(id: String)
+
+  fun requireLayerWritable(id: String)
 
   fun addStyleSource(source: Source): SourceHandle
 
@@ -178,23 +191,22 @@ internal interface MapStyleStateOwner {
   fun readyLoadedStyle(): StyleBinding?
 
   fun <T> runStyleHandleOperation(binding: StyleBinding, action: () -> T): T
-
-  fun styleHandleCheckpoint(binding: StyleBinding): Long
-
-  fun requireStyleHandleUnchanged(binding: StyleBinding, checkpoint: Long)
 }
 
 /** Desired and applied style state for one logical map or snapshotter. */
 public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
   private var owner: MapStyleStateOwner? = null
   private val loadedStyle = AtomicReference<StyleBinding?>(null)
-  private val sourceIdentities = AtomicReference<Map<String, StyleResourceIdentity>>(emptyMap())
-  private val layerIdentities = AtomicReference<Map<String, StyleResourceIdentity>>(emptyMap())
-  private var sourcesState: Map<String, SourceHandle> by mutableStateOf(emptyMap())
-  private var layersState: Map<String, LayerHandle> by mutableStateOf(emptyMap())
+  private var sourcesState: Map<String, SourceHandle> by
+    mutableStateOf(emptyMap(), referentialEqualityPolicy())
+  private var layersState: Map<String, LayerHandle> by
+    mutableStateOf(emptyMap(), referentialEqualityPolicy())
   private var baseStyleState: BaseStyle by
     mutableStateOf(initialBaseStyle, structuralEqualityPolicy())
 
+  /**
+   * The current base style. Assigning a new value loads it and replaces generation-bound resources.
+   */
   public var baseStyle: BaseStyle
     get() = baseStyleState
     set(value) {
@@ -225,56 +237,55 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
   /** Projection of the current loaded-style generation. */
   public val projection: StyleProjection = StyleProjection(this)
 
-  internal fun transitionOptions(): TransitionOptions? = readStyle { it.transition() }
+  internal suspend fun transitionOptions(): TransitionOptions? = readStyle { it.transition() }
 
   internal fun setTransitionOptions(options: TransitionOptions) {
-    mutateStyle("the transition") { it.setTransition(options.scaledBy(it.animatorDurationScale)) }
+    mutateStyle { it.setTransition(options.scaledBy(it.animatorDurationScale)) }
   }
 
-  internal fun placementTransitions(): Boolean? = readStyle { it.placementTransitions() }
+  internal suspend fun placementTransitions(): Boolean? = readStyle { it.placementTransitions() }
 
   internal fun setPlacementTransitions(enabled: Boolean) {
-    mutateStyle("placement transitions") { it.setPlacementTransitions(enabled) }
+    mutateStyle { it.setPlacementTransitions(enabled) }
   }
 
-  internal fun lightProperty(name: String): JsonElement? = readStyle { it.lightProperty(name) }
+  internal suspend fun lightProperty(name: String): JsonElement? = readStyle {
+    it.lightProperty(name)
+  }
 
   internal fun setLight(light: Light) {
-    mutateStyle("the light") {
-      it.setLight(light.toJson().withScaledTransitions(it.animatorDurationScale))
-    }
+    mutateStyle { it.setLight(light.toJson().withScaledTransitions(it.animatorDurationScale)) }
   }
 
-  internal fun skyProperty(name: String): JsonElement? = readStyle { it.skyProperty(name) }
+  internal suspend fun skyProperty(name: String): JsonElement? = readStyle { it.skyProperty(name) }
 
   internal fun setSky(sky: Sky?) {
-    mutateStyle("the sky") {
-      it.setSky(sky?.toJson()?.withScaledTransitions(it.animatorDurationScale))
-    }
+    mutateStyle { it.setSky(sky?.toJson()?.withScaledTransitions(it.animatorDurationScale)) }
   }
 
-  internal fun projectionProperty(name: String): JsonElement? = readStyle {
+  internal suspend fun projectionProperty(name: String): JsonElement? = readStyle {
     it.projectionProperty(name)
   }
 
   internal fun setProjection(projection: Projection) {
-    mutateStyle("the projection") { it.setProjection(projection.toJson()) }
+    mutateStyle { it.setProjection(projection.toJson()) }
   }
 
-  private fun <T> readStyle(read: (StyleBinding) -> T?): T? {
+  /**
+   * Reads from the ready loaded style, or returns null without one. A style that stops being ready
+   * while the engine answers also reads as null: the value belongs to a generation that is gone.
+   */
+  private suspend fun <T> readStyle(read: suspend (StyleBinding) -> T?): T? {
     val current = readyLoadedStyle() ?: return null
-    return operationGuard(current).run { read(current) }
+    operationGuard(current).run {}
+    val result = read(current)
+    return result.takeIf { readyLoadedStyle() === current }
   }
 
-  private fun mutateStyle(what: String, mutate: (StyleBinding) -> Unit) {
+  /** Posts a write to the ready loaded style. The engine reports a rejection through the logger. */
+  private fun mutateStyle(mutate: (StyleBinding) -> Unit) {
     val current = checkNotNull(readyLoadedStyle()) { "No ready loaded style" }
-    operationGuard(current).run {
-      try {
-        mutate(current)
-      } catch (error: StyleMutationException) {
-        throw StyleHandleException("Could not set $what: ${error.message}", error)
-      }
-    }
+    operationGuard(current).run { mutate(current) }
   }
 
   internal fun sourceHandle(id: String): SourceHandle? {
@@ -284,12 +295,12 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
 
   private fun sourceHandle(current: StyleBinding, id: String): SourceHandle? = owner.let { owner ->
     val definition = owner?.desiredSourceDefinition(id)
-    val identity = sourceIdentity(id)
+    val identity = current.identity.sources.get(id)
     current.sourceHandle(
       id = id,
       definition = definition,
       currentDefinition = { owner?.desiredSourceDefinition(id) },
-      isCurrentResource = { sourceIdentities.load()[id] === identity },
+      isCurrentResource = { current.identity.sources.isCurrent(id, identity) },
       operations = operationGuard(current),
     )
   }
@@ -319,16 +330,12 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
 
   internal fun updateLoadedStyle(style: StyleBinding?) {
     loadedStyle.store(style)
-    sourceIdentities.store(emptyMap())
-    layerIdentities.store(emptyMap())
     sourcesState = emptyMap()
     layersState = emptyMap()
   }
 
   internal fun invalidateLoadedStyle() {
     loadedStyle.exchange(null)?.invalidate()
-    sourceIdentities.store(emptyMap())
-    layerIdentities.store(emptyMap())
     sourcesState = emptyMap()
     layersState = emptyMap()
   }
@@ -350,9 +357,20 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
   internal fun readResources(current: StyleBinding): LoadedStyleResources =
     LoadedStyleResources(readSources(current), readLayers(current))
 
-  internal fun readSources(current: StyleBinding): Map<String, SourceHandle> {
-    val ids = current.getSources().mapTo(linkedSetOf()) { it.id }
-    retainResourceIdentities(sourceIdentities, ids)
+  internal fun readSources(
+    current: StyleBinding,
+    changedId: String? = null,
+  ): Map<String, SourceHandle> {
+    if (changedId != null) {
+      val handle = sourceHandle(current, changedId)
+      val handles = sourcesState.toMutableMap()
+      if (handle == null) handles.remove(changedId) else handles[changedId] = handle
+      val ids = current.sourceIds()
+      current.identity.sources.retain(ids.toSet())
+      return ids.mapNotNull { id -> handles[id]?.let { id to it } }.toMap()
+    }
+    val ids = current.sourceIds().toSet()
+    current.identity.sources.retain(ids)
     return ids.mapNotNull { id -> sourceHandle(current, id)?.let { id to it } }.toMap()
   }
 
@@ -361,58 +379,34 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
   }
 
   internal fun readLayers(current: StyleBinding): Map<String, LayerHandle> {
-    val ids = current.getLayers().mapTo(linkedSetOf()) { it.id }
-    retainResourceIdentities(layerIdentities, ids)
-    return ids
-      .mapNotNull { id ->
-        val identity = layerIdentity(id)
-        current
-          .layerHandle(
-            id,
-            isCurrentResource = { layerIdentities.load()[id] === identity },
-            operations = operationGuard(current),
-          )
-          ?.let { id to it }
-      }
-      .toMap()
+    val summaries = current.layerSummaries()
+    current.identity.layers.retain(summaries.keys)
+    return summaries.mapValues { (id, summary) -> layerHandle(current, id, summary) }
   }
 
-  internal fun invalidateSourceIdentities(ids: Set<String>) {
-    removeResourceIdentities(sourceIdentities, ids)
+  /** Rereads the handles of [ids] in one engine round trip; a removed layer maps to null. */
+  internal fun readLayers(current: StyleBinding, ids: Set<String>): Map<String, LayerHandle?> {
+    if (ids.isEmpty()) return emptyMap()
+    val summaries = current.layerSummaries()
+    return ids.associateWith { id -> summaries[id]?.let { layerHandle(current, id, it) } }
   }
 
-  internal fun invalidateLayerIdentities(ids: Set<String>) {
-    removeResourceIdentities(layerIdentities, ids)
+  internal fun layerHandle(current: StyleBinding, id: String, summary: LayerSummary): LayerHandle {
+    val identity = current.identity.layers.get(id)
+    return current.layerHandle(
+      id,
+      summary,
+      isCurrentResource = { current.identity.layers.isCurrent(id, identity) },
+      operations = operationGuard(current),
+    )
   }
 
-  internal fun invalidateStructurallyReplacedResources(
-    previous: DesiredStyleRevision,
-    next: DesiredStyleRevision,
-  ) {
-    val nextSources = next.sources.associateBy(SourceDefinition::id)
-    val replacedSourceIds =
-      previous.sources
-        .filter { previousSource ->
-          nextSources[previousSource.id]?.let(previousSource::canUpdateTo) != true
-        }
-        .mapTo(mutableSetOf(), SourceDefinition::id)
-    invalidateSourceIdentities(replacedSourceIds)
-
-    val nextLayers = next.layers.associateBy { it.definition.id }
-    val replacedLayerIds =
-      previous.layers
-        .filter { previousLayer ->
-          val nextLayer = nextLayers[previousLayer.definition.id]
-          nextLayer == null ||
-            nextLayer.anchor != previousLayer.anchor ||
-            nextLayer.definition.type != previousLayer.definition.type ||
-            nextLayer.definition.sourceId != previousLayer.definition.sourceId ||
-            nextLayer.definition.value["source-layer"] !=
-              previousLayer.definition.value["source-layer"] ||
-            previousLayer.definition.sourceId in replacedSourceIds
-        }
-        .mapTo(mutableSetOf()) { it.definition.id }
-    invalidateLayerIdentities(replacedLayerIds)
+  internal fun updateLayers(handles: Map<String, LayerHandle?>, order: List<String>) {
+    val updated = layersState.toMutableMap()
+    handles.forEach { (id, handle) ->
+      if (handle == null) updated.remove(id) else updated[id] = handle
+    }
+    layersState = order.mapNotNull { id -> updated[id]?.let { id to it } }.toMap()
   }
 
   internal fun updateResources(resources: LoadedStyleResources) {
@@ -431,57 +425,14 @@ public class MapStyleState internal constructor(initialBaseStyle: BaseStyle) {
       override fun <T> run(action: () -> T): T =
         owner?.runStyleHandleOperation(style, action) ?: action()
 
-      override fun checkpoint(): Long = owner?.styleHandleCheckpoint(style) ?: 0L
+      override fun requireSourceWritable(id: String) {
+        owner?.requireSourceWritable(id)
+      }
 
-      override fun requireUnchanged(checkpoint: Long) {
-        owner?.requireStyleHandleUnchanged(style, checkpoint)
+      override fun requireLayerWritable(id: String) {
+        owner?.requireLayerWritable(id)
       }
     }
-
-  private fun sourceIdentity(id: String): StyleResourceIdentity =
-    resourceIdentity(sourceIdentities, id)
-
-  private fun layerIdentity(id: String): StyleResourceIdentity =
-    resourceIdentity(layerIdentities, id)
-}
-
-private class StyleResourceIdentity
-
-private fun resourceIdentity(
-  identities: AtomicReference<Map<String, StyleResourceIdentity>>,
-  id: String,
-): StyleResourceIdentity {
-  while (true) {
-    val current = identities.load()
-    current[id]?.let {
-      return it
-    }
-    val identity = StyleResourceIdentity()
-    if (identities.compareAndSet(current, current + (id to identity))) return identity
-  }
-}
-
-private fun retainResourceIdentities(
-  identities: AtomicReference<Map<String, StyleResourceIdentity>>,
-  ids: Set<String>,
-) {
-  while (true) {
-    val current = identities.load()
-    val retained = current.filterKeys { it in ids }
-    if (retained.size == current.size || identities.compareAndSet(current, retained)) return
-  }
-}
-
-private fun removeResourceIdentities(
-  identities: AtomicReference<Map<String, StyleResourceIdentity>>,
-  ids: Set<String>,
-) {
-  if (ids.isEmpty()) return
-  while (true) {
-    val current = identities.load()
-    val remaining = current - ids
-    if (remaining.size == current.size || identities.compareAndSet(current, remaining)) return
-  }
 }
 
 internal data class LoadedStyleResources(
@@ -491,7 +442,7 @@ internal data class LoadedStyleResources(
 
 internal class ImperativeSourceRecord(val definition: SourceDefinition)
 
-internal class ImperativeImageRecord
+internal class ImperativeImageRecord(val fromResolver: Boolean = false)
 
 /**
  * One missing-image resolution, identified by [token] so a stale one cannot evict its successor.
@@ -537,15 +488,20 @@ internal constructor(
     bearing: Double = 0.0,
     tilt: Double = 0.0,
     padding: PaddingValues = PaddingValues(0.dp),
+    guard: CameraCommandGuard? = null,
   ): Unit = runLeaseBound {
     awaitViewportState()
-    adapter.fitCameraToBounds(boundingBox, bearing, tilt, padding)
+    adapter.fitCameraToBounds(boundingBox, bearing, tilt, padding, boundGuard(guard))
   }
 
   suspend fun animateCameraPosition(
     position: CameraPosition,
     duration: Duration = 300.milliseconds,
-  ): Unit = runLeaseBound { adapter.animateCameraPosition(position, duration) }
+    guard: CameraCommandGuard? = null,
+  ): Unit = runLeaseBound {
+    awaitViewportState()
+    adapter.animateCameraPosition(position, duration, boundGuard(guard))
+  }
 
   suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
@@ -553,14 +509,15 @@ internal constructor(
     tilt: Double = 0.0,
     padding: PaddingValues = PaddingValues(0.dp),
     duration: Duration = 300.milliseconds,
+    guard: CameraCommandGuard? = null,
   ): Unit = runLeaseBound {
     awaitViewportState()
-    adapter.animateCameraToBounds(boundingBox, bearing, tilt, padding, duration)
+    adapter.animateCameraToBounds(boundingBox, bearing, tilt, padding, duration, boundGuard(guard))
   }
 
   fun getVisibleRegion(): VisibleRegion? = withViewport { it.getVisibleRegion() }
 
-  fun getVisibleBoundingBox(): BoundingBox? = withViewport { it.getVisibleBoundingBox() }
+  fun getVisibleBounds(): VisibleBounds? = withViewport { it.getVisibleBounds() }
 
   fun screenLocationFromPosition(position: Position): DpOffset? = withViewport {
     it.screenLocationFromPosition(position)
@@ -628,6 +585,7 @@ internal constructor(
   }
 
   internal fun invalidate() {
+    owner.gestureAuthority.detach(this)
     owner.lifecycle.serialized {
       validState = false
       viewportState = null
@@ -645,6 +603,10 @@ internal constructor(
 
   private fun <T> withViewport(block: (MapAdapter) -> T): T? =
     owner.withCurrentOrNull(this) { if (viewportState == null) null else block(adapter) }
+
+  private fun boundGuard(guard: CameraCommandGuard?): CameraCommandGuard = CameraCommandGuard {
+    owner.isCurrent(this) && guard?.isValid() != false
+  }
 
   private suspend fun awaitViewportState(): Viewport = firstViewport.await()
 
@@ -683,6 +645,7 @@ internal constructor(
     }
   }
   internal val lifecycle = MapLifecycleAuthority(this, runtime.physicalScope)
+  internal val gestureAuthority = CameraInputAuthority(this)
   private var baseStyleCommandRevision = 0L
   private var cameraCommandRevision = 0L
   private var styleHandleEpoch = 0L
@@ -719,6 +682,16 @@ internal constructor(
           override fun desiredSourceDefinition(id: String) =
             this@MapState.desiredSourceDefinition(id)
 
+          override fun requireSourceWritable(id: String) = lifecycle.serialized {
+            requireNoDesiredSource(id)
+          }
+
+          override fun requireLayerWritable(id: String) = lifecycle.serialized {
+            if (desiredStyleRevision.layers.any { it.definition.id == id }) {
+              throw StyleHandleException("Layer ID '$id' is declared by the style content")
+            }
+          }
+
           override fun addStyleSource(source: Source) = this@MapState.addStyleSource(source)
 
           override fun removeStyleSource(id: String) = this@MapState.removeStyleSource(id)
@@ -738,14 +711,6 @@ internal constructor(
             binding: StyleBinding,
             action: () -> T,
           ): T = this@MapState.runStyleHandleOperation(binding, action)
-
-          override fun styleHandleCheckpoint(binding: StyleBinding) =
-            this@MapState.styleHandleCheckpoint(binding)
-
-          override fun requireStyleHandleUnchanged(
-            binding: StyleBinding,
-            checkpoint: Long,
-          ) = this@MapState.requireStyleHandleUnchanged(binding, checkpoint)
         }
       )
     }
@@ -757,7 +722,6 @@ internal constructor(
     internal set
 
   private var nextMapAttachment = CompletableDeferred<MapAttachment>()
-  private val cameraMutation = MutatorMutex()
 
   /** Contains the current rendered viewport, or null while no viewport is available. */
   public val viewport: Viewport?
@@ -789,38 +753,28 @@ internal constructor(
     get() = currentMapAttachment?.isEngaged == true
 
   /**
-   * Emits each [MapEvent] that the engine behind this map reports.
+   * Reports [MapEvent]s that occur after collection starts. Past events are not replayed, and slow
+   * collectors may miss events.
    *
-   * A collector receives the events that the map reports after it subscribes. The flow replays
-   * nothing, and a bounded buffer drops the oldest event that a collector has not taken. Style and
-   * idle events continue while a retained native engine stays alive between presentations, and
-   * camera and frame events stop while no map surface is attached.
+   * Style and idle events can continue while a native map has no attached surface. Camera and frame
+   * events require an attached surface.
    *
-   * A collector on an undispatched context runs on the thread that reported the event, which is the
-   * map's own thread on native platforms and the MapLibre GL JS event listener on the browser, and
-   * it runs while the map holds the lock that serializes its lifecycle. Read state and record
-   * values there. Collect on a dispatcher to call a map command such as [StyleImages.add].
+   * Unconfined collectors may run inside engine callbacks. Use a dispatcher that queues execution
+   * for collectors that call map commands such as [StyleImages.add].
    */
   public val events: Flow<MapEvent> = eventsFlow.asSharedFlow()
 
   /**
-   * Supplies images that the style draws and the loaded style does not hold, such as an icon that
-   * its sprite does not contain.
+   * Supplies missing style images on demand. Null (the default) disables resolution.
    *
-   * The map calls the resolver with the image id and adds the [ResolvedStyleImage] that it returns
-   * to the loaded style. A resolver that returns null leaves the image unresolved, as does one that
-   * throws, which the map logs. The map calls the resolver at most once per image id per loaded
-   * style. A new base style, or a different resolver set here, lets the next engine request for
-   * that id reach the resolver again.
+   * Return a [ResolvedStyleImage] for the requested ID, suspending if it needs to be loaded. Be
+   * prepared to supply the same ID again after the map discards unused images. On native maps,
+   * resolved images may appear only after the affected tiles are laid out again.
    *
-   * The map never calls the resolver inline from the engine's callback, and the resolver may
-   * suspend. MapLibre GL JS waits for it before it draws without the image; MapLibre Native draws
-   * the image at the next symbol placement after the resolver answers. Setting a resolver here does
-   * not stop a resolution that is already in flight, which still supplies the image that it
-   * resolves.
+   * Return null for IDs you cannot supply. Null results and exceptions are not retried until the
+   * base style reloads or the resolver is replaced.
    *
-   * Set it before or after the style loads. Null, the default, leaves every missing image
-   * unresolved.
+   * Replacing or clearing this property does not cancel calls already running.
    */
   public var missingImageResolver: MissingImageResolver?
     get() = missingImageResolverState
@@ -851,31 +805,38 @@ internal constructor(
    * Sets the durable camera position and applies it to the current surface when one is attached.
    */
   public fun setCameraPosition(position: CameraPosition) {
+    val guard = gestureAuthority.beginProgrammatic()
     val command = lifecycle.serialized {
       requireOpenLocked()
+      if (!guard.isValid()) return
       cameraPositionState = position
       cameraCommandRevision++
       val attachment = currentMapAttachment ?: return
       AttachmentCameraCommand(
         attachment = attachment,
-        command = CameraCommand(attachment.adapter, position, cameraCommandRevision),
+        command = CameraCommand(attachment.adapter, position, cameraCommandRevision, guard),
       )
     }
     applyAttachmentCameraCommand(command.attachment, command.command)
   }
 
-  /** Waits for a viewport, then fits [boundingBox] without animation. */
+  /**
+   * Waits for a viewport, then fits [boundingBox] without animation. A newer camera command or
+   * accepted input cancels this call.
+   */
   public suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double = 0.0,
     tilt: Double = 0.0,
     padding: PaddingValues = PaddingValues(0.dp),
-  ): Unit = retryAcrossAttachments {
-    it.fitCameraToBounds(boundingBox, bearing, tilt, padding)
+  ): Unit = coroutineScope {
+    val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
+    retryAcrossAttachments { it.fitCameraToBounds(boundingBox, bearing, tilt, padding, guard) }
   }
 
   /**
-   * Waits for an attached map, then animates to [position]. A new animation replaces this one.
+   * Waits for a viewport, then animates to [position]. A newer camera command or accepted input
+   * cancels this call.
    *
    * On Android, the system animator duration scale multiplies [duration]. A scale of zero jumps to
    * [position].
@@ -883,14 +844,16 @@ internal constructor(
   public suspend fun animateCameraPosition(
     position: CameraPosition,
     duration: Duration = 300.milliseconds,
-  ): Unit = cameraMutation.mutate {
+  ): Unit = coroutineScope {
+    val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
     retryAcrossAttachments {
-      it.animateCameraPosition(position, duration.scaledBy(systemAnimatorDurationScale()))
+      it.animateCameraPosition(position, duration.scaledBy(systemAnimatorDurationScale()), guard)
     }
   }
 
   /**
-   * Waits for a viewport, then animates to fit [boundingBox]. A new animation replaces this one.
+   * Waits for a viewport, then animates to fit [boundingBox]. A newer camera command or accepted
+   * input cancels this call.
    *
    * On Android, the system animator duration scale multiplies [duration]. A scale of zero jumps to
    * fit [boundingBox].
@@ -901,7 +864,8 @@ internal constructor(
     tilt: Double = 0.0,
     padding: PaddingValues = PaddingValues(0.dp),
     duration: Duration = 300.milliseconds,
-  ): Unit = cameraMutation.mutate {
+  ): Unit = coroutineScope {
+    val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
     retryAcrossAttachments {
       it.animateCameraToBounds(
         boundingBox,
@@ -909,6 +873,7 @@ internal constructor(
         tilt,
         padding,
         duration.scaledBy(systemAnimatorDurationScale()),
+        guard,
       )
     }
   }
@@ -918,10 +883,14 @@ internal constructor(
     withAttachmentRead(MapAttachment::getVisibleRegion)
 
   /** Returns the visible axis-aligned bounds, or null while no viewport is available. */
-  public fun getVisibleBoundingBox(): BoundingBox? =
-    withAttachmentRead(MapAttachment::getVisibleBoundingBox)
+  public fun getVisibleBounds(): VisibleBounds? =
+    withAttachmentRead(MapAttachment::getVisibleBounds)
 
-  /** Projects [position] into a logical-pixel offset, or returns null without a viewport. */
+  /**
+   * Projects [position] into a logical-pixel offset, or returns null without a viewport.
+   *
+   * Longitudes equivalent modulo 360° project onto the world copy nearest the camera target.
+   */
   public fun screenLocationFromPosition(position: Position): DpOffset? = withAttachmentRead {
     it.screenLocationFromPosition(position)
   }
@@ -943,6 +912,10 @@ internal constructor(
   /**
    * Waits for a viewport, then queries rendered features at [offset] in front-to-back render order.
    * Detaching the map surface during the query cancels it.
+   *
+   * A geometry that crosses the antimeridian may come back split into pieces, with longitudes past
+   * ±180° in either direction. When several world copies are visible, the same source feature can
+   * appear once per copy it occupies in the query area.
    */
   public suspend fun queryRenderedFeatures(
     offset: DpOffset,
@@ -954,6 +927,10 @@ internal constructor(
   /**
    * Waits for a viewport, then queries rendered features that intersect [rect] in front-to-back
    * render order. Detaching the map surface during the query cancels it.
+   *
+   * A geometry that crosses the antimeridian may come back split into pieces, with longitudes past
+   * ±180° in either direction. When several world copies are visible, the same source feature can
+   * appear once per copy it occupies in the query area.
    */
   public suspend fun queryRenderedFeatures(
     rect: DpRect,
@@ -998,6 +975,7 @@ internal constructor(
     while (true) {
       val read = lifecycle.serialized {
         if (!lifecycle.acceptsAdapter(adapter)) return false
+        if (style.loadState == StyleLoadState.Ready) return true
         val binding = style.currentLoadedStyle() ?: return false
         StyleResourceRead(binding, styleHandleEpoch, styleSourceChangeRevision)
       }
@@ -1019,28 +997,48 @@ internal constructor(
     }
   }
 
-  internal fun refreshStyleSources(adapter: MapAdapter): Boolean {
-    val read = lifecycle.serialized {
+  internal fun refreshStyleSources(adapter: MapAdapter, sourceId: String? = null): Boolean {
+    lifecycle.serialized {
       if (!lifecycle.acceptsAdapter(adapter)) return false
-      val sourceChangeRevision = ++styleSourceChangeRevision
-      if (style.loadState != StyleLoadState.Ready) return true
-      val binding = style.currentLoadedStyle() ?: return true
-      StyleResourceRead(binding, styleHandleEpoch, sourceChangeRevision)
+      styleSourceChangeRevision++
     }
-    val sources = runCatching { style.readSources(read.binding) }
-    if (sources.isFailure) {
-      val stillCurrent = lifecycle.serialized { isCurrentStyleResourceRead(adapter, read) }
-      if (!stillCurrent) return false
-      throw requireNotNull(sources.exceptionOrNull())
+    while (true) {
+      val read = lifecycle.serialized {
+        if (!lifecycle.acceptsAdapter(adapter)) return false
+        if (style.loadState != StyleLoadState.Ready) return true
+        val binding = style.currentLoadedStyle() ?: return true
+        StyleResourceRead(binding, styleHandleEpoch, styleSourceChangeRevision)
+      }
+      val sources = runCatching { style.readSources(read.binding, sourceId) }
+      if (sources.isFailure) {
+        val stillCurrent = lifecycle.serialized { isCurrentStyleResourceRead(adapter, read) }
+        if (!stillCurrent) return false
+        throw requireNotNull(sources.exceptionOrNull())
+      }
+      val committed = lifecycle.serialized {
+        if (!isCurrentStyleResourceRead(adapter, read)) return false
+        if (style.loadState != StyleLoadState.Ready) return false
+        if (styleSourceChangeRevision != read.sourceChangeRevision) return@serialized false
+        style.updateSources(sources.getOrThrow())
+        true
+      }
+      if (committed) return true
     }
-    return lifecycle.serialized {
-      if (!isCurrentStyleResourceRead(adapter, read)) return false
-      if (style.loadState != StyleLoadState.Ready) return false
-      // A later callback performs its own complete read, preserving source order without allowing
-      // this older result to overwrite it.
-      if (styleSourceChangeRevision != read.sourceChangeRevision) return true
-      style.updateSources(sources.getOrThrow())
-      true
+  }
+
+  internal fun updateStyleResources(adapter: MapAdapter, changes: StyleResourceChanges) {
+    if (changes.sources.isEmpty() && changes.layerOrder == null) return
+    val read = lifecycle.serialized {
+      if (!lifecycle.acceptsAdapter(adapter) || style.loadState != StyleLoadState.Ready) return
+      val binding = style.currentLoadedStyle() ?: return
+      if (binding.identity !== changes.identity) return
+      StyleResourceRead(binding, styleHandleEpoch, styleSourceChangeRevision)
+    }
+    changes.sources.forEach { refreshStyleSources(adapter, it) }
+    val layers = runCatching { style.readLayers(read.binding, changes.layers) }
+    lifecycle.serialized {
+      if (!isCurrentStyleResourceRead(adapter, read)) return
+      changes.layerOrder?.let { style.updateLayers(layers.getOrThrow(), it) }
     }
   }
 
@@ -1082,10 +1080,11 @@ internal constructor(
           ?: backgroundStyleMutation
           ?: run {
             requireNoImperativeResourceConflicts(revision)
-            style.invalidateStructurallyReplacedResources(desiredStyleRevision, revision)
             styleHandleEpoch++
+            if (style.loadState is StyleLoadState.Failed) {
+              style.loadState = StyleLoadState.Loading
+            }
             desiredStyleRevision = revision
-            style.loadState = StyleLoadState.Loading
             return
           }
       }
@@ -1177,7 +1176,7 @@ internal constructor(
       lifecycle.serialized {
         requireStyleHandleLocked(binding)
         imperativeSources.remove(id)
-        style.invalidateSourceIdentities(setOf(id))
+        binding.identity.sources.remove(id)
       }
       refreshSourcesAfterCommand(binding)
       return true
@@ -1194,7 +1193,7 @@ internal constructor(
     sdf: Boolean,
     stretch: ImageStretch?,
   ) {
-    val record = ImperativeImageRecord()
+    val record = ImperativeImageRecord(fromResolver = false)
     val reservation = StyleMutationReservation()
     val binding = lifecycle.serialized {
       requireOpenLocked()
@@ -1241,13 +1240,21 @@ internal constructor(
       if (lifecycle.isClosed || !lifecycle.acceptsAdapter(adapter)) return@serialized null
       val resolver = missingImageResolverState ?: return@serialized null
       val binding = style.currentLoadedStyle() ?: return@serialized null
+      if (hasDesiredImage(imageId) || imperativeImages[imageId]?.fromResolver == false)
+        return@serialized null
       missingImageResolutions[imageId]?.let {
         return@serialized it.work
       }
       val token = Any()
       runtime.physicalScope
-        .async { supplyMissingImage(resolver, binding, imageId, token) }
-        .also { missingImageResolutions[imageId] = MissingImageResolution(token, it) }
+        .async(start = CoroutineStart.LAZY) {
+          supplyMissingImage(resolver, binding, imageId, token)
+        }
+        .also {
+          // Register before starting: even an inline completion must be able to remove its record.
+          missingImageResolutions[imageId] = MissingImageResolution(token, it)
+          it.start()
+        }
     }
 
   private suspend fun supplyMissingImage(
@@ -1256,28 +1263,38 @@ internal constructor(
     imageId: String,
     token: Any,
   ) {
-    val resolved =
-      try {
-        resolver(imageId)
-      } catch (error: CancellationException) {
-        throw error
-      } catch (error: Throwable) {
-        runtime.logger?.w(error) { "The missing-image resolver failed for image '$imageId'" }
-        null
-      }
-    if (resolved == null) return
+    var rememberFailure = false
     try {
+      // A queued miss may arrive after another request or style command supplied the image.
+      // Consult the engine outside the lifecycle lock: Native marshals this read to its map thread.
+      if (binding.imageExists(imageId) == true) return
+      val resolved =
+        try {
+          resolver(imageId)
+        } catch (error: CancellationException) {
+          throw error
+        } catch (error: Throwable) {
+          runtime.logger?.w(error) { "The missing-image resolver failed for image '$imageId'" }
+          null
+        }
+      if (resolved == null) {
+        rememberFailure = true
+        return
+      }
       addResolvedStyleImage(binding, imageId, resolved)
     } catch (error: CancellationException) {
       throw error
     } catch (error: Throwable) {
-      // A composition can claim the id while the resolver runs. Dropping the record lets a repeated
-      // request try again, unless a later resolution already holds the id.
-      lifecycle.serialized {
-        if (missingImageResolutions[imageId]?.token === token)
-          missingImageResolutions.remove(imageId)
-      }
       runtime.logger?.w(error) { "Could not add the resolved image '$imageId'" }
+    } finally {
+      // Keep negative results to avoid a request loop, but let a later engine miss restore an
+      // evicted image. An older resolver must not clear a replacement resolver's pending work.
+      if (!rememberFailure) {
+        lifecycle.serialized {
+          if (missingImageResolutions[imageId]?.token === token)
+            missingImageResolutions.remove(imageId)
+        }
+      }
     }
   }
 
@@ -1294,8 +1311,9 @@ internal constructor(
     imageId: String,
     resolved: ResolvedStyleImage,
   ) {
-    val record = ImperativeImageRecord()
+    val record = ImperativeImageRecord(fromResolver = true)
     val reservation = StyleMutationReservation()
+    var claimed = false
     while (true) {
       val inProgress = lifecycle.serialized {
         if (lifecycle.isClosed) return
@@ -1303,8 +1321,12 @@ internal constructor(
         (activeStyleMutation ?: backgroundStyleMutation)?.let {
           return@serialized it
         }
-        if (hasDesiredImage(imageId) || imageId in imperativeImages) return
-        imperativeImages[imageId] = record
+        if (hasDesiredImage(imageId) || imperativeImages[imageId]?.fromResolver == false) return
+        // Resolver ownership survives eviction, but must not replace an explicitly added image.
+        if (imageId !in imperativeImages) {
+          imperativeImages[imageId] = record
+          claimed = true
+        }
         backgroundStyleMutation = reservation
         null
       }
@@ -1331,7 +1353,8 @@ internal constructor(
       }
     } finally {
       lifecycle.serialized {
-        if (!committed && imperativeImages[imageId] === record) imperativeImages.remove(imageId)
+        if (claimed && !committed && imperativeImages[imageId] === record)
+          imperativeImages.remove(imageId)
         completeStyleMutation(reservation)
       }
     }
@@ -1432,20 +1455,6 @@ internal constructor(
     val result = action()
     lifecycle.serialized { requireStyleHandleLocked(binding) }
     return result
-  }
-
-  internal fun styleHandleCheckpoint(binding: StyleBinding): Long = lifecycle.serialized {
-    requireStyleHandleLocked(binding)
-    styleHandleEpoch
-  }
-
-  internal fun requireStyleHandleUnchanged(binding: StyleBinding, checkpoint: Long) {
-    lifecycle.serialized {
-      requireStyleHandleLocked(binding)
-      check(styleHandleEpoch == checkpoint) {
-        "Style operation crossed a loaded-style resource change"
-      }
-    }
   }
 
   private fun requireStyleHandleLocked(binding: StyleBinding) {
@@ -1617,11 +1626,11 @@ internal constructor(
     var command = initial
     while (true) {
       if (lifecycle.currentAdapter() !== command.adapter) return
-      command.adapter.setCameraPosition(command.value)
+      command.adapter.setCameraPosition(command.value, command.guard)
       command = lifecycle.serialized {
         if (lifecycle.currentAdapter() !== command.adapter) return
         if (cameraCommandRevision == command.revision) return
-        CameraCommand(command.adapter, cameraPositionState, cameraCommandRevision)
+        CameraCommand(command.adapter, cameraPositionState, cameraCommandRevision, command.guard)
       }
     }
   }
@@ -1630,14 +1639,17 @@ internal constructor(
     attachment: MapAttachment,
     initial: CameraCommand,
   ) {
+    val guard = CameraCommandGuard {
+      isCurrent(attachment) && initial.guard?.isValid() != false
+    }
     var command = initial
     while (true) {
       if (!lifecycle.isCurrent(attachment.token, command.adapter)) return
-      command.adapter.setCameraPosition(command.value)
+      command.adapter.setCameraPosition(command.value, guard)
       command = lifecycle.serialized {
         if (!lifecycle.isCurrent(attachment.token, command.adapter)) return
         if (cameraCommandRevision == command.revision) return
-        CameraCommand(command.adapter, cameraPositionState, cameraCommandRevision)
+        CameraCommand(command.adapter, cameraPositionState, cameraCommandRevision, command.guard)
       }
     }
   }
@@ -1697,6 +1709,7 @@ internal constructor(
     val adapter: MapAdapter,
     val value: CameraPosition,
     val revision: Long,
+    val guard: CameraCommandGuard? = null,
   )
 
   private data class AttachmentCameraCommand(
@@ -1724,8 +1737,10 @@ internal class MapPresentationOwnerToken
 /**
  * Remembers a logical map and closes it when this call leaves composition.
  *
- * [baseStyle] and [content] define the desired style. Changes to these inputs update the remembered
- * map. Restoration creates a new map with the saved camera position and the current style inputs.
+ * [initialBaseStyle] and [initialCameraPosition] seed the map. Changes to these inputs do not
+ * update it; use [MapStyleState.baseStyle] and [MapState.setCameraPosition]. Changes to [content]
+ * update the declared resources. Restoration creates a new map with the saved camera position and
+ * the current [initialBaseStyle].
  *
  * [content] declares the map's sources, layers, and images. It reads the returned state through
  * [LocalMapState] and its viewport through [LocalViewport].
@@ -1733,30 +1748,27 @@ internal class MapPresentationOwnerToken
 @Composable
 public fun rememberMapState(
   runtime: MapRuntime = DefaultMapRuntime.instance,
-  baseStyle: BaseStyle = BaseStyle.Demo,
+  initialBaseStyle: BaseStyle = BaseStyle.Demo,
   initialCameraPosition: CameraPosition = CameraPosition(),
   content: @Composable @MaplibreComposable () -> Unit = {},
 ): MapState {
   val currentContent by rememberUpdatedState(content)
   val stableContent = remember<@Composable @MaplibreComposable () -> Unit> { { currentContent() } }
   val state =
-    rememberSaveable(runtime, saver = mapStateSaver(runtime, baseStyle, stableContent)) {
+    rememberSaveable(runtime, saver = mapStateSaver(runtime, initialBaseStyle, stableContent)) {
       runtime.createMapState(
-        baseStyle = baseStyle,
+        initialBaseStyle = initialBaseStyle,
         initialCameraPosition = initialCameraPosition,
         content = stableContent,
       )
     }
-  SideEffect {
-    if (state.style.baseStyle != baseStyle) state.style.baseStyle = baseStyle
-  }
   DisposableEffect(state) { onDispose { state.close() } }
   return state
 }
 
 private fun mapStateSaver(
   runtime: MapRuntime,
-  baseStyle: BaseStyle,
+  initialBaseStyle: BaseStyle,
   content: @Composable @MaplibreComposable () -> Unit,
 ): Saver<MapState, List<Double>> =
   Saver(
@@ -1768,7 +1780,7 @@ private fun mapStateSaver(
     restore = { values ->
       require(values.size == 5) { "A saved camera position must contain five values" }
       runtime.createMapState(
-        baseStyle = baseStyle,
+        initialBaseStyle = initialBaseStyle,
         initialCameraPosition =
           CameraPosition(
             bearing = values[0],
@@ -1805,20 +1817,20 @@ internal class RuntimeImplementation(
   private var closedState: Boolean by mutableStateOf(false)
 
   final override fun createMapState(
-    baseStyle: BaseStyle,
+    initialBaseStyle: BaseStyle,
     initialCameraPosition: CameraPosition,
     content: @Composable @MaplibreComposable () -> Unit,
   ): MapState = lock.withLock {
     requireOpenLocked()
-    MapState(this, initialCameraPosition, baseStyle, content).also(children::add)
+    MapState(this, initialCameraPosition, initialBaseStyle, content).also(children::add)
   }
 
   final override fun createSnapshotter(
-    baseStyle: BaseStyle,
+    initialBaseStyle: BaseStyle,
     content: @Composable @MaplibreComposable () -> Unit,
   ): MapSnapshotter = lock.withLock {
     requireOpenLocked()
-    MapSnapshotterImplementation(this, baseStyle, content).also(snapshotters::add)
+    MapSnapshotterImplementation(this, initialBaseStyle, content).also(snapshotters::add)
   }
 
   private fun requireOpen() {

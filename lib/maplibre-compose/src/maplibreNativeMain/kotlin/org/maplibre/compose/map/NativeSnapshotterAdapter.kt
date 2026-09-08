@@ -9,6 +9,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import org.maplibre.compose.camera.Viewport
+import org.maplibre.compose.interaction.internal.select
 import org.maplibre.compose.mlnffi.MapRenderBackend
 import org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions
 import org.maplibre.compose.resource.MapResourceConfig
@@ -274,7 +275,7 @@ private class NativeSnapshotterAdapter(
     }
     return Viewport(
       size = applied.size,
-      visibleBoundingBox = applied.boundingBox,
+      visibleBounds = applied.visibleBounds,
       visibleRegion = applied.visibleRegion,
       metersPerDpAtTarget =
         metersPerDpAtLatitude(applied.camera.zoom, applied.camera.target.latitude),
@@ -332,9 +333,13 @@ private class NativeSnapshotterAdapter(
       loggerProvider = { options.logger },
       sessionOpen = { open },
       accessMap = { action -> source.loop.call(action = action) != null },
-      postMap = { action -> source.loop.post(action = action) },
-      accessRenderSession = { action ->
-        source.loop.call(action = { _ -> source.resources.withSession(action) }) != null
+      postMap = { action, abandon -> source.loop.post(action = action, abandon = abandon) },
+      // A snapshot renders on the owner thread, so the render session is reached from there.
+      enqueueRenderSession = { action ->
+        source.loop.post(
+          action = { _ -> source.resources.withSessionOrNull(action) },
+          abandon = { action(null) },
+        )
       },
       getScale = { currentDensity },
       requestRepaint = {},
@@ -485,6 +490,11 @@ private class NativeSnapshotRenderResources(
 
   fun <T> withSession(action: (RenderSessionHandle) -> T): T =
     checkNotNull(target).withAccess { action(checkNotNull(session)) }
+
+  /** Runs [action] with the attached session, or with null when none is attached. */
+  fun withSessionOrNull(action: (RenderSessionHandle?) -> Unit) {
+    if (target == null || session == null) action(null) else withSession(action)
+  }
 
   fun close() {
     val failures = mutableListOf<Throwable>()

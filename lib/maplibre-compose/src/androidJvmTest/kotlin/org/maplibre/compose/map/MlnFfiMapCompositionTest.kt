@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -27,9 +28,11 @@ import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.moveBy
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -47,10 +50,14 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 import kotlinx.serialization.json.JsonObject
+import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.expressions.dsl.const
-import org.maplibre.compose.layers.Anchor
+import org.maplibre.compose.interaction.DragResponse
+import org.maplibre.compose.interaction.MapInteractions
+import org.maplibre.compose.interaction.PointerButton
 import org.maplibre.compose.layers.BackgroundLayer
+import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.FillLayer
 import org.maplibre.compose.layers.RasterLayer
 import org.maplibre.compose.mlnffi.FfiTestPlatform
@@ -59,7 +66,8 @@ import org.maplibre.compose.mlnffi.setFfiTestMapContent
 import org.maplibre.compose.overlay.MapOverlay
 import org.maplibre.compose.overlay.include
 import org.maplibre.compose.sources.GeoJsonData
-import org.maplibre.compose.sources.RasterSource
+import org.maplibre.compose.sources.GeoJsonOptions
+import org.maplibre.compose.sources.RasterTileSource
 import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.testing.RecordingList
@@ -85,9 +93,92 @@ class MlnFfiMapCompositionTest {
   }
 
   @Test
+  fun a_pitched_pan_continues_in_its_release_direction_without_changing_the_camera_pose() =
+    runFfiComposeUiTest {
+      val runtime = createMapRuntime(runtimeOptions)
+      val start = CameraPosition(target = Position(0.0, 0.0), zoom = 12.0, tilt = 60.0)
+      val state =
+        runtime.createMapState(initialBaseStyle = BaseStyle.Empty, initialCameraPosition = start)
+      var configuration by mutableStateOf(MapInteractions.None)
+      var density = 1f
+      try {
+        setFfiTestMapContent(runtimeOptions) {
+          density = LocalDensity.current.density
+          MaplibreMap(
+            modifier = Modifier.size(300.dp).testTag("pitched-fling-map"),
+            state = state,
+            interactions = configuration,
+          )
+        }
+        waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+          state.style.loadState == StyleLoadState.Ready &&
+            state.currentMapAttachment?.viewport != null
+        }
+        val map = onNodeWithTag("pitched-fling-map")
+
+        fun pan(direction: Float, withFling: Boolean): Float {
+          runOnUiThread {
+            configuration =
+              MapInteractions(from = MapInteractions.None) {
+                camera {
+                  pan {
+                    momentum {
+                      enabled = withFling
+                      durationScale = 0.25
+                    }
+                  }
+                }
+                bindings {
+                  drag {
+                    enabled = true
+                    mappings { on(button = PointerButton.Primary, response = DragResponse.Pan) }
+                  }
+                }
+              }
+            state.setCameraPosition(start)
+          }
+          waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+            val camera = state.cameraPosition
+            abs(camera.target.latitude) < 1e-8 &&
+              abs(camera.target.longitude) < 1e-8 &&
+              !state.isCameraMoving &&
+              state.cameraMoveReason == CameraMoveReason.PROGRAMMATIC
+          }
+          map.performTouchInput {
+            down(center)
+            repeat(4) { moveBy(Offset(0f, direction * 16f * density), delayMillis = 8) }
+            up()
+          }
+          waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+            state.cameraMoveReason == CameraMoveReason.GESTURE && !state.isCameraMoving
+          }
+          val camera = state.cameraPosition
+          assertEquals(start.zoom, camera.zoom, 1e-6)
+          assertEquals(start.bearing, camera.bearing, 1e-6)
+          assertEquals(start.tilt, camera.tilt, 1e-6)
+          return checkNotNull(state.screenLocationFromPosition(start.target)).y.value
+        }
+
+        for (direction in listOf(-1f, 1f)) {
+          val withoutMomentum = pan(direction, withFling = false)
+          val withMomentum = pan(direction, withFling = true)
+          val extraTravel = direction * (withMomentum - withoutMomentum)
+          assertTrue(
+            extraTravel > 5f,
+            "release added no travel in direction $direction: $extraTravel dp",
+          )
+          assertTrue(extraTravel < 150f, "pitched continuation jumped by $extraTravel dp")
+        }
+      } finally {
+        runtime.close()
+        runtime.awaitClosed()
+      }
+    }
+
+  @Test
   fun map_state_renders_a_base_style_and_publishes_one_presentation() = runFfiComposeUiTest {
     val runtime = createMapRuntime(runtimeOptions)
-    val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
+    val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
 
     setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
@@ -109,7 +200,7 @@ class MlnFfiMapCompositionTest {
   @Test
   fun focus_modifiers_on_the_map_modifier_reach_the_input_node() = runFfiComposeUiTest {
     val runtime = createMapRuntime(runtimeOptions)
-    val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
+    val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
     val focusRequester = FocusRequester()
     val hasFocus = AtomicBoolean(false)
 
@@ -142,7 +233,7 @@ class MlnFfiMapCompositionTest {
     val state =
       runtime.createMapState(
         initialCameraPosition = CameraPosition(zoom = 1.0),
-        baseStyle = BaseStyle.Empty,
+        initialBaseStyle = BaseStyle.Empty,
       )
     var constraints by mutableStateOf(CameraConstraints())
 
@@ -173,7 +264,7 @@ class MlnFfiMapCompositionTest {
       RasterLayer(
         id = "shared-layer",
         source =
-          RasterSource(
+          RasterTileSource(
             "shared-source",
             listOf("https://example.invalid/{z}/{x}/{y}.png"),
           ),
@@ -184,8 +275,8 @@ class MlnFfiMapCompositionTest {
         onDispose {}
       }
     }
-    val first = runtime.createMapState(baseStyle = BaseStyle.Empty, content = content)
-    val second = runtime.createMapState(baseStyle = BaseStyle.Empty, content = content)
+    val first = runtime.createMapState(initialBaseStyle = BaseStyle.Empty, content = content)
+    val second = runtime.createMapState(initialBaseStyle = BaseStyle.Empty, content = content)
 
     setFfiTestMapContent(runtimeOptions, presentationCount = 2) {
       if (showFirst) {
@@ -243,7 +334,7 @@ class MlnFfiMapCompositionTest {
           onDispose {}
         }
       }
-      val state = runtime.createMapState(baseStyle = BaseStyle.Empty, content = content)
+      val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty, content = content)
 
       setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
@@ -270,7 +361,7 @@ class MlnFfiMapCompositionTest {
       var presented by mutableStateOf(true)
       var latest by mutableStateOf(false)
       val state =
-        runtime.createMapState(baseStyle = BaseStyle.Empty) {
+        runtime.createMapState(initialBaseStyle = BaseStyle.Empty) {
           BackgroundLayer(
             id = if (latest) "latest-background" else "initial-background",
             color = const(if (latest) Color.Blue else Color.Red),
@@ -314,16 +405,16 @@ class MlnFfiMapCompositionTest {
   fun a_later_revision_supersedes_reconciliation_failure_before_the_surface_is_revealed() =
     runFfiComposeUiTest {
       val runtime = createMapRuntime(runtimeOptions)
-      var invalidAnchor by mutableStateOf(true)
+      // Synchronous GeoJSON parsing rejects malformed data inside the revision itself.
+      var malformedData by mutableStateOf(true)
       val state =
-        runtime.createMapState(baseStyle = BaseStyle.Empty) {
-          if (invalidAnchor) {
-            Anchor.Below("missing-base-layer") {
-              BackgroundLayer(id = "application-background", color = const(Color.Red))
-            }
-          } else {
-            BackgroundLayer(id = "application-background", color = const(Color.Blue))
-          }
+        runtime.createMapState(initialBaseStyle = BaseStyle.Empty) {
+          val points =
+            rememberGeoJsonSource(
+              data = GeoJsonData.JsonString(if (malformedData) "{" else EMPTY_FEATURE_COLLECTION),
+              options = GeoJsonOptions(synchronousUpdate = true),
+            )
+          CircleLayer(id = "application-circles", source = points, color = const(Color.Red))
         }
 
       setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
@@ -336,12 +427,12 @@ class MlnFfiMapCompositionTest {
       )
       onNodeWithContentDescription("Map").assertExists("a map without a style has no semantics")
 
-      invalidAnchor = false
+      malformedData = false
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
         state.style.loadState == StyleLoadState.Ready
       }
       val session = requireNotNull(state.currentMapAttachment).adapter as MlnFfiMapSession
-      assertTrue("application-background" in session.currentStyleLayerIds())
+      assertTrue("application-circles" in session.currentStyleLayerIds())
       assertTrue(onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty())
 
       runtime.close()
@@ -352,7 +443,8 @@ class MlnFfiMapCompositionTest {
   fun a_map_state_retains_its_native_map_between_presentations() = runFfiComposeUiTest {
     val runtime = createMapRuntime(runtimeOptions)
     val camera = CameraPosition(target = Position(longitude = 11.0, latitude = 47.0), zoom = 6.0)
-    val state = runtime.createMapState(initialCameraPosition = camera, baseStyle = BaseStyle.Empty)
+    val state =
+      runtime.createMapState(initialCameraPosition = camera, initialBaseStyle = BaseStyle.Empty)
     var presented by mutableStateOf(true)
 
     setFfiTestMapContent(runtimeOptions, presentationCount = 2) {
@@ -400,7 +492,7 @@ class MlnFfiMapCompositionTest {
       val state =
         runtime.createMapState(
           initialCameraPosition = camera,
-          baseStyle = REPLACEMENT_STYLE,
+          initialBaseStyle = REPLACEMENT_STYLE,
         )
       var presented by mutableStateOf(true)
       var scaleFactor by mutableStateOf(1f)
@@ -458,7 +550,7 @@ class MlnFfiMapCompositionTest {
       BaseStyle.Json("""{"version":8,"sources":{},"layers":[{"id":"bg-a","type":"background"}]}""")
     val second =
       BaseStyle.Json("""{"version":8,"sources":{},"layers":[{"id":"bg-b","type":"background"}]}""")
-    val state = runtime.createMapState(baseStyle = first)
+    val state = runtime.createMapState(initialBaseStyle = first)
 
     setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
@@ -490,7 +582,7 @@ class MlnFfiMapCompositionTest {
   @Test
   fun a_failed_replacement_style_hides_the_native_map() = runFfiComposeUiTest {
     val runtime = createMapRuntime(runtimeOptions)
-    val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
+    val state = runtime.createMapState(initialBaseStyle = BaseStyle.Empty)
 
     setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
@@ -721,6 +813,8 @@ class MlnFfiMapCompositionTest {
         """{"version":8,"sources":{},"layers":[{"id":"replacement-style","type":"background"}]}"""
       )
 
+    const val EMPTY_FEATURE_COLLECTION = """{"type":"FeatureCollection","features":[]}"""
+
     const val RENDER_TIMEOUT_MILLIS = 30_000L
 
     const val PLACED_AT_TAG = "map-placed-at"
@@ -741,7 +835,7 @@ private fun TestMap(
   val state =
     rememberMapState(
       initialCameraPosition = initialCameraPosition,
-      baseStyle = baseStyle,
+      initialBaseStyle = baseStyle,
     ) {
       content()
     }

@@ -5,16 +5,13 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 
 internal class StyleNode(
-  var style: StyleBinding,
+  val style: StyleBinding,
   internal val replaceableSourceIds: Set<String> = emptySet(),
   replaceableLayerIds: Set<String> = emptySet(),
 ) : MapNode {
   val children = mutableListOf<MapNode>()
 
-  private val baseLayerIds =
-    style.getLayers().mapNotNullTo(mutableSetOf()) {
-      it.id.takeUnless(replaceableLayerIds::contains)
-    }
+  private val baseLayerIds = style.layerIds().toSet() - replaceableLayerIds
   internal val sourceManager = SourceManager(this)
   internal val imageManager = ImageManager(this)
 
@@ -48,6 +45,9 @@ internal class StyleNode(
             anchor = node.anchor,
             onClick = node.onClick,
             onLongClick = node.onLongClick,
+            onDoubleClick = node.onDoubleClick,
+            hitPadding = node.hitPadding,
+            registration = node,
           )
         },
       images = imageManager.desiredImages,

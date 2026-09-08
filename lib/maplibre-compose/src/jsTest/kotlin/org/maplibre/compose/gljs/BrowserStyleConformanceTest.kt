@@ -20,7 +20,7 @@ import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.StyleLoadState
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.sources.TileSetOptions
-import org.maplibre.compose.sources.rememberVectorSource
+import org.maplibre.compose.sources.rememberVectorTileSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.LocalStyleNode
 import org.maplibre.compose.style.StyleBinding
@@ -74,11 +74,11 @@ class BrowserStyleConformanceTest {
       ) {
         CaptureStyle { style = it }
         val source =
-          rememberVectorSource(
+          rememberVectorTileSource(
             tiles = listOf("https://example.invalid/{z}/{x}/{y}.pbf"),
             options = TileSetOptions(minZoom = 24, maxZoom = 24),
           )
-        Anchor.Replace("base-fill") {
+        Anchor.Below("base-fill") {
           if (showLayer) {
             FillLayer(
               id = "switching-source-layer",
@@ -95,22 +95,22 @@ class BrowserStyleConformanceTest {
       liveSourceLayer() == "places"
     }
     assertEquals(
-      listOf("base-background", "switching-source-layer"),
-      style?.getLayers()?.map { it.id },
+      listOf("base-background", "switching-source-layer", "base-fill"),
+      style?.layerIds(),
     )
 
     sourceLayer = "roads"
-    waitUntilMap("the replacement source layer to reach the live style") {
+    waitUntilMap("the recreated source layer to reach the live style") {
       liveSourceLayer() == "roads"
     }
     assertEquals(
-      listOf("base-background", "switching-source-layer"),
-      style?.getLayers()?.map { it.id },
+      listOf("base-background", "switching-source-layer", "base-fill"),
+      style?.layerIds(),
     )
 
     showLayer = false
-    waitUntilMap("the replaced base layer to be restored") {
-      style?.getLayers()?.map { it.id } == listOf("base-background", "base-fill")
+    waitUntilMap("the removed layer to leave the live style") {
+      style?.layerIds() == listOf("base-background", "base-fill")
     }
     assertTrue(failures.isEmpty(), "the map reported load failures: $failures")
   }
@@ -129,7 +129,7 @@ class BrowserStyleConformanceTest {
     onMapLoadFailed: (String?) -> Unit = {},
     content: @Composable @MaplibreComposable () -> Unit = {},
   ) {
-    val state = rememberMapState(baseStyle = baseStyle, content = content)
+    val state = rememberMapState(initialBaseStyle = baseStyle, content = content)
     val loadState = state.style.loadState
     LaunchedEffect(loadState) {
       if (loadState is StyleLoadState.Failed) onMapLoadFailed(loadState.reason)

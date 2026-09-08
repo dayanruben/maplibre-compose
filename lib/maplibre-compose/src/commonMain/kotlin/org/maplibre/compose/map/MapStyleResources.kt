@@ -4,8 +4,22 @@ import androidx.compose.runtime.Stable
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlinx.serialization.json.JsonElement
 import org.maplibre.compose.layers.LayerHandle
+import org.maplibre.compose.sources.CustomGeometrySource
+import org.maplibre.compose.sources.CustomGeometrySourceHandle
+import org.maplibre.compose.sources.CustomVectorTileSource
+import org.maplibre.compose.sources.CustomVectorTileSourceHandle
+import org.maplibre.compose.sources.GeoJsonSource
+import org.maplibre.compose.sources.GeoJsonSourceHandle
+import org.maplibre.compose.sources.ImageSource
+import org.maplibre.compose.sources.ImageSourceHandle
+import org.maplibre.compose.sources.RasterDemTileSource
+import org.maplibre.compose.sources.RasterDemTileSourceHandle
+import org.maplibre.compose.sources.RasterTileSource
+import org.maplibre.compose.sources.RasterTileSourceHandle
 import org.maplibre.compose.sources.Source
 import org.maplibre.compose.sources.SourceHandle
+import org.maplibre.compose.sources.VectorTileSource
+import org.maplibre.compose.sources.VectorTileSourceHandle
 import org.maplibre.compose.style.Light
 import org.maplibre.compose.style.Projection
 import org.maplibre.compose.style.Sky
@@ -18,6 +32,41 @@ public class StyleSources internal constructor(private val style: MapStyleState)
   Iterable<SourceHandle> {
   /** Returns the current generation's handle for [id], or null when unavailable or absent. */
   public operator fun get(id: String): SourceHandle? = style.sourceHandle(id)
+
+  /**
+   * Returns the current handle with [source]'s ID, or null while absent or no style is ready. A
+   * remembered source is installed only while a declared layer references it. Look up a new handle
+   * after a base-style reload or source replacement.
+   */
+  public operator fun get(source: Source): SourceHandle? = get(source.id)
+
+  /** Returns the current handle with [source]'s ID and type, or null while unavailable. */
+  public operator fun get(source: GeoJsonSource): GeoJsonSourceHandle? =
+    get(source.id) as? GeoJsonSourceHandle
+
+  /** Returns the current handle with [source]'s ID and type, or null while unavailable. */
+  public operator fun get(source: ImageSource): ImageSourceHandle? =
+    get(source.id) as? ImageSourceHandle
+
+  /** Returns the current handle with [source]'s ID and type, or null while unavailable. */
+  public operator fun get(source: VectorTileSource): VectorTileSourceHandle? =
+    get(source.id) as? VectorTileSourceHandle
+
+  /** Returns the current handle with [source]'s ID and type, or null while unavailable. */
+  public operator fun get(source: RasterTileSource): RasterTileSourceHandle? =
+    get(source.id) as? RasterTileSourceHandle
+
+  /** Returns the current handle with [source]'s ID and type, or null while unavailable. */
+  public operator fun get(source: RasterDemTileSource): RasterDemTileSourceHandle? =
+    get(source.id) as? RasterDemTileSourceHandle
+
+  /** Returns the current handle with [source]'s ID and type, or null while unavailable. */
+  public operator fun get(source: CustomGeometrySource): CustomGeometrySourceHandle? =
+    get(source.id) as? CustomGeometrySourceHandle
+
+  /** Returns the current handle with [source]'s ID and type, or null while unavailable. */
+  public operator fun get(source: CustomVectorTileSource): CustomVectorTileSourceHandle? =
+    get(source.id) as? CustomVectorTileSourceHandle
 
   /** Adds [source] to the current loaded-style generation and returns its handle. */
   public fun add(source: Source): SourceHandle = style.requireOwner().addStyleSource(source)
@@ -74,7 +123,7 @@ public class StyleTransition internal constructor(private val style: MapStyleSta
    * The reported timing is the engine's: a transition that [set] wrote is under the animator
    * duration scale of the time it was written.
    */
-  public fun get(): TransitionOptions? = style.transitionOptions()
+  public suspend fun get(): TransitionOptions? = style.transitionOptions()
 
   /** Replaces the loaded style's transition. The command fails while no style is ready. */
   public fun set(options: TransitionOptions) {
@@ -86,7 +135,7 @@ public class StyleTransition internal constructor(private val style: MapStyleSta
    *
    * The cross-fade is engine behavior outside the style spec. MapLibre GL JS always reports true.
    */
-  public fun placementTransitions(): Boolean? = style.placementTransitions()
+  public suspend fun placementTransitions(): Boolean? = style.placementTransitions()
 
   /**
    * Sets whether symbol placement changes cross-fade. A cleared cross-fade applies placement
@@ -104,6 +153,9 @@ public class StyleTransition internal constructor(private val style: MapStyleSta
  * Provides the light of the current loaded-style generation.
  *
  * A base-style reload replaces the light with the one that the new style declares.
+ *
+ * [set] does not wait for the engine to apply the light. A light the engine rejects is logged, and
+ * the style keeps its previous light.
  */
 @Stable
 public class StyleLight internal constructor(private val style: MapStyleState) {
@@ -111,7 +163,7 @@ public class StyleLight internal constructor(private val style: MapStyleState) {
    * Returns the value of the style spec's light property [name], such as `anchor` or `color`, or
    * null when the style sets no value or no style is ready.
    */
-  public fun getProperty(name: String): JsonElement? = style.lightProperty(name)
+  public suspend fun getProperty(name: String): JsonElement? = style.lightProperty(name)
 
   /** Replaces the loaded style's light. The command fails while no style is ready. */
   public fun set(light: Light) {
@@ -124,6 +176,9 @@ public class StyleLight internal constructor(private val style: MapStyleState) {
  *
  * A base-style reload replaces the sky with the one that the new style declares. MapLibre Native
  * does not support the sky: every property reads null, and a write logs a warning.
+ *
+ * [set] does not wait for the engine to apply the sky. A sky the engine rejects is logged, and the
+ * style keeps its previous sky.
  */
 @Stable
 public class StyleSky internal constructor(private val style: MapStyleState) {
@@ -131,7 +186,7 @@ public class StyleSky internal constructor(private val style: MapStyleState) {
    * Returns the value of the style spec's sky property [name], such as `sky-color`, or null when
    * the style sets no value or no style is ready.
    */
-  public fun getProperty(name: String): JsonElement? = style.skyProperty(name)
+  public suspend fun getProperty(name: String): JsonElement? = style.skyProperty(name)
 
   /**
    * Replaces the loaded style's sky, or removes it when [sky] is null. The command fails while no
@@ -148,6 +203,9 @@ public class StyleSky internal constructor(private val style: MapStyleState) {
  * A base-style reload replaces the projection with the one that the new style declares. MapLibre
  * Native supports only the Mercator projection: every property reads null, and a write logs a
  * warning.
+ *
+ * [set] does not wait for the engine to apply the projection. A projection the engine rejects is
+ * logged, and the style keeps its previous projection.
  */
 @Stable
 public class StyleProjection internal constructor(private val style: MapStyleState) {
@@ -155,7 +213,7 @@ public class StyleProjection internal constructor(private val style: MapStyleSta
    * Returns the value of the style spec's projection property [name], which is `type`, or null when
    * the style sets no value or no style is ready.
    */
-  public fun getProperty(name: String): JsonElement? = style.projectionProperty(name)
+  public suspend fun getProperty(name: String): JsonElement? = style.projectionProperty(name)
 
   /** Replaces the loaded style's projection. The command fails while no style is ready. */
   public fun set(projection: Projection) {

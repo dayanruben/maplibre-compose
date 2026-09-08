@@ -8,11 +8,14 @@ import kotlinx.coroutines.Deferred
 import kotlinx.serialization.json.JsonObject
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.Viewport
+import org.maplibre.compose.camera.internal.CameraCommandGuard
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.value.BooleanValue
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.DesiredStyleRevision
 import org.maplibre.compose.style.StyleBinding
+import org.maplibre.compose.style.StyleResourceChanges
+import org.maplibre.compose.util.VisibleBounds
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Feature
@@ -41,7 +44,11 @@ internal interface MapAdapter {
 
   suspend fun awaitClosed()
 
-  suspend fun animateCameraPosition(finalPosition: CameraPosition, duration: Duration)
+  suspend fun animateCameraPosition(
+    finalPosition: CameraPosition,
+    duration: Duration,
+    guard: CameraCommandGuard? = null,
+  )
 
   suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
@@ -49,21 +56,23 @@ internal interface MapAdapter {
     tilt: Double,
     padding: PaddingValues,
     duration: Duration,
+    guard: CameraCommandGuard? = null,
   )
 
   fun setBaseStyle(style: BaseStyle)
 
   /**
-   * Applies one complete style-composition revision; [Callbacks.onStyleReady] reports readiness.
+   * Applies a style-composition revision. [Callbacks.onStyleReady] reports initial readiness;
+   * subsequent updates preserve readiness and return only the resources they changed.
    */
-  suspend fun reconcileStyleRevision(revision: DesiredStyleRevision)
+  suspend fun reconcileStyleRevision(revision: DesiredStyleRevision): StyleResourceChanges
 
   /** Restores a retained revision before the current composition is evaluated. */
-  suspend fun replayStyleRevision(revision: DesiredStyleRevision)
+  suspend fun replayStyleRevision(revision: DesiredStyleRevision): StyleResourceChanges
 
   fun getCameraPosition(): CameraPosition
 
-  fun setCameraPosition(cameraPosition: CameraPosition)
+  fun setCameraPosition(cameraPosition: CameraPosition, guard: CameraCommandGuard? = null)
 
   fun setCameraPadding(padding: PaddingValues)
 
@@ -72,11 +81,12 @@ internal interface MapAdapter {
     bearing: Double,
     tilt: Double,
     padding: PaddingValues,
+    guard: CameraCommandGuard? = null,
   )
 
   fun setCameraConstraints(value: CameraConstraints)
 
-  fun getVisibleBoundingBox(): BoundingBox
+  fun getVisibleBounds(): VisibleBounds
 
   fun getVisibleRegion(): VisibleRegion
 
@@ -88,8 +98,6 @@ internal interface MapAdapter {
   fun getViewport(): Viewport?
 
   fun setRenderSettings(value: RenderOptions)
-
-  fun setGestureSettings(value: GestureOptions)
 
   fun setTileLodSettings(value: TileLodOptions)
 
@@ -123,7 +131,7 @@ internal interface MapAdapter {
     /** Offers the binding for a loaded style, or null when no binding is current. */
     fun onStyleChanged(map: MapAdapter, style: StyleBinding?)
 
-    /** Reports that the style composition applied and is ready to present. */
+    /** Reports that the base style and initial composition are ready to present. */
     fun onStyleReady(map: MapAdapter)
 
     /**
@@ -191,7 +199,7 @@ internal class DurableStyleCallbacks(private val owner: MapState) : MapAdapter.C
   }
 
   override fun onStyleSourcesChanged(map: MapAdapter, sourceId: String?) {
-    owner.refreshStyleSources(map)
+    owner.refreshStyleSources(map, sourceId)
   }
 
   override fun onEvent(map: MapAdapter, event: MapEvent) {

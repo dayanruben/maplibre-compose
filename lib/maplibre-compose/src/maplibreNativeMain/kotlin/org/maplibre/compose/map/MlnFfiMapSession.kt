@@ -9,9 +9,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.LayoutDirection
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
-import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.PI
@@ -26,8 +24,15 @@ import kotlinx.io.files.Path
 import kotlinx.serialization.json.JsonObject
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.Viewport
+import org.maplibre.compose.camera.internal.BoxZoomFit
+import org.maplibre.compose.camera.internal.CameraCommandGuard
+import org.maplibre.compose.camera.internal.CameraInputTarget
+import org.maplibre.compose.camera.internal.CameraInputToken
+import org.maplibre.compose.camera.internal.boxZoomFit
+import org.maplibre.compose.camera.internal.runCameraCommand
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.value.BooleanValue
+import org.maplibre.compose.interaction.BearingSnapping
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.mlnffi.EglContextHandles
 import org.maplibre.compose.mlnffi.MapRenderBackend
@@ -60,6 +65,8 @@ import org.maplibre.compose.style.StyleLoadTracker
 import org.maplibre.compose.style.StylePresentation
 import org.maplibre.compose.style.StyleReconciler
 import org.maplibre.compose.style.StyleRequestId
+import org.maplibre.compose.style.StyleResourceChanges
+import org.maplibre.compose.util.VisibleBounds
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.compose.util.metersPerDpAtLatitude
 import org.maplibre.compose.util.renderedQueryOptions
@@ -155,7 +162,7 @@ internal class MlnFfiMapSession(
   private val cacheFile: Path,
   private val resourceProviderFactory: MlnFfiResourceProviderFactory = ::MlnFfiResourceProvider,
   private val resourceConfig: MapResourceConfig = MapResourceConfig(),
-) : MapLifecycleSession, MlnFfiMapRenderer, GestureTarget {
+) : MapLifecycleSession, MlnFfiMapRenderer, CameraInputTarget {
 
   @Volatile internal var callbacks: MapAdapter.Callbacks = callbacks
   @Volatile internal var durableCallbacks: MapAdapter.Callbacks = EmptyMapAdapterCallbacks
@@ -179,7 +186,7 @@ internal class MlnFfiMapSession(
   override val backend: MapRenderBackend = renderBackend
   private val initialExtent = MapExtent.fromLogical(1, 1, scaleFactor)
 
-  /** Guards loop startup and actions accepted before it. */
+  /** Guards loop startup, pending actions, and viewport handoffs. */
   private val stateLock = MlnFfiLock()
 
   @Volatile private var loop: MlnFfiMapRuntimeLoop? = null
@@ -193,13 +200,23 @@ internal class MlnFfiMapSession(
 
   private val pendingMapActions = mutableListOf<PendingMapAction>()
 
-  /** Guarded by [stateLock]; once true, the map has dimensions suitable for fitting bounds. */
-  private var hasAttachedViewport = false
+  private class ViewportRequest(val extent: MapExtent)
 
-  /** Renderer-thread state. */
+  /** Requested by the renderer and acknowledged by the owner, under [stateLock]. */
+  @Volatile private var viewportRequest: ViewportRequest? = null
+  @Volatile private var appliedViewportRequest: ViewportRequest? = null
+
+  private val hasViewport: Boolean
+    get() = appliedViewportRequest != null
+
+  /**
+   * Renderer-thread state, with [renderSessionReady] and [attachedTarget]: read and written only on
+   * the host's renderer thread, which [render] runs on and
+   * [MlnFfiMapHostSession.withRendererAccess] reaches from any other thread.
+   */
   private var renderSession: RenderSessionHandle? = null
 
-  /** Renderer-thread state; the FFI creates its renderer during the first successful render. */
+  /** The FFI creates its renderer during the first successful render. */
   private var renderSessionReady = false
 
   @Volatile private var hostSession: MlnFfiMapHostSession? = null
@@ -235,21 +252,12 @@ internal class MlnFfiMapSession(
   private var appliedStyleRequest: StyleRequestId? = null
 
   /** Gesture attribution is owner-thread state; input threads communicate only through tokens. */
-  private val nextGestureToken = AtomicLong(0L)
-  private var activeGestureToken: GestureToken? = null
-  private var pendingGestureEndToken: GestureToken? = null
+  private val gestureFences = mutableListOf<CameraInputToken>()
+  private var activeGestureToken: CameraInputToken? = null
+  private var pendingGestureEndToken: CameraInputToken? = null
 
   @Volatile private var styleBinding: MlnFfiStyleBinding? = null
   private val styleReconciler = StyleReconciler()
-
-  /** The binding whose readiness callback has already succeeded; see [reconcileStyleRevision]. */
-  private var styleReadinessNotifiedFor: MlnFfiStyleBinding? = null
-
-  /**
-   * Increments when a reconciliation or replay begins. A posted revision completion that observes a
-   * newer generation was superseded and only repaints. Read on the owner thread.
-   */
-  @Volatile private var reconcileGeneration = 0L
 
   internal val loadedStyleIdentity
     get() = styleBinding?.identity
@@ -288,23 +296,15 @@ internal class MlnFfiMapSession(
       accessMap = { action ->
         if (!lifecycle.acceptsWork) false else runOnMap(action).let { true }
       },
-      postMap = { action ->
-        if (!lifecycle.acceptsWork) false else loop?.post(action) ?: false
+      postMap = { action, abandon ->
+        if (!lifecycle.acceptsWork) false else loop?.post(action, abandon) ?: false
       },
-      accessRenderSession = { action ->
-        if (!lifecycle.acceptsWork || !renderSessionReady) {
+      enqueueRenderSession = { action ->
+        val host = hostSession
+        if (!lifecycle.acceptsWork || host == null) {
           false
         } else {
-          withRendererAccess {
-            val session = renderSession
-            if (session == null) {
-              logger?.d { "Ignoring a render session call: no session is attached yet" }
-              false
-            } else {
-              action(session)
-              true
-            }
-          } ?: false
+          host.enqueueRenderer { action(renderSession.takeIf { renderSessionReady }) }
         }
       },
       sourceChanged = { sourceId ->
@@ -373,7 +373,7 @@ internal class MlnFfiMapSession(
       return MlnFfiFrameResult.SKIPPED
     renderedCameraPadding = appliedCameraPadding
 
-    if (!ensureAttached(map, frame)) return MlnFfiFrameResult.SKIPPED
+    if (!ensureAttached(loop, map, frame)) return MlnFfiFrameResult.SKIPPED
     // Consumed before rendering, so an update published during the render below is not discarded.
     if (!renderRequested.exchange(false)) return MlnFfiFrameResult.SKIPPED
     // The cap measures start-to-start; measuring from the end of the last render rejects every
@@ -472,7 +472,10 @@ internal class MlnFfiMapSession(
   }
 
   override suspend fun detach(identity: EngineMapIdentity, lease: RenderLease) {
-    stateLock.withLock { hasAttachedViewport = false }
+    stateLock.withLock {
+      viewportRequest = null
+      appliedViewportRequest = null
+    }
     callbacks = durableCallbacks
     if (lifecycleRenderLease == lease) lifecycleRenderLease = null
     // This must happen before the first suspension. A host may tear down its renderer thread as
@@ -500,6 +503,7 @@ internal class MlnFfiMapSession(
     }
     abandoned.forEach { it.abandon() }
     resumeStrandedTransitions()
+    gestureFences.toList().also { gestureFences.clear() }.forEach { it.complete() }
   }
 
   private fun closePlatform() {
@@ -551,7 +555,8 @@ internal class MlnFfiMapSession(
     val stopping = stateLock.withLock {
       val current = loop
       loop = null
-      hasAttachedViewport = false
+      viewportRequest = null
+      appliedViewportRequest = null
       abandoned += pendingMapActions
       pendingMapActions.clear()
       current
@@ -562,13 +567,16 @@ internal class MlnFfiMapSession(
     styleBinding = null
     appliedStyleRequest = null
     styleLoadTracker.engineBecameUnavailable()
+    // After loop is cleared: a frame queued behind this close re-reads it in ensureAttached.
     closeRenderSession()
     try {
       stopping?.close()
     } finally {
       // After the join, so the owner thread is gone and this is the only reader of that state.
+      activeGestureToken?.complete()
       activeGestureToken = null
       pendingGestureEndToken = null
+      gestureFences.toList().also { gestureFences.clear() }.forEach { it.complete() }
       resumeStrandedTransitions()
     }
   }
@@ -583,23 +591,24 @@ internal class MlnFfiMapSession(
     releaseRenderSession()?.let { throw it }
   }
 
-  /** Clears bookkeeping before attempting the owner-thread close and returns its failure. */
+  /**
+   * Closes whatever is attached once this reaches the host's renderer thread, and returns the
+   * failure. Nothing is attached without a host: [onSurfaceLost] closes the session before it drops
+   * one.
+   */
   private fun releaseRenderSession(): Throwable? {
-    val handle = renderSession
+    val host = hostSession ?: return null
+    return runCatching { host.withRendererAccess { closeAttachedSession() } }.exceptionOrNull()
+  }
+
+  /** Renderer thread only. Clears the bookkeeping first, so a failed close is not retried. */
+  private fun closeAttachedSession() {
+    val handle = renderSession ?: return
     renderSession = null
     renderSessionReady = false
     attachedTarget = null
-    if (handle == null) return null
-
-    val host = hostSession
-    if (host == null) {
-      // Only the thread that attached the handle may close it, and that is reached through the
-      // host.
-      return IllegalStateException(
-        "Cannot close the MapLibre render session because its host surface is already gone"
-      )
-    }
-    return runCatching { host.withRendererAccess { handle.close() } }.exceptionOrNull()
+    stateLock.withLock { viewportRequest = null }
+    handle.close()
   }
 
   // endregion
@@ -611,12 +620,22 @@ internal class MlnFfiMapSession(
     applyRequestedStyle(map)
     // A camera set before this map existed reaches it as a queued jump, which a loop that stopped
     // before running it has already abandoned.
-    requestedCamera?.let { map.jumpTo(it.toCameraOptions(cameraPadding)) }
+    appliedCameraPadding = EdgeInsets.ZERO
+    requestedCamera?.let { map.jumpTo(it.toCameraOptions(appliedCameraPadding)) }
   }
 
-  private fun ensureAttached(map: MapHandle, frame: MlnFfiMapFrame): Boolean {
+  /**
+   * Renderer thread only. Re-reads [loop] and the lifecycle: teardown clears or closes them before
+   * it queues its close on this thread, and a session attached behind that close is never closed.
+   */
+  private fun ensureAttached(
+    loop: MlnFfiMapRuntimeLoop,
+    map: MapHandle,
+    frame: MlnFfiMapFrame,
+  ): Boolean {
     val extent = frame.extent
     if (extent.isEmpty) return false
+    if (this.loop !== loop || !lifecycle.acceptsWork) return false
 
     val key = TargetKey(frame.target.generation, extent)
     val attached = attachedTarget
@@ -631,13 +650,14 @@ internal class MlnFfiMapSession(
         retargetCount++
         // The replacement texture holds nothing yet; this request buys the frame that fills it.
         renderRequested.store(true)
-        onMap(::snapshotViewportAndNotify)
+        requestViewport(extent)
         return true
       }
     }
 
     // Attaching before closing throws, because a map permits only one live session.
-    closeRenderSession()
+    runCatching { closeAttachedSession() }
+      .onFailure { logger?.e(it) { "Failed to close the MapLibre render session" } }
 
     // There is no map.resize: attaching sets the map's size from the descriptor's logical extent.
     renderSession =
@@ -650,8 +670,7 @@ internal class MlnFfiMapSession(
     renderSessionReady = false
     attachedTarget = key
     attachCount++
-    publishAttachedViewport()
-    onMap(::snapshotViewportAndNotify)
+    requestViewport(extent)
     // The new texture holds nothing yet; this request buys the frame that fills it.
     renderRequested.store(true)
     return true
@@ -1007,18 +1026,40 @@ internal class MlnFfiMapSession(
     postWhenMapExists(action, abandon = {})
   }
 
-  private fun publishAttachedViewport() {
+  /**
+   * The renderer sends dimensions; the owner acknowledges them after Native's asynchronous resize.
+   */
+  private fun requestViewport(extent: MapExtent) {
     stateLock.withLock {
       if (!lifecycle.acceptsWork) return
-      hasAttachedViewport = true
+      viewportRequest = ViewportRequest(extent)
     }
+    onMap(::applyPendingViewport)
   }
 
-  private fun recordCamera(position: CameraPosition) {
+  /** Owner thread only. Publish readiness after size and padding describe the same viewport. */
+  private fun applyPendingViewport(map: MapHandle) {
+    val request = viewportRequest?.takeUnless { it === appliedViewportRequest } ?: return
+    val size = map.size
+    if (size.width != request.extent.width || size.height != request.extent.height) return
+    applyCameraPadding(map)
+    snapshotViewport(map)
+    // Keep the last usable viewport during resize and surface loss. A detached presentation
+    // cannot be made ready by an acknowledgment that was already in flight.
+    val applied = stateLock.withLock {
+      if (viewportRequest !== request) return@withLock false
+      appliedViewportRequest = request
+      true
+    }
+    if (applied) notifyViewportChanged()
+  }
+
+  private fun recordCamera(position: CameraPosition, guard: CameraCommandGuard?) {
+    if (guard?.isValid() == false) return
     requestedCamera = position
-    val padding = cameraPadding
     configureMap { map ->
-      map.jumpTo(position.toCameraOptions(padding))
+      if (guard?.isValid() == false) return@configureMap
+      map.jumpTo(position.toCameraOptions(appliedCameraPadding))
       snapshotViewport(map)
     }
   }
@@ -1035,11 +1076,6 @@ internal class MlnFfiMapSession(
   }
 
   /** The render session lives on the host's renderer thread. */
-  private fun <T> withRendererAccess(action: () -> T): T? {
-    val host = hostSession ?: return null
-    return host.withRendererAccess(action)
-  }
-
   // endregion
 
   // region MapAdapter
@@ -1050,7 +1086,7 @@ internal class MlnFfiMapSession(
     requestedStyle = style
     val trackerRequest = styleLoadTracker.request()
     // Disposes the composition holding the old style's sources and layers, which would otherwise
-    // fail anchor validation against the base layers being replaced.
+    // be validated against the base layers being replaced.
     val lifecycleRequest = lifecycleEngineIdentity?.let {
       lifecycleCallbacks.beginStyleRequest(it, this)
     }
@@ -1063,62 +1099,49 @@ internal class MlnFfiMapSession(
     onMap {}
   }
 
-  override suspend fun reconcileStyleRevision(revision: DesiredStyleRevision) {
-    val binding = styleBinding ?: return
-    val engine = lifecycleEngineIdentity ?: return
-    val style = lifecycleStyleIdentity ?: return
-    if (!styleLoadTracker.beginReconciliation(binding.identity)) return
-    val generation = ++reconcileGeneration
+  override suspend fun reconcileStyleRevision(
+    revision: DesiredStyleRevision
+  ): StyleResourceChanges {
+    val binding = checkNotNull(styleBinding)
+    val engine = checkNotNull(lifecycleEngineIdentity)
+    val style = checkNotNull(lifecycleStyleIdentity)
     try {
-      styleReconciler.apply(binding, revision)
-      val noteReconciled: (MapHandle) -> Unit = { map ->
-        map.requestRepaint()
-        if (generation == reconcileGeneration && styleLoadTracker.reconciled(binding.identity)) {
-          lifecycleCallbacks.onStyleReady(engine, style, this)
-        }
-      }
-      if (styleReadinessNotifiedFor === binding) {
-        // Steady state: per-frame revisions must not block the caller on the owner thread. The
-        // readiness callback already succeeded for this binding, so a later failure hides the
-        // presentation instead of propagating to the caller.
-        onMap { map ->
-          try {
-            noteReconciled(map)
-          } catch (error: Throwable) {
-            styleLoadTracker.failed(binding.identity)
-            throw error
+      val changes = styleReconciler.apply(binding, revision)
+      if (!styleLoadTracker.contentReady) {
+        runOnMap { map ->
+          map.requestRepaint()
+          if (styleLoadTracker.reconciled(binding.identity)) {
+            lifecycleCallbacks.onStyleReady(engine, style, this)
           }
         }
       } else {
-        // Until the style is ready, readiness failures must propagate to the caller.
-        if (runOnMap(noteReconciled) != null) {
-          styleReadinessNotifiedFor = binding
-        }
+        onMap { it.requestRepaint() }
       }
+      requestRender()
+      return changes
     } catch (error: CancellationException) {
       throw error
     } catch (error: Throwable) {
       styleLoadTracker.failed(binding.identity)
       throw error
     }
-    requestRender()
   }
 
-  override suspend fun replayStyleRevision(revision: DesiredStyleRevision) {
-    val binding = styleBinding ?: return
-    if (!styleLoadTracker.beginReconciliation(binding.identity)) return
-    // A completion queued before the replay began must not confirm the replayed content.
-    ++reconcileGeneration
-    try {
-      styleReconciler.apply(binding, revision)
-    } catch (error: CancellationException) {
-      throw error
-    } catch (error: Throwable) {
-      styleLoadTracker.failed(binding.identity)
-      throw error
-    }
+  override suspend fun replayStyleRevision(revision: DesiredStyleRevision): StyleResourceChanges {
+    val binding = checkNotNull(styleBinding)
+    check(styleLoadTracker.beginReplay(binding.identity))
+    val changes =
+      try {
+        styleReconciler.apply(binding, revision)
+      } catch (error: CancellationException) {
+        throw error
+      } catch (error: Throwable) {
+        styleLoadTracker.failed(binding.identity)
+        throw error
+      }
     onMap { it.requestRepaint() }
     requestRender()
+    return changes
   }
 
   /** Owner thread only. */
@@ -1183,7 +1206,7 @@ internal class MlnFfiMapSession(
     val size: DpSize = DpSize.Zero,
     val visibleRegion: VisibleRegion =
       VisibleRegion(Position(0.0, 0.0), Position(0.0, 0.0), Position(0.0, 0.0), Position(0.0, 0.0)),
-    val boundingBox: BoundingBox = BoundingBox(Position(0.0, 0.0), Position(0.0, 0.0)),
+    val visibleBounds: VisibleBounds = VisibleBounds(Position(0.0, 0.0), Position(0.0, 0.0)),
     val projection: MapProjectionHandle? = null,
   )
 
@@ -1195,13 +1218,8 @@ internal class MlnFfiMapSession(
    */
   private val projectionLock = MlnFfiLock()
 
-  /**
-   * A resize changes the projection without a camera event, so Compose overlays that read
-   * [MapState.viewport] would keep the previous screen locations unless this reports the new
-   * snapshot.
-   */
-  private fun snapshotViewportAndNotify(map: MapHandle) {
-    snapshotViewport(map)
+  /** Owner thread only. Publish newly available or changed viewport geometry. */
+  private fun notifyViewportChanged() {
     // The first attach snapshot can land before the lease is Attached. Seed from the snapshot
     // itself so a dropped camera callback cannot leave MapState.viewport null.
     lifecycleAuthority.seedCurrentPresentationViewport(this)
@@ -1218,7 +1236,7 @@ internal class MlnFfiMapSession(
         camera = geometry.camera,
         size = geometry.size,
         visibleRegion = geometry.visibleRegion,
-        boundingBox = geometry.boundingBox,
+        visibleBounds = geometry.visibleBounds,
         // A fresh handle per snapshot: createProjection freezes the transform at creation.
         projection = map.createProjection(),
       )
@@ -1245,8 +1263,8 @@ internal class MlnFfiMapSession(
 
   override fun getCameraPosition(): CameraPosition = mirroredViewport.camera
 
-  override fun setCameraPosition(cameraPosition: CameraPosition) {
-    recordCamera(cameraPosition)
+  override fun setCameraPosition(cameraPosition: CameraPosition, guard: CameraCommandGuard?) {
+    recordCamera(cameraPosition, guard)
   }
 
   override fun setCameraPadding(padding: PaddingValues) {
@@ -1254,10 +1272,19 @@ internal class MlnFfiMapSession(
     if (cameraPadding == insets) return
     cameraPadding = insets
     configureMap { map ->
-      map.jumpTo(CameraOptions().also { it.padding = insets })
-      appliedCameraPadding = insets
-      snapshotViewport(map)
+      if (hasViewport) {
+        applyCameraPadding(map)
+        snapshotViewport(map)
+      }
     }
+  }
+
+  /** Owner thread only, with a usable viewport. */
+  private fun applyCameraPadding(map: MapHandle) {
+    val padding = cameraPadding
+    if (padding == appliedCameraPadding) return
+    map.jumpTo(CameraOptions().also { it.padding = padding })
+    appliedCameraPadding = padding
   }
 
   override fun fitCameraToBounds(
@@ -1265,16 +1292,18 @@ internal class MlnFfiMapSession(
     bearing: Double,
     tilt: Double,
     padding: PaddingValues,
+    guard: CameraCommandGuard?,
   ) {
-    val fit: (MapHandle) -> Unit = { map ->
+    if (guard?.isValid() == false) return
+    val fit: (MapHandle) -> Unit = fit@{ map ->
+      if (guard?.isValid() == false) return@fit
       map.jumpTo(cameraForBounds(map, boundingBox, bearing, tilt, padding))
       snapshotViewport(map)
     }
     // MapState waits for the current attachment's viewport before it calls this adapter.
-    val hasViewport = stateLock.withLock {
-      hasAttachedViewport && lifecycle.acceptsWork && loop != null
+    check(hasViewport && lifecycle.acceptsWork && loop != null) {
+      "A bounds fit requires the current presentation viewport"
     }
-    check(hasViewport) { "A bounds fit requires the current presentation viewport" }
     check(runOnMap(fit) != null) { "The map became unavailable during the bounds fit" }
   }
 
@@ -1324,10 +1353,13 @@ internal class MlnFfiMapSession(
       right = right + other.right,
     )
 
-  override suspend fun animateCameraPosition(finalPosition: CameraPosition, duration: Duration) {
-    val padding = cameraPadding
-    startTransitionAwaitingRelease(duration) { map, animation ->
-      map.flyTo(finalPosition.toCameraOptions(padding), animation)
+  override suspend fun animateCameraPosition(
+    finalPosition: CameraPosition,
+    duration: Duration,
+    guard: CameraCommandGuard?,
+  ) {
+    startTransitionAwaitingRelease(duration, guard = guard) { map, animation ->
+      map.flyTo(finalPosition.toCameraOptions(appliedCameraPadding), animation)
     }
   }
 
@@ -1337,11 +1369,12 @@ internal class MlnFfiMapSession(
     tilt: Double,
     padding: PaddingValues,
     duration: Duration,
+    guard: CameraCommandGuard?,
   ) {
-    check(stateLock.withLock { hasAttachedViewport }) {
+    check(hasViewport) {
       "A bounds animation requires the current presentation viewport"
     }
-    startTransitionAwaitingRelease(duration) { map, animation ->
+    startTransitionAwaitingRelease(duration, guard = guard) { map, animation ->
       map.flyTo(cameraForBounds(map, boundingBox, bearing, tilt, padding), animation)
     }
   }
@@ -1349,14 +1382,34 @@ internal class MlnFfiMapSession(
   /** Resumes normally however the transition ended. */
   private suspend fun startTransitionAwaitingRelease(
     duration: Duration,
+    gestureToken: CameraInputToken? = null,
+    guard: CameraCommandGuard? = null,
+    shouldStart: (MapHandle) -> Boolean = { true },
     start: (MapHandle, AnimationOptions) -> Unit,
   ): Unit = suspendCancellableCoroutine { continuation ->
-    val queued =
-      postWhenMapExists(
-        { map -> startTransitionOnMap(map, duration, start, continuation) },
-        { if (continuation.isActive) continuation.resume(Unit) },
-      )
-    if (!queued && continuation.isActive) continuation.resume(Unit)
+    val enqueue = {
+      val queued =
+        postWhenMapExists(
+          { map ->
+            val started =
+              continuation.isActive &&
+                runCameraCommand(
+                  gestureToken,
+                  guard,
+                  activate = { gestureToken?.let { activateGesture(map, it) } },
+                ) {
+                  if (shouldStart(map)) startTransitionOnMap(map, duration, start, continuation)
+                  else if (continuation.isActive) continuation.resume(Unit)
+                }
+            if (!started && continuation.isActive) continuation.resume(Unit)
+          },
+          { if (continuation.isActive) continuation.resume(Unit) },
+        )
+      if (!queued && continuation.isActive) continuation.resume(Unit)
+    }
+    if (guard?.isValid() == false || gestureToken != null && !gestureToken.enqueue(enqueue)) {
+      if (continuation.isActive) continuation.resume(Unit)
+    } else if (gestureToken == null) enqueue()
   }
 
   /** Owner thread only. */
@@ -1451,20 +1504,20 @@ internal class MlnFfiMapSession(
     }
   }
 
-  override fun getVisibleBoundingBox(): BoundingBox = mirroredViewport.boundingBox
+  override fun getVisibleBounds(): VisibleBounds = mirroredViewport.visibleBounds
 
   override fun getVisibleRegion(): VisibleRegion = mirroredViewport.visibleRegion
 
   override fun getViewport(): Viewport? {
-    // The map bootstraps at a 1x1 extent, so the mirror describes a real viewport only once a
-    // render target has attached with the composable's dimensions.
-    if (!stateLock.withLock { hasAttachedViewport }) return null
+    // The map bootstraps at a 1x1 extent, so the mirror describes a real viewport only once the
+    // map owner has acknowledged the render target's dimensions and applied padding.
+    if (!hasViewport) return null
     // One read so every property comes from the same publish.
     val mirror = mirroredViewport
     if (mirror.size == DpSize.Zero) return null
     return Viewport(
       size = mirror.size,
-      visibleBoundingBox = mirror.boundingBox,
+      visibleBounds = mirror.visibleBounds,
       visibleRegion = mirror.visibleRegion,
       metersPerDpAtTarget =
         metersPerDpAtLatitude(mirror.camera.zoom, mirror.camera.target.latitude),
@@ -1484,14 +1537,10 @@ internal class MlnFfiMapSession(
       }
       if (cameraProjectionChanged) {
         map.projectionMode = value.cameraProjection.toFfi()
-        snapshotViewportAndNotify(map)
+        snapshotViewport(map)
+        notifyViewportChanged()
       }
     }
-  }
-
-  override fun setGestureSettings(value: GestureOptions) {
-    // Gestures are implemented in Compose, so these options are read by the host's input
-    // handling rather than pushed into the map.
   }
 
   override fun setTileLodSettings(value: TileLodOptions) {
@@ -1547,6 +1596,24 @@ internal class MlnFfiMapSession(
 
   override fun positionFromScreenLocation(offset: DpOffset): Position? = withSnapshotProjection {
     it.latLngForPixelUnwrapped(offset.toScreenPoint()).toPosition()
+  }
+
+  override fun boxZoomFit(rect: DpRect): BoxZoomFit? = withSnapshotProjection { projection ->
+    boxZoomFit(rect, mirroredViewport.camera) {
+      projection.latLngForPixel(it.toScreenPoint()).toPosition()
+    }
+  }
+
+  override suspend fun fitBoundsAwaitingTransition(
+    fit: BoxZoomFit,
+    duration: Duration,
+    gestureToken: CameraInputToken,
+  ) {
+    if (!acceptsGestures) return
+    startTransitionAwaitingRelease(duration, gestureToken = gestureToken) { map, animation ->
+      val camera = cameraForBounds(map, fit.bounds, fit.bearing, fit.tilt, PaddingValues())
+      map.easeTo(camera, animation)
+    }
   }
 
   override fun screenLocationFromPosition(position: Position): DpOffset? = withSnapshotProjection {
@@ -1629,22 +1696,54 @@ internal class MlnFfiMapSession(
 
   // region input, called from Compose
 
-  /** The begin is queued with the gesture's first camera command. */
-  override fun onGestureStarted(): GestureToken = GestureToken(nextGestureToken.incrementAndFetch())
+  override val isGestureReady: Boolean
+    get() = canPresentFrames && loop != null && loop?.failure == null && hasViewport
 
-  /** Applied only once the events produced by all preceding camera work have been drained. */
-  override fun onGestureEnded(token: GestureToken) {
-    loop?.post(action = { if (activeGestureToken == token) pendingGestureEndToken = token })
+  override fun observeInput(): Long = lifecycleAuthority.gestureCamera.observeInput()
+
+  override val inputGeneration: Long
+    get() = lifecycleAuthority.gestureCamera.generation
+
+  override fun onGestureStartedIfCurrent(generation: Long): CameraInputToken? =
+    lifecycleAuthority.gestureCamera.acquireIfCurrent(this, generation)
+
+  override fun onGestureStarted(): CameraInputToken =
+    lifecycleAuthority.gestureCamera.acquire(this).also { token ->
+      // Recognition takes over an existing transition even before the first movement.
+      onMap(token) {}
+    }
+
+  override fun onGestureEnded(token: CameraInputToken) = finishGesture(token, cancelled = false)
+
+  override fun cancelGesture(token: CameraInputToken) = finishGesture(token, cancelled = true)
+
+  private fun finishGesture(token: CameraInputToken, cancelled: Boolean) {
+    token.finish(cancelled) {
+      val accepted =
+        loop?.postAndDrainEvents(
+          action = { map ->
+            if (activeGestureToken === token) {
+              if (token.isCancelled) map.cancelTransitions()
+              pendingGestureEndToken = token
+            }
+            gestureFences += token
+            // Without a lease, onEventsDrained does not publish camera observations.
+            if (ownerThreadRenderLease == null) finishPendingGesture(map)
+          },
+          abandon = { token.complete() },
+        ) ?: false
+      if (!accepted) token.complete()
+    }
   }
 
   /**
    * Owner thread only. Reports on every camera command, because a report made before the lease
    * attaches is dropped.
    */
-  private fun activateGesture(map: MapHandle, token: GestureToken) {
+  private fun activateGesture(map: MapHandle, token: CameraInputToken) {
     val active = activeGestureToken
-    if (active != null && token.value < active.value) return
     if (active != token) {
+      map.cancelTransitions()
       activeGestureToken = token
       pendingGestureEndToken = null
       map.isGestureInProgress = true
@@ -1654,12 +1753,16 @@ internal class MlnFfiMapSession(
 
   /** Runs once the runtime event queue is momentarily empty. Owner thread only. */
   private fun finishPendingGesture(map: MapHandle) {
-    val token = pendingGestureEndToken ?: return
+    val token = pendingGestureEndToken
     pendingGestureEndToken = null
-    if (activeGestureToken != token) return
-    activeGestureToken = null
-    map.isGestureInProgress = false
-    reportGestureActive(false)
+    if (token != null && activeGestureToken === token) {
+      activeGestureToken = null
+      map.isGestureInProgress = false
+      reportGestureActive(false)
+    }
+    val completing = gestureFences.toList()
+    gestureFences.clear()
+    completing.forEach { it.complete() }
   }
 
   /**
@@ -1673,13 +1776,13 @@ internal class MlnFfiMapSession(
   }
 
   private fun onEventsDrained(engine: EngineMapIdentity, map: MapHandle) {
+    applyPendingViewport(map)
     ownerThreadRenderLease?.let { lease ->
-      lifecycleCallbacks.onPresentationEvent(engine, lease) {
-        snapshotViewport(map)
-        finishPendingGesture(map)
-        flushTransitionResumes()
-      }
+      lifecycleCallbacks.onPresentationEvent(engine, lease) { snapshotViewport(map) }
     }
+    // A detached presentation cannot publish events, but accepted command fences still finish.
+    finishPendingGesture(map)
+    flushTransitionResumes()
     // Apply once per drain, including while detached. Events already in this batch belong to the
     // preceding producer; setters requested by callbacks cannot change their attribution midway.
     applyRequestedStyle(map)
@@ -1692,12 +1795,20 @@ internal class MlnFfiMapSession(
   private val acceptsGestures: Boolean
     get() = canPresentFrames
 
-  private fun onMap(gestureToken: GestureToken?, action: (MapHandle) -> Unit) {
+  private fun onMap(gestureToken: CameraInputToken?, action: (MapHandle) -> Unit) {
     if (!acceptsGestures) return
-    onMap { map ->
-      gestureToken?.let { activateGesture(map, it) }
-      action(map)
+    val enqueue = {
+      onMap { map ->
+        if (acceptsGestures)
+          runCameraCommand(
+            gestureToken,
+            activate = { gestureToken?.let { activateGesture(map, it) } },
+          ) {
+            action(map)
+          }
+      }
     }
+    if (gestureToken == null) enqueue() else gestureToken.enqueue(enqueue)
   }
 
   /** A zero [duration] is a jump, which is what a drag wants; a key press eases instead. */
@@ -1705,7 +1816,7 @@ internal class MlnFfiMapSession(
     deltaX: Double,
     deltaY: Double,
     duration: Duration,
-    gestureToken: GestureToken?,
+    gestureToken: CameraInputToken?,
   ) {
     onMap(gestureToken) { map ->
       if (duration == Duration.ZERO) map.moveBy(deltaX, deltaY)
@@ -1717,11 +1828,10 @@ internal class MlnFfiMapSession(
     deltaX: Double,
     deltaY: Double,
     duration: Duration,
-    gestureToken: GestureToken,
+    gestureToken: CameraInputToken,
   ) {
     if (!acceptsGestures) return
-    startTransitionAwaitingRelease(duration) { map, animation ->
-      activateGesture(map, gestureToken)
+    startTransitionAwaitingRelease(duration, gestureToken = gestureToken) { map, animation ->
       map.moveByAnimated(deltaX, deltaY, animation)
     }
   }
@@ -1730,7 +1840,7 @@ internal class MlnFfiMapSession(
     scale: Double,
     anchor: DpOffset?,
     duration: Duration,
-    gestureToken: GestureToken?,
+    gestureToken: CameraInputToken?,
   ) {
     onMap(gestureToken) { map ->
       val point = anchor?.toScreenPoint()
@@ -1743,11 +1853,10 @@ internal class MlnFfiMapSession(
     scale: Double,
     anchor: DpOffset?,
     duration: Duration,
-    gestureToken: GestureToken,
+    gestureToken: CameraInputToken,
   ) {
     if (!acceptsGestures) return
-    startTransitionAwaitingRelease(duration) { map, animation ->
-      activateGesture(map, gestureToken)
+    startTransitionAwaitingRelease(duration, gestureToken = gestureToken) { map, animation ->
       map.scaleByAnimated(scale, anchor?.toScreenPoint(), animation)
     }
   }
@@ -1764,7 +1873,8 @@ internal class MlnFfiMapSession(
     pitchDelta: Double,
     duration: Duration,
     anchor: DpOffset?,
-    gestureToken: GestureToken?,
+    gestureToken: CameraInputToken?,
+    feedback: Boolean,
   ) {
     // The read and the write must happen together on the owner thread.
     onMap(gestureToken) { map ->
@@ -1778,6 +1888,31 @@ internal class MlnFfiMapSession(
         }
       if (duration == Duration.ZERO) map.jumpTo(target)
       else map.easeTo(target, duration.toAnimationOptions())
+      if (feedback && bearingDelta != 0.0 && duration == Duration.ZERO) {
+        gestureToken?.reportRotation(camera.bearing ?: 0.0, map.camera.bearing ?: 0.0)
+      }
+    }
+  }
+
+  override suspend fun snapBearingAwaitingTransition(
+    snapping: BearingSnapping,
+    duration: Duration,
+    gestureToken: CameraInputToken,
+  ) {
+    if (!acceptsGestures) return
+    var bearing = 0.0
+    startTransitionAwaitingRelease(
+      duration,
+      gestureToken = gestureToken,
+      shouldStart = { map ->
+        val current = map.camera.bearing ?: 0.0
+        snapping.delta(current)?.let {
+          bearing = current + it
+          true
+        } ?: false
+      },
+    ) { map, animation ->
+      map.easeTo(CameraOptions().also { it.bearing = bearing }, animation)
     }
   }
 
@@ -1785,14 +1920,15 @@ internal class MlnFfiMapSession(
     bearingDelta: Double,
     pitchDelta: Double,
     duration: Duration,
-    gestureToken: GestureToken,
+    gestureToken: CameraInputToken,
+    anchor: DpOffset?,
   ) {
     if (!acceptsGestures) return
-    startTransitionAwaitingRelease(duration) { map, animation ->
-      activateGesture(map, gestureToken)
+    startTransitionAwaitingRelease(duration, gestureToken = gestureToken) { map, animation ->
       val camera = map.camera
       map.easeTo(
         CameraOptions().also {
+          it.anchor = anchor?.toScreenPoint()
           it.bearing = (camera.bearing ?: 0.0) + bearingDelta
           it.pitch =
             ((camera.pitch ?: 0.0) + pitchDelta).coerceIn(MIN_PITCH_DEGREES, MAX_PITCH_DEGREES)
@@ -1814,8 +1950,10 @@ internal class MlnFfiMapSession(
     action(engine, lease)
   }
 
-  override fun cancelTransitions() {
+  override fun interruptCamera() {
+    val guard = lifecycleAuthority.gestureCamera.beginProgrammatic()
     onMap { map ->
+      if (!guard.isValid()) return@onMap
       // Cleared first, so a later cancellation cannot stop a newer transition.
       currentTransitionId = null
       map.cancelTransitions()

@@ -10,6 +10,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.withFrameNanos
@@ -35,7 +36,7 @@ import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.launch
 import org.maplibre.compose.demoapp.DemoAppState
 import org.maplibre.compose.demoapp.MapViewportInsets
-import org.maplibre.compose.map.GestureOptions
+import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.map.MapEvent
 import org.maplibre.compose.map.MapState
 import org.maplibre.compose.map.MaplibreMap
@@ -66,11 +67,12 @@ internal fun BenchmarkMap(state: DemoAppState, viewportInsets: MapViewportInsets
   val mapState =
     rememberMapState(
       runtime = state.mapRuntime,
-      baseStyle = scenario.style.base,
+      initialBaseStyle = scenario.style.base,
       initialCameraPosition = scenario.camera,
     ) {
       scenario.MapContent(session)
     }
+  SideEffect { mapState.style.baseStyle = scenario.style.base }
   val mapLoaded = remember(scenario.id) { CompletableDeferred<Unit>() }
   LaunchedEffect(mapState.style.loadState, mapLoaded) {
     when (val load = mapState.style.loadState) {
@@ -214,7 +216,7 @@ internal fun BenchmarkMap(state: DemoAppState, viewportInsets: MapViewportInsets
         state = mapState,
         cameraPadding = viewportInsets.asPaddingValues(),
         renderOptions = RenderOptions.Standard,
-        gestureOptions = scenario.gestureOptions,
+        interactions = scenario.interactions,
         contentWindowInsets = viewportInsets.asWindowInsets(),
       ) {}
     }
@@ -291,5 +293,5 @@ private fun logReport(report: BenchmarkReport) {
 }
 
 /** A scenario that drives the camera itself takes no gesture. */
-internal val BenchmarkScenario.gestureOptions: GestureOptions
-  get() = if (usesGestures) GestureOptions.Standard else GestureOptions.AllDisabled
+internal val BenchmarkScenario.interactions: MapInteractions
+  get() = if (usesGestures) MapInteractions.Standard else MapInteractions.None

@@ -11,13 +11,13 @@ import kotlinx.coroutines.promise
 import org.khronos.webgl.Uint8Array
 import org.khronos.webgl.get
 import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.camera.internal.CameraInputTarget
 import org.maplibre.compose.gljs.GlJsFrameTarget
 import org.maplibre.compose.gljs.GlJsRuntime
 import org.maplibre.compose.gljs.GlJsSurfaceSession
 import org.maplibre.compose.gljs.LOCAL_WORKER_URL
 import org.maplibre.compose.gljs.yieldToBrowser
 import org.maplibre.compose.logging.MapLog
-import org.maplibre.compose.map.GestureTarget
 import org.maplibre.compose.map.GlJsMapSession
 import org.maplibre.compose.map.MapAdapter
 import org.maplibre.compose.map.MapEvent
@@ -35,7 +35,7 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
   override val state =
     runtime.createMapState(
       initialCameraPosition = CameraPosition(zoom = 0.0),
-      baseStyle = BaseStyle.Empty,
+      initialBaseStyle = BaseStyle.Empty,
     )
   private val glJsSession = GlJsMapSession(state.lifecycle, recorder, MapLog, LayoutDirection.Ltr)
   private val token = state.reservePresentation()
@@ -43,7 +43,7 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
   override val session: MapAdapter
     get() = glJsSession
 
-  override val gestures: GestureTarget
+  override val gestures: CameraInputTarget
     get() = glJsSession
 
   override val style: StyleBinding?
@@ -96,6 +96,7 @@ internal class GlJsMapFixture(private val extent: MapExtent) : MapFixture {
       }
     }
     glJsSession.reconcileStyleRevision(DesiredStyleRevision.Empty)
+    state.updateLoadedStyle(glJsSession, checkNotNull(recorder.style))
     state.markStyleReady(glJsSession)
   }
 

@@ -10,14 +10,14 @@ import org.maplibre.compose.layers.Layer
 import org.maplibre.compose.layers.UnknownLayer
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.sources.CustomGeometrySourceOptions
-import org.maplibre.compose.sources.CustomVectorSourceOptions
+import org.maplibre.compose.sources.CustomVectorTileSourceOptions
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeometryTileProvider
 import org.maplibre.compose.sources.Source
 import org.maplibre.compose.sources.TileCoordinate
-import org.maplibre.compose.sources.UnknownSource
 import org.maplibre.compose.sources.VectorTileProvider
+import org.maplibre.compose.sources.reconstructedSource
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.FeatureCollection
@@ -106,14 +106,14 @@ internal class RecordingStyleBinding(
   override fun imageExists(id: String): Boolean = id in images
 
   override fun getSource(id: String): Source? =
-    baseSources[id] ?: sources[id]?.let { UnknownSource(id, it) }
+    baseSources[id] ?: sources[id]?.let { reconstructedSource(id, it) }
 
   override fun getSources(): List<Source> = sources.keys.mapNotNull(::getSource)
 
+  override fun sourceIds(): List<String> = sources.keys.toList()
+
   override fun getLayer(id: String): Layer? =
     baseLayers[id] ?: layers[id]?.let { UnknownLayer(id, it) }
-
-  override fun getLayers(): List<Layer> = orderedLayerIds.mapNotNull(::getLayer)
 
   override fun layerIds() = orderedLayerIds.toList()
 
@@ -183,7 +183,7 @@ internal class RecordingStyleBinding(
 
   override fun addCustomVectorSource(
     sourceId: String,
-    options: CustomVectorSourceOptions,
+    options: CustomVectorTileSourceOptions,
     provider: VectorTileProvider,
   ): Boolean {
     customVectorProvider = provider
@@ -274,7 +274,7 @@ internal class RecordingStyleBinding(
       else JsonObject(layer + ("filter" to filter))
   }
 
-  override fun layerProperty(layerId: String, name: String): JsonElement? {
+  override suspend fun layerProperty(layerId: String, name: String): JsonElement? {
     val layer = layers[layerId] ?: return null
     return layer[name]
       ?: (layer["layout"] as? JsonObject)?.get(name)
@@ -291,7 +291,7 @@ internal class RecordingStyleBinding(
 
   val lightProperties: MutableMap<String, JsonElement> = mutableMapOf()
 
-  override fun transition(): TransitionOptions? = transition.takeIf { isLoaded }
+  override suspend fun transition(): TransitionOptions? = transition.takeIf { isLoaded }
 
   override fun setTransition(options: TransitionOptions) {
     transition = options
@@ -299,13 +299,15 @@ internal class RecordingStyleBinding(
 
   override val supportsPlacementTransitions: Boolean = true
 
-  override fun placementTransitions(): Boolean? = placementTransitionsEnabled.takeIf { isLoaded }
+  override suspend fun placementTransitions(): Boolean? = placementTransitionsEnabled.takeIf {
+    isLoaded
+  }
 
   override fun setPlacementTransitions(enabled: Boolean) {
     placementTransitionsEnabled = enabled
   }
 
-  override fun lightProperty(name: String): JsonElement? =
+  override suspend fun lightProperty(name: String): JsonElement? =
     if (isLoaded) lightProperties[name] else null
 
   override fun setLight(light: JsonObject) {
@@ -316,7 +318,7 @@ internal class RecordingStyleBinding(
   var sky: JsonObject? = null
     private set
 
-  override fun skyProperty(name: String): JsonElement? =
+  override suspend fun skyProperty(name: String): JsonElement? =
     if (isLoaded && supportsSky) sky?.get(name) else null
 
   override fun setSky(sky: JsonObject?) {
@@ -326,7 +328,7 @@ internal class RecordingStyleBinding(
   var projection: JsonObject = JsonObject(emptyMap())
     private set
 
-  override fun projectionProperty(name: String): JsonElement? =
+  override suspend fun projectionProperty(name: String): JsonElement? =
     if (isLoaded && supportsProjection) projection[name] else null
 
   override fun setProjection(projection: JsonObject) {
@@ -348,7 +350,7 @@ internal class RecordingStyleBinding(
       )
   }
 
-  override fun featureState(
+  override suspend fun featureState(
     sourceId: String,
     sourceLayerId: String?,
     featureId: String,
@@ -370,7 +372,7 @@ internal class RecordingStyleBinding(
     featureStates.keys.removeAll { it.first == sourceId && it.second == sourceLayerId }
   }
 
-  override fun querySourceFeatures(
+  override suspend fun querySourceFeatures(
     sourceId: String,
     sourceLayerIds: Set<String>,
     filter: JsonElement?,
