@@ -12,8 +12,10 @@ import org.maplibre.compose.expressions.ast.BitmapLiteral
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.ast.Expression
 import org.maplibre.compose.expressions.ast.ExpressionContext
+import org.maplibre.compose.expressions.ast.NullLiteral
 import org.maplibre.compose.expressions.ast.PainterLiteral
 import org.maplibre.compose.expressions.dsl.const
+import org.maplibre.compose.expressions.dsl.div
 import org.maplibre.compose.expressions.value.ExpressionValue
 import org.maplibre.compose.expressions.value.FloatValue
 import org.maplibre.compose.style.ImageManager
@@ -59,6 +61,12 @@ internal class LayerPropertyCompiler(
             }
         }
 
+      // Use the same linear font scale as SymbolLayer's rendered text size.
+      override val dpScale: Expression<FloatValue>
+        get() =
+          (this@LayerPropertyCompiler.spScale
+            ?: error("DP text offsets require a text-unit compiler")) / const(density.fontScale)
+
       override fun resolveBitmap(bitmap: BitmapLiteral): String {
         return styleNode.imageManager.acquireBitmap(bitmap.key())
       }
@@ -72,8 +80,13 @@ internal class LayerPropertyCompiler(
       }
     }
 
+  /**
+   * Compiles [expression]. A null [expression] compiles to a null literal, which leaves the
+   * property unset.
+   */
   @Composable
-  operator fun <T : ExpressionValue> invoke(expression: Expression<T>): CompiledExpression<T> {
+  operator fun <T : ExpressionValue?> invoke(expression: Expression<T>?): CompiledExpression<T> {
+    val expression = expression ?: NullLiteral.cast()
     DisposableEffect(this, expression) {
       onDispose {
         expression.visit {

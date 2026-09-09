@@ -9,14 +9,14 @@ import { region } from "../../snippets";
 
 import composition from "../../../../demo-app/common/src/commonMain/kotlin/org/maplibre/compose/docsnippets/Composition.kt?raw";
 
-MapLibre Compose has no public map view object. <Api of="MapState" /> defines a
+<Api of="MapState" /> defines a
 logical map, including its base style and declarative style content.
-<Api of="MaplibreMap" /> presents that state. `MapState` provides camera,
-viewport, projection, and feature-query operations while the map is attached.
+<Api of="MaplibreMap" /> displays it in Compose UI. Use the state to control the
+camera, read the visible area, and query features.
 
 ## The style is base plus content
 
-A MapLibre style is a document with sources and layers. The `initialBaseStyle`
+A MapLibre style is a document with sources and layers. The `baseStyle`
 parameter loads that document without modification. The trailing
 <Api of="rememberMapState" /> block declares your sources, layers, and their
 positions in the layer stack.
@@ -25,23 +25,13 @@ positions in the layer stack.
 
 The library manages the sources and layers in the style block. It
 does not modify the rest of the base style. To change a base style layer, use
-its <Api of="LayerHandle" /> from `mapState.style.layers`.
+the `asMutable` view of its <Api of="LayerHandle" /> from `mapState.style.layers`.
 
-`initialBaseStyle` seeds the map once. Changing that input does not reload the
-remembered map; assign `mapState.style.baseStyle` to switch styles.
-
-Composition owns the definitions and lifetimes of declared sources, layers, and
-images. Handles reject definition writes and removal commands for those resources.
-Use `mapState.style.sources[source]` to obtain a declared source's typed handle for
-feature state, cluster queries, and invalidation. These runtime operations do not
-change its declared definition. Handles belong to one loaded style generation;
-look them up again after a style reload or resource replacement.
-
-A handle write does not wait for the map to apply it. On MapLibre Native the
-write runs on the map's own thread after the call returns; MapLibre GL JS
-applies it during the call. When the engine rejects a written value, the
-library logs a warning and the previous value stays in place. The same applies
-to `mapState.style.transition`, `light`, `sky`, and `projection`.
+Use Compose state to update sources, layers, and images declared in the style
+block. Use handles for runtime operations such as feature state and cluster
+queries. For example, `mapState.style.sources[source]` gives you the typed
+handle for a declared source. See <Api of="MapStyleState" /> for handle access and
+mutation rules.
 
 ## Recomposition updates the style
 
@@ -56,7 +46,7 @@ current state, and let the runtime reconcile it.
 
 ## Style switches re-apply your content
 
-When you assign `mapState.style.baseStyle`, the map loads the new style and evaluates
+When you change `baseStyle`, the map loads the new style and evaluates
 the style block against it. Each evaluation declares your
 sources and layers against the new style. They persist across the switch
 without extra code. An `Anchor` is resolved against the new style's layers.
@@ -66,13 +56,9 @@ composable function and call that function from each style block. The same
 function applies to `rememberMapState`, `MapRuntime.createMapState`, and
 `MapRuntime.createSnapshotter`.
 
-Style content reads its host through two composition locals.
-<Api of="LocalViewport" /> contains the viewport that the content is evaluated
-for. An interactive map provides its rendered viewport, which is null until the
-map has drawn a frame, and a snapshotter provides the viewport of the capture
-request. <Api of="LocalMapState" /> contains the interactive map, and is null
-inside a snapshotter. Content that requires the map checks for null at the
-read. Content that runs on both hosts branches on it.
+Use <Api of="LocalViewport" /> for content that depends on the visible area.
+When sharing content with a snapshotter, keep interactive behavior separate:
+<Api of="LocalMapState" /> is available only in an interactive map.
 
 ## Layer and source IDs
 

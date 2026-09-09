@@ -12,8 +12,7 @@ import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.ast.Expression
 import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.expressions.dsl.div
-import org.maplibre.compose.expressions.dsl.nil
-import org.maplibre.compose.expressions.dsl.offset
+import org.maplibre.compose.expressions.dsl.textOffset
 import org.maplibre.compose.expressions.value.BooleanValue
 import org.maplibre.compose.expressions.value.ColorValue
 import org.maplibre.compose.expressions.value.DpOffsetValue
@@ -289,9 +288,9 @@ private fun rememberEmCompiler(textSize: Expression<TextUnitValue>): LayerProper
  *   Ignored if [textField] is not specified.
  *
  *   **Important:** If using zoom interpolation for text size, then all other properties defined in
- *   text units (like [textLetterSpacing], [textOffset], etc) MUST be defined in EM units, not SP
- *   units. This is a limitation of the MapLibre expression parser. If text size does not use zoom
- *   interpolation, then those other properties can be defined in either unit.
+ *   text units (like [textLetterSpacing], [textOffset], etc) MUST be defined in EM units, not SP or
+ *   DP units. This is a limitation of the MapLibre expression parser. If text size does not use
+ *   zoom interpolation, then those other properties can use their supported units.
  *
  * @param textTransform Specifies how to capitalize text. The expression may use feature properties.
  * @param textLetterSpacing Text tracking amount. The expression may use feature properties.
@@ -358,6 +357,10 @@ private fun rememberEmCompiler(textSize: Expression<TextUnitValue>): LayerProper
  *   and down, while negative values indicate left and up. If used with [textVariableAnchor], input
  *   values will be taken as absolute values. Offsets along the x- and y-axis will be applied
  *   automatically based on the anchor position. The expression may use feature properties.
+ *
+ *   Use [org.maplibre.compose.expressions.dsl.textOffset] with DP arguments for a fixed distance,
+ *   or SP/EM arguments for a distance that scales with text. See [textSize] for the zoom
+ *   restriction.
  *
  *   Overridden by [textRadialOffset].
  *
@@ -462,18 +465,18 @@ public fun SymbolLayer(
   sourceLayer: String = "",
   minZoom: Float = 0.0f,
   maxZoom: Float = 24.0f,
-  filter: Expression<BooleanValue> = nil(),
+  filter: Expression<BooleanValue>? = null,
   visible: Boolean = true,
-  sortKey: Expression<FloatValue> = nil(),
+  sortKey: Expression<FloatValue>? = null,
   placement: Expression<SymbolPlacement> = const(SymbolPlacement.Point),
   spacing: Expression<DpValue> = const(250.dp),
   avoidEdges: Expression<BooleanValue> = const(false),
   zOrder: Expression<SymbolZOrder> = const(SymbolZOrder.Auto),
-  heightOffset: Expression<FloatValue> = nil(),
-  heightAnchor: Expression<SymbolHeightAnchor> = nil(),
+  heightOffset: Expression<FloatValue>? = null,
+  heightAnchor: Expression<SymbolHeightAnchor>? = null,
 
   // icon image
-  iconImage: Expression<ImageValue> = nil(),
+  iconImage: Expression<ImageValue?>? = null,
 
   // icon colors
   iconOpacity: Expression<FloatValue> = const(1f),
@@ -503,7 +506,7 @@ public fun SymbolLayer(
   // icon collision
   iconPadding: Expression<DpPaddingValue> = const(DpPadding(2.dp, 2.dp, 2.dp, 2.dp)),
   iconAllowOverlap: Expression<BooleanValue> = const(false),
-  iconOverlap: Expression<StringValue> = nil(),
+  iconOverlap: Expression<StringValue>? = null,
   iconIgnorePlacement: Expression<BooleanValue> = const(false),
   iconOptional: Expression<BooleanValue> = const(false),
 
@@ -513,7 +516,7 @@ public fun SymbolLayer(
   iconTranslateAnchor: Expression<TranslateAnchor> = const(TranslateAnchor.Map),
 
   // text content
-  textField: Expression<FormattedValue> = const("").cast(),
+  textField: Expression<FormattedValue?> = const("").cast(),
 
   // text glyph colors
   textOpacity: Expression<FloatValue> = const(1f),
@@ -540,21 +543,21 @@ public fun SymbolLayer(
   textMaxWidth: Expression<TextUnitValue> = const(10f.em),
   textLineHeight: Expression<TextUnitValue> = const(1.2f.em),
   textJustify: Expression<TextJustify> = const(TextJustify.Center),
-  textWritingMode: Expression<ListValue<TextWritingMode>> = nil(),
+  textWritingMode: Expression<ListValue<TextWritingMode>>? = null,
   textKeepUpright: Expression<BooleanValue> = const(true),
   textRotate: Expression<FloatValue> = const(0f),
 
   // text anchoring
   textAnchor: Expression<SymbolAnchor> = const(SymbolAnchor.Center),
-  textOffset: Expression<TextUnitOffsetValue> = offset(0f.em, 0f.em),
-  textVariableAnchor: Expression<ListValue<SymbolAnchor>> = nil(),
+  textOffset: Expression<TextUnitOffsetValue> = textOffset(0f.em, 0f.em),
+  textVariableAnchor: Expression<ListValue<SymbolAnchor>>? = null,
   textRadialOffset: Expression<TextUnitValue> = const(0f.em),
-  textVariableAnchorOffset: Expression<TextVariableAnchorOffsetValue> = nil(),
+  textVariableAnchorOffset: Expression<TextVariableAnchorOffsetValue>? = null,
 
   // text collision
   textPadding: Expression<DpValue> = const(2.dp),
   textAllowOverlap: Expression<BooleanValue> = const(false),
-  textOverlap: Expression<SymbolOverlap> = nil(),
+  textOverlap: Expression<SymbolOverlap>? = null,
   textIgnorePlacement: Expression<BooleanValue> = const(false),
   textOptional: Expression<BooleanValue> = const(false),
 
@@ -804,7 +807,7 @@ internal class SymbolLayer(id: String, source: VectorSource) : FeatureLayer(id, 
     setLayoutProperty("icon-text-fit-padding", textFitPadding)
   }
 
-  fun setIconImage(image: CompiledExpression<ImageValue>) {
+  fun setIconImage(image: CompiledExpression<ImageValue?>) {
     setLayoutProperty("icon-image", image)
   }
 
@@ -892,7 +895,7 @@ internal class SymbolLayer(id: String, source: VectorSource) : FeatureLayer(id, 
     setLayoutProperty("text-rotation-alignment", rotationAlignment)
   }
 
-  fun setTextField(field: CompiledExpression<FormattedValue>) {
+  fun setTextField(field: CompiledExpression<FormattedValue?>) {
     setLayoutProperty("text-field", field)
   }
 

@@ -51,6 +51,18 @@ features for which it is true:
 
 <Code code={rememberedMapStyle(region(expressions, "filter"))} lang="kotlin" title="App.kt" />
 
+## Missing data
+
+Feature data can be incomplete. Use <Api of="coalesce" /> or an assertion's
+fallback argument, such as `asNumber(const(0f))`, to choose what to show when a
+value is missing:
+
+<Code code={rememberedMapStyle(region(expressions, "missing-data"))} lang="kotlin" title="App.kt" />
+
+Use <Api of="nil" /> to compare an expression with null. To leave a layer
+property unset, pass Kotlin `null` to the layer. The API reference describes
+nullable expressions and type assertions in detail.
+
 ## Where the code runs
 
 Kotlin code outside an expression runs during composition and produces an

@@ -5,12 +5,12 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.unit.dp
 import org.maplibre.compose.interaction.MapInteractions
 
-/** Collects the map configuration that the platform view receives as one internal value. */
+/** Shared presentation settings, independent of Compose UI hosting. */
 @Immutable
 internal data class MapViewOptions(
   val cameraPadding: PaddingValues = PaddingValues(0.dp),
   val cameraConstraints: CameraConstraints = CameraConstraints(),
   val renderOptions: RenderOptions = RenderOptions.Standard,
   val interactions: MapInteractions = MapInteractions.Standard,
-  val tileLodOptions: TileLodOptions = TileLodOptions.Standard,
+  val uiOptions: MapUiOptions = MapUiOptions.Standard,
 )

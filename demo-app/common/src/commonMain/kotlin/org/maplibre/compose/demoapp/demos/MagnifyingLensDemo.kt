@@ -13,7 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -49,8 +48,8 @@ import org.maplibre.compose.demoapp.design.SegmentedRow
 import org.maplibre.compose.demoapp.design.SliderRow
 import org.maplibre.compose.demoapp.design.SwitchRow
 import org.maplibre.compose.interaction.MapInteractions
+import org.maplibre.compose.map.MapUiOptions
 import org.maplibre.compose.map.MaplibreMap
-import org.maplibre.compose.map.RenderOptions
 import org.maplibre.compose.map.rememberMapState
 import org.maplibre.compose.overlay.MapOverlay
 import org.maplibre.compose.overlay.MapOverlayScope
@@ -91,15 +90,13 @@ object MagnifyingLensDemo : Demo {
   private var lensSize by mutableFloatStateOf(220f)
   private var lensShape by mutableStateOf(LensShape.Circle)
   private var dragOffset by mutableStateOf(Offset.Zero)
-  private var lensRenderOptions by mutableStateOf(LensRenderOptionsDefault)
+  private var lensUiOptions by mutableStateOf(LensUiOptionsDefault)
   private var lensDistortionEnabled by mutableStateOf(true)
 
   @Composable
   override fun MapOverlayScope.Overlay(state: DemoAppState) {
     val appliedStyle = state.appliedStyle
-    val lensState =
-      rememberMapState(runtime = state.mapRuntime, initialBaseStyle = appliedStyle.base)
-    SideEffect { lensState.style.baseStyle = appliedStyle.base }
+    val lensState = rememberMapState(runtime = state.mapRuntime, baseStyle = appliedStyle.base)
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
     val lensSizePx = with(density) { lensSize.dp.toPx() }
@@ -166,7 +163,7 @@ object MagnifyingLensDemo : Demo {
             Modifier.fillMaxSize()
           },
         state = lensState,
-        renderOptions = lensRenderOptions,
+        uiOptions = lensUiOptions,
         interactions = MapInteractions.None,
         contentWindowInsets = WindowInsets(0),
       ) {}
@@ -185,7 +182,7 @@ object MagnifyingLensDemo : Demo {
 
   @Composable
   override fun Panel(state: DemoAppState) {
-    LensRenderSection(lensRenderOptions) { lensRenderOptions = it }
+    LensRenderSection(lensUiOptions) { lensUiOptions = it }
 
     SectionHeader("Lens")
     SwitchRow("Lens distortion", lensDistortionEnabled) { lensDistortionEnabled = it }
@@ -212,13 +209,13 @@ object MagnifyingLensDemo : Demo {
  * other platform has one presentation, so the actuals there are empty.
  */
 @Composable
-expect fun LensRenderSection(lensOptions: RenderOptions, onLensChange: (RenderOptions) -> Unit)
+expect fun LensRenderSection(lensOptions: MapUiOptions, onLensChange: (MapUiOptions) -> Unit)
 
 /**
  * The lens map's initial render options: texture mode where a texture-versus-surface choice exists,
  * because Android applies Compose modifiers to the map only in texture mode.
  */
-expect val LensRenderOptionsDefault: RenderOptions
+expect val LensUiOptionsDefault: MapUiOptions
 
 /** Applies a convex-lens distortion where the platform supports runtime shaders. */
 @Composable expect fun Modifier.radialLensDistortion(sizePx: Float): Modifier
