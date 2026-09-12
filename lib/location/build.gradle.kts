@@ -24,7 +24,14 @@ kotlin {
 
   js {
     useEsModules()
-    browser { testTask { useKarma { useChromeHeadless() } } }
+    browser {
+      testTask {
+        useKarma {
+          useChromeHeadless()
+          useFirefoxHeadless()
+        }
+      }
+    }
   }
 
   applyDefaultHierarchyTemplate()
@@ -56,6 +63,8 @@ kotlin {
       implementation(kotlin("test-annotations-common"))
       implementation(libs.kotlinx.coroutines.test)
     }
+
+    androidHostTest.dependencies { implementation(libs.robolectric) }
 
     // The device test APK must package the instrumentation runner itself.
     androidDeviceTest.dependencies { implementation(libs.androidx.test.runner) }
