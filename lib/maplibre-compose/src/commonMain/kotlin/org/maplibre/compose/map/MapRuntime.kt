@@ -26,7 +26,6 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.jvm.JvmInline
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.atomicfu.locks.reentrantLock
 import kotlinx.atomicfu.locks.withLock
 import kotlinx.coroutines.CancellationException
@@ -49,9 +48,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import org.maplibre.compose.camera.CameraAnchor
+import org.maplibre.compose.camera.CameraAnimation
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.Viewport
+import org.maplibre.compose.camera.forPath
 import org.maplibre.compose.camera.internal.CameraCommandGuard
 import org.maplibre.compose.camera.internal.CameraInputAuthority
 import org.maplibre.compose.expressions.ast.CompiledExpression
@@ -65,6 +67,7 @@ import org.maplibre.compose.layers.LayerHandle
 import org.maplibre.compose.layers.layerHandle
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.offline.OfflineManager
+import org.maplibre.compose.offline.OfflineManagerBackend
 import org.maplibre.compose.offline.RuntimeBoundOfflineManager
 import org.maplibre.compose.offline.UnsupportedOfflineManager
 import org.maplibre.compose.resource.MapResourceConfig
@@ -91,9 +94,11 @@ import org.maplibre.compose.util.ImageStretch
 import org.maplibre.compose.util.MaplibreComposable
 import org.maplibre.compose.util.VisibleBounds
 import org.maplibre.compose.util.VisibleRegion
+import org.maplibre.compose.util.positions
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.Geometry
+import org.maplibre.spatialk.geojson.MultiPoint
 import org.maplibre.spatialk.geojson.Position
 
 /**
@@ -517,6 +522,16 @@ internal constructor(
     adapter.cameraForBounds(boundingBox, bearing, tilt, padding)
   }
 
+  suspend fun cameraForGeometry(
+    geometry: Geometry,
+    bearing: Double,
+    tilt: Double,
+    padding: PaddingValues,
+  ): CameraPosition = runLeaseBound {
+    awaitViewportState()
+    adapter.cameraForGeometry(geometry, bearing, tilt, padding)
+  }
+
   suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double = 0.0,
@@ -530,11 +545,23 @@ internal constructor(
 
   suspend fun animateCameraPosition(
     position: CameraPosition,
-    duration: Duration = 300.milliseconds,
+    animation: CameraAnimation = CameraAnimation.Fly(),
     guard: CameraCommandGuard? = null,
   ): Unit = runLeaseBound {
     awaitViewportState()
-    adapter.animateCameraPosition(position, duration, boundGuard(guard))
+    adapter.animateCameraPosition(position, animation.forPathTo(position), boundGuard(guard))
+  }
+
+  suspend fun animateCameraAround(
+    anchor: CameraAnchor,
+    zoom: Double?,
+    bearing: Double?,
+    tilt: Double?,
+    animation: CameraAnimation.Ease,
+    guard: CameraCommandGuard? = null,
+  ): Unit = runLeaseBound {
+    awaitViewportState()
+    adapter.animateCameraAround(anchor, zoom, bearing, tilt, animation, boundGuard(guard))
   }
 
   suspend fun animateCameraToBounds(
@@ -542,11 +569,32 @@ internal constructor(
     bearing: Double = 0.0,
     tilt: Double = 0.0,
     padding: PaddingValues = PaddingValues(0.dp),
-    duration: Duration = 300.milliseconds,
+    animation: CameraAnimation = CameraAnimation.Fly(),
     guard: CameraCommandGuard? = null,
   ): Unit = runLeaseBound {
     awaitViewportState()
-    adapter.animateCameraToBounds(boundingBox, bearing, tilt, padding, duration, boundGuard(guard))
+    val target = adapter.cameraForBounds(boundingBox, bearing, tilt, padding)
+    adapter.animateCameraToBounds(
+      boundingBox,
+      bearing,
+      tilt,
+      padding,
+      animation.forPathTo(target),
+      boundGuard(guard),
+    )
+  }
+
+  /**
+   * Resolves [CameraAnimation.forPath] against the zoom the map will apply. The engines also keep
+   * the center inside a bounding box constraint, which is not mirrored here. The receiver arrives
+   * already scaled by the animator duration scale, so a fallback ease it turns into is scaled here.
+   */
+  private fun CameraAnimation.forPathTo(target: CameraPosition): CameraAnimation {
+    val constraints = adapter.getCameraConstraints()
+    val constrained =
+      target.copy(zoom = target.zoom.coerceIn(constraints.minZoom, constraints.maxZoom))
+    val resolved = forPath(adapter.getCameraPosition(), constrained)
+    return if (resolved === this) this else resolved.scaledBy(systemAnimatorDurationScale())
   }
 
   fun getVisibleRegion(): VisibleRegion? = withViewport { it.getVisibleRegion() }
@@ -875,6 +923,30 @@ internal constructor(
   }
 
   /**
+   * Stops camera movement at the position reached when the backend processes this command.
+   *
+   * Cancels camera commands waiting for a viewport, running animations, gesture momentum, and the
+   * current recognized gesture's camera control. Interrupted suspend calls throw
+   * [kotlinx.coroutines.CancellationException]. New input or camera commands can move the camera
+   * again; a newer command takes precedence over this stop. Pointer events are not cancelled: a
+   * press that has not yet become a recognized gesture may still start one after this call.
+   *
+   * Does not wait for a surface to attach. Without a surface, the retained camera is unchanged.
+   * With a surface, [cameraPosition] updates when the backend reports the stopped position.
+   */
+  public fun stopCameraMovement() {
+    val guard = gestureAuthority.beginProgrammatic()
+    val attachment = lifecycle.serialized {
+      requireOpenLocked()
+      if (!guard.isValid()) return
+      currentMapAttachment ?: return
+    }
+    attachment.adapter.stopCameraMovement(
+      CameraCommandGuard { isCurrent(attachment) && guard.isValid() }
+    )
+  }
+
+  /**
    * Waits for a viewport, then calculates a camera for [boundingBox] without moving the map or
    * interrupting camera input or animations. Detaching the surface during the query cancels it.
    *
@@ -895,6 +967,55 @@ internal constructor(
   ): CameraPosition = awaitAttachment().cameraForBounds(boundingBox, bearing, tilt, padding)
 
   /**
+   * Waits for a viewport, then calculates a camera that fits every position of [geometry] without
+   * moving the map or interrupting camera input or animations. Detaching the surface during the
+   * query cancels it.
+   *
+   * Unlike [cameraForBounds], the fit follows the positions themselves rather than their bounding
+   * box, so a rotated camera leaves no extra space around a diagonal route. With a bearing of zero
+   * and a tilt of zero, both queries produce the same camera.
+   *
+   * Positions are used as given. Express a route that crosses the antimeridian with continuous
+   * longitudes, such as 179 followed by 181; the query does not unwrap longitudes itself.
+   *
+   * [padding] adds space around the positions in addition to the map's camera padding. It does not
+   * change the map's padding. The result uses the current viewport size and camera constraints;
+   * recalculate it if those or the map's padding change before applying it.
+   *
+   * On the browser, fitting calculates the target and zoom without [tilt], then assigns [tilt] to
+   * the result. A nonzero tilt may therefore leave part of the geometry outside the viewport.
+   *
+   * @throws IllegalArgumentException if [geometry] contains no positions.
+   * @throws IllegalStateException if the backend cannot calculate a camera for the geometry.
+   */
+  public suspend fun cameraForGeometry(
+    geometry: Geometry,
+    bearing: Double = 0.0,
+    tilt: Double = 0.0,
+    padding: PaddingValues = PaddingValues(0.dp),
+  ): CameraPosition {
+    require(geometry.positions().any()) { "The geometry contains no positions" }
+    return awaitAttachment().cameraForGeometry(geometry, bearing, tilt, padding)
+  }
+
+  /**
+   * Waits for a viewport, then calculates a camera that fits every position in [coordinates]. See
+   * [cameraForGeometry] for the fit, padding, and antimeridian semantics.
+   *
+   * @throws IllegalArgumentException if [coordinates] is empty.
+   * @throws IllegalStateException if the backend cannot calculate a camera for the coordinates.
+   */
+  public suspend fun cameraForCoordinates(
+    coordinates: Collection<Position>,
+    bearing: Double = 0.0,
+    tilt: Double = 0.0,
+    padding: PaddingValues = PaddingValues(0.dp),
+  ): CameraPosition {
+    require(coordinates.isNotEmpty()) { "The coordinates are empty" }
+    return cameraForGeometry(MultiPoint(coordinates.toList()), bearing, tilt, padding)
+  }
+
+  /**
    * Waits for a viewport, then fits [boundingBox] without animation. A newer camera command or
    * accepted input cancels this call.
    */
@@ -909,35 +1030,78 @@ internal constructor(
   }
 
   /**
-   * Waits for a viewport, then animates to [position]. A newer camera command or accepted input
-   * cancels this call.
+   * Waits for a viewport, then moves the camera to [position] with [animation]. A newer camera
+   * command or accepted input cancels this call.
    *
-   * On Android, the system animator duration scale multiplies [duration]. A scale of zero jumps to
-   * [position].
+   * On Android, the system animator duration scale multiplies the duration of [animation]. A scale
+   * of zero jumps to [position].
    */
   public suspend fun animateCameraPosition(
     position: CameraPosition,
-    duration: Duration = 300.milliseconds,
+    animation: CameraAnimation = CameraAnimation.Fly(),
   ): Unit = coroutineScope {
     val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
     retryAcrossAttachments {
-      it.animateCameraPosition(position, duration.scaledBy(systemAnimatorDurationScale()), guard)
+      it.animateCameraPosition(position, animation.scaledBy(systemAnimatorDurationScale()), guard)
     }
   }
 
   /**
-   * Waits for a viewport, then animates to fit [boundingBox]. A newer camera command or accepted
-   * input cancels this call.
+   * Changes zoom, bearing, or tilt while keeping [anchor] at its screen location at animation
+   * start. Null camera components retain their starting values. The camera target moves to preserve
+   * the anchor; this operation does not accept a destination target or a flight animation.
    *
-   * On Android, the system animator duration scale multiplies [duration]. A scale of zero jumps to
-   * fit [boundingBox].
+   * Waits for an attached viewport. The anchor must resolve to a visible point on the map, or this
+   * call throws [IllegalArgumentException]. Persistent camera padding participates in projection
+   * and is not changed. Screen coordinates are relative to the full map, not its padded area.
+   *
+   * A newer camera command, accepted input, coroutine cancellation, a logical viewport resize,
+   * changed camera padding, or attachment loss cancels this call. It does not restart on another
+   * attachment. The camera remains where it was interrupted, subject to the new geometry.
+   *
+   * Anchor preservation applies to flat Mercator maps, including tilted cameras. Camera constraints
+   * take precedence and can move the anchor. Globe and terrain do not have this guarantee. On
+   * Android, the system animator duration scale multiplies the duration. Zero duration applies the
+   * anchored endpoint immediately.
+   */
+  public suspend fun animateCameraAround(
+    anchor: CameraAnchor,
+    zoom: Double? = null,
+    bearing: Double? = null,
+    tilt: Double? = null,
+    animation: CameraAnimation.Ease = CameraAnimation.Ease(),
+  ): Unit = coroutineScope {
+    require(zoom == null || zoom.isFinite()) { "Zoom must be finite" }
+    require(bearing == null || bearing.isFinite()) { "Bearing must be finite" }
+    require(tilt == null || tilt.isFinite()) { "Tilt must be finite" }
+    require(animation.duration.isFinite() && animation.duration >= Duration.ZERO) {
+      "Duration must be finite and nonnegative"
+    }
+    val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
+    awaitAttachment()
+      .animateCameraAround(
+        anchor,
+        zoom,
+        bearing,
+        tilt,
+        animation.copy(duration = animation.duration.scaledBy(systemAnimatorDurationScale())),
+        guard,
+      )
+  }
+
+  /**
+   * Waits for a viewport, then moves the camera to fit [boundingBox] with [animation]. A newer
+   * camera command or accepted input cancels this call.
+   *
+   * On Android, the system animator duration scale multiplies the duration of [animation]. A scale
+   * of zero jumps to fit [boundingBox].
    */
   public suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double = 0.0,
     tilt: Double = 0.0,
     padding: PaddingValues = PaddingValues(0.dp),
-    duration: Duration = 300.milliseconds,
+    animation: CameraAnimation = CameraAnimation.Fly(),
   ): Unit = coroutineScope {
     val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
     retryAcrossAttachments {
@@ -946,7 +1110,7 @@ internal constructor(
         bearing,
         tilt,
         padding,
-        duration.scaledBy(systemAnimatorDurationScale()),
+        animation.scaledBy(systemAnimatorDurationScale()),
         guard,
       )
     }
@@ -1929,7 +2093,7 @@ internal class RuntimeImplementation(
   internal val platformContext: Any?,
   private val closeResources: suspend () -> Unit,
   internal val logger: MapLog?,
-  offlineManagerBackend: OfflineManager = UnsupportedOfflineManager,
+  offlineManagerBackend: OfflineManagerBackend = UnsupportedOfflineManager,
   internal val physicalScope: CoroutineScope =
     CoroutineScope(SupervisorJob() + Dispatchers.Default),
   internal val createSnapshotterAdapter: () -> SnapshotterAdapter = ::unsupportedSnapshots,

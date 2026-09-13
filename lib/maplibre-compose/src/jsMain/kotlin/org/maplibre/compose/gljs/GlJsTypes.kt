@@ -210,24 +210,25 @@ internal external interface CenterZoomBearing {
 
 internal external interface AnimationOptions {
   var duration: Double?
+  var easing: ((Double) -> Double)?
 }
 
-internal external interface JumpToOptions : CameraOptions {
+internal external interface PaddedCameraOptions : CameraOptions {
   var padding: PaddingOptions?
 }
 
-internal external interface EaseToOptions : CameraOptions, AnimationOptions {
+internal external interface JumpToOptions : PaddedCameraOptions
+
+internal external interface EaseToOptions : PaddedCameraOptions, AnimationOptions {
   var around: LngLat?
-  var padding: PaddingOptions?
 }
 
-internal external interface FlyToOptions : CameraOptions, AnimationOptions {
-  var padding: PaddingOptions?
+internal external interface FlyToOptions : PaddedCameraOptions, AnimationOptions {
+  var screenSpeed: Double?
+  var minZoom: Double?
 }
 
-internal external interface CameraForBoundsOptions : CameraOptions {
-  var padding: PaddingOptions?
-}
+internal external interface CameraForBoundsOptions : PaddedCameraOptions
 
 internal external interface Painter {
   val context: Context
@@ -252,6 +253,17 @@ internal fun MaplibreMap.isCameraEasing(): Boolean {
     "MapLibre's Camera no longer has an isEasing method"
   }
   return camera.isEasing() as Boolean
+}
+
+/**
+ * Use the transform's surface test: projecting an intersection behind the camera can round-trip.
+ */
+internal fun MaplibreMap.isPointOnMapSurface(point: Point): Boolean {
+  val transform = asDynamic()._camera.transform
+  check(jsTypeOf(transform.isPointOnMapSurface) == "function") {
+    "MapLibre's transform no longer has an isPointOnMapSurface method"
+  }
+  return transform.isPointOnMapSurface(point, asDynamic().terrain) as Boolean
 }
 
 /**

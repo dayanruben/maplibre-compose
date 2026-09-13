@@ -16,7 +16,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
-import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
@@ -34,6 +33,8 @@ import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import org.maplibre.compose.camera.CameraAnchor
+import org.maplibre.compose.camera.CameraAnimation
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.Viewport
 import org.maplibre.compose.camera.internal.CameraCommandGuard
@@ -73,6 +74,8 @@ import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.Geometry
+import org.maplibre.spatialk.geojson.GeometryCollection
+import org.maplibre.spatialk.geojson.MultiPoint
 import org.maplibre.spatialk.geojson.Point
 import org.maplibre.spatialk.geojson.Position
 import org.maplibre.spatialk.geojson.dsl.addFeature
@@ -1710,6 +1713,7 @@ class MapPresentationTest {
     val queries: List<suspend (MapState) -> Any> =
       listOf(
         { it.cameraForBounds(BoundingBox(Position(-1.0, -1.0), Position(1.0, 1.0))) },
+        { it.cameraForCoordinates(listOf(Position(-1.0, -1.0), Position(1.0, 1.0))) },
         { it.queryRenderedFeatures(DpOffset.Zero) },
         { it.queryRenderedFeatures(DpRect(0.dp, 0.dp, 10.dp, 10.dp)) },
       )
@@ -1721,6 +1725,16 @@ class MapPresentationTest {
         object : PresentationTestAdapter() {
           override fun cameraForBounds(
             boundingBox: BoundingBox,
+            bearing: Double,
+            tilt: Double,
+            padding: PaddingValues,
+          ): CameraPosition {
+            state.releasePresentation(token, this)
+            return CameraPosition(zoom = 5.0)
+          }
+
+          override fun cameraForGeometry(
+            geometry: Geometry,
             bearing: Double,
             tilt: Double,
             padding: PaddingValues,
@@ -1758,6 +1772,19 @@ class MapPresentationTest {
         runtime.close()
       }
     }
+  }
+
+  @Test
+  fun a_geometry_query_rejects_empty_input_before_waiting_for_an_attachment() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState(BaseStyle.Demo)
+    assertFailsWith<IllegalArgumentException> { state.cameraForCoordinates(emptyList()) }
+    assertFailsWith<IllegalArgumentException> {
+      state.cameraForGeometry(GeometryCollection(listOf(MultiPoint(emptyList()))))
+    }
+    state.close()
+    state.awaitClosed()
+    runtime.close()
   }
 
   @Test
@@ -1864,11 +1891,17 @@ class MapPresentationTest {
     val fixture = presentationFixture()
     fixture.attachment.updateViewport(testViewport())
     val first = async {
-      fixture.state.animateCameraPosition(CameraPosition(zoom = 2.0), 1.seconds)
+      fixture.state.animateCameraPosition(
+        CameraPosition(zoom = 2.0),
+        CameraAnimation.Fly(1.seconds),
+      )
     }
     fixture.adapter.animationStarted.await()
     val second = async {
-      fixture.state.animateCameraPosition(CameraPosition(zoom = 3.0), 1.seconds)
+      fixture.state.animateCameraPosition(
+        CameraPosition(zoom = 3.0),
+        CameraAnimation.Fly(1.seconds),
+      )
     }
     testScheduler.runCurrent()
 
@@ -1882,15 +1915,44 @@ class MapPresentationTest {
   }
 
   @Test
+  fun an_anchored_animation_waits_for_a_viewport_but_does_not_restart_after_detach() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState(BaseStyle.Empty)
+    val animation = async {
+      state.animateCameraAround(CameraAnchor.Screen(DpOffset(10.dp, 10.dp)), zoom = 4.0)
+    }
+    testScheduler.runCurrent()
+    assertFalse(animation.isCompleted)
+    val token = state.reservePresentation()
+    val first = PresentationTestAdapter()
+    state.publishPresentation(token, first)
+    testScheduler.runCurrent()
+    assertFalse(first.animationStarted.isCompleted)
+    requireNotNull(state.currentMapAttachment).updateViewport(testViewport())
+    first.animationStarted.await()
+    state.releasePresentation(token, first)
+    testScheduler.runCurrent()
+    assertTrue(animation.isCancelled)
+    val replacement = PresentationTestAdapter()
+    state.publishPresentation(state.reservePresentation(), replacement)
+    requireNotNull(state.currentMapAttachment).updateViewport(testViewport())
+    testScheduler.runCurrent()
+    assertFalse(replacement.animationStarted.isCompleted)
+    state.close()
+    state.awaitClosed()
+    runtime.close()
+  }
+
+  @Test
   fun the_latest_camera_animation_waits_for_a_viewport_and_restarts_on_replacement() = runTest {
     val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
     val state = runtime.createMapState(BaseStyle.Demo)
     val superseded = async {
-      state.animateCameraPosition(CameraPosition(zoom = 2.0), 1.seconds)
+      state.animateCameraPosition(CameraPosition(zoom = 2.0), CameraAnimation.Fly(1.seconds))
     }
     testScheduler.runCurrent()
     val animation = async {
-      state.animateCameraPosition(CameraPosition(zoom = 4.0), 1.seconds)
+      state.animateCameraPosition(CameraPosition(zoom = 4.0), CameraAnimation.Fly(1.seconds))
     }
     testScheduler.runCurrent()
     assertTrue(superseded.isCancelled)
@@ -1956,12 +2018,65 @@ class MapPresentationTest {
   }
 
   @Test
+  fun a_queued_stop_cannot_cancel_a_newer_command() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState(BaseStyle.Empty)
+    var stopGuard: CameraCommandGuard? = null
+    val adapter =
+      object : PresentationTestAdapter() {
+        override fun stopCameraMovement(guard: CameraCommandGuard) {
+          stopGuard = guard
+        }
+      }
+    val token = state.reservePresentation()
+    state.publishPresentation(token, adapter)
+    state.stopCameraMovement()
+    val guard = assertNotNull(stopGuard)
+    assertTrue(guard.isValid())
+    state.setCameraPosition(CameraPosition(zoom = 4.0))
+    assertFalse(guard.isValid())
+    state.close()
+    state.awaitClosed()
+    runtime.close()
+  }
+
+  @Test
+  fun stopping_cancels_commands_before_attachment_and_before_a_viewport() = runTest {
+    val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
+    val state = runtime.createMapState(BaseStyle.Empty)
+    val position = CameraPosition(zoom = 3.0)
+    state.setCameraPosition(position)
+    val animation = async { state.animateCameraPosition(CameraPosition(zoom = 8.0)) }
+    testScheduler.runCurrent()
+    state.stopCameraMovement()
+    testScheduler.runCurrent()
+    assertTrue(animation.isCancelled)
+    assertEquals(position, state.cameraPosition)
+
+    val token = state.reservePresentation()
+    val adapter = PresentationTestAdapter()
+    state.publishPresentation(token, adapter)
+    val fit = async {
+      state.fitCameraToBounds(BoundingBox(Position(-1.0, -1.0), Position(1.0, 1.0)))
+    }
+    testScheduler.runCurrent()
+    assertFalse(fit.isCompleted)
+    state.stopCameraMovement()
+    testScheduler.runCurrent()
+    assertTrue(fit.isCancelled)
+    assertFalse(adapter.boundsFit.isCompleted)
+    state.close()
+    state.awaitClosed()
+    runtime.close()
+  }
+
+  @Test
   fun closing_a_map_fails_a_camera_animation_waiting_for_attachment() = runTest {
     val runtime = mapRuntimeForTest(physicalScope = backgroundScope)
     val state = runtime.createMapState(BaseStyle.Demo)
     supervisorScope {
       val animation = async {
-        state.animateCameraPosition(CameraPosition(zoom = 4.0), 1.seconds)
+        state.animateCameraPosition(CameraPosition(zoom = 4.0), CameraAnimation.Fly(1.seconds))
       }
       testScheduler.runCurrent()
 
@@ -2141,7 +2256,19 @@ internal open class PresentationTestAdapter(
 
   override suspend fun animateCameraPosition(
     finalPosition: CameraPosition,
-    duration: Duration,
+    animation: CameraAnimation,
+    guard: CameraCommandGuard?,
+  ) {
+    animationStarted.complete(Unit)
+    finishAnimation.await()
+  }
+
+  override suspend fun animateCameraAround(
+    anchor: CameraAnchor,
+    zoom: Double?,
+    bearing: Double?,
+    tilt: Double?,
+    animation: CameraAnimation.Ease,
     guard: CameraCommandGuard?,
   ) {
     animationStarted.complete(Unit)
@@ -2153,7 +2280,7 @@ internal open class PresentationTestAdapter(
     bearing: Double,
     tilt: Double,
     padding: PaddingValues,
-    duration: Duration,
+    animation: CameraAnimation,
     guard: CameraCommandGuard?,
   ) = awaitCancellation()
 
@@ -2169,16 +2296,27 @@ internal open class PresentationTestAdapter(
 
   override fun getCameraPosition(): CameraPosition = lastCameraPosition
 
+  override fun getCameraConstraints(): CameraConstraints = CameraConstraints()
+
   override fun setCameraPosition(cameraPosition: CameraPosition, guard: CameraCommandGuard?) {
     presentationWasVisibleWhileConfiguring =
       presentationWasVisibleWhileConfiguring || currentAttachment() != null
     lastCameraPosition = cameraPosition
   }
 
+  override fun stopCameraMovement(guard: CameraCommandGuard) = Unit
+
   override fun setCameraPadding(padding: PaddingValues) = Unit
 
   override fun cameraForBounds(
     boundingBox: BoundingBox,
+    bearing: Double,
+    tilt: Double,
+    padding: PaddingValues,
+  ): CameraPosition = lastCameraPosition
+
+  override fun cameraForGeometry(
+    geometry: Geometry,
     bearing: Double,
     tilt: Double,
     padding: PaddingValues,
