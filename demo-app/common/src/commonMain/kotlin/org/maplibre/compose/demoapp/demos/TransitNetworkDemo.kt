@@ -59,9 +59,11 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import org.maplibre.compose.camera.CameraAnimation
+import org.maplibre.compose.demoapp.DefaultMapControls
 import org.maplibre.compose.demoapp.Demo
 import org.maplibre.compose.demoapp.DemoAppState
 import org.maplibre.compose.demoapp.DemoDestination
+import org.maplibre.compose.demoapp.DemoMapControls
 import org.maplibre.compose.demoapp.DemoPointerPin
 import org.maplibre.compose.demoapp.DemoStyle
 import org.maplibre.compose.demoapp.Protomaps
@@ -204,7 +206,7 @@ object TransitNetworkDemo : Demo {
         routeTrips
           .flatMap { trip -> stopTimesByTrip[trip.tripId].orEmpty() }
           .filter { it.allowsBoarding }
-          .mapTo(mutableSetOf()) { it.stopId }
+          .mapNotNullTo(mutableSetOf()) { it.stopId }
       }
 
       val lineFeatures = mutableListOf<Feature<LineString, JsonObject>>()
@@ -260,7 +262,7 @@ object TransitNetworkDemo : Demo {
         terminals = FeatureCollection(terminalFeatures),
         terminalsById = terminalsById,
         stopIdsByRoute = stopIdsByRoute,
-        timeZone = agencies.first().agencyTimezone,
+        timeZone = TimeZone.of(agencies.first().agencyTimezone),
         tripsByRoute = tripsByRoute,
         stopTimesByTrip = stopTimesByTrip,
         firstStopTimeByTrip =
@@ -315,6 +317,7 @@ object TransitNetworkDemo : Demo {
         }
 
         for (stopTime in network.stopTimesByTrip[trip.tripId].orEmpty()) {
+          val stopId = stopTime.stopId ?: continue
           val departure = stopTime.departureTime
           if (departure != null && stopTime.allowsBoarding) {
             val sailing =
@@ -322,11 +325,11 @@ object TransitNetworkDemo : Demo {
                 instant = departure.toInstant(date, network.timeZone),
                 headsign = stopTime.stopHeadsign ?: trip.tripHeadsign ?: "",
               )
-            val previous = nextSailingByStopId[stopTime.stopId]
+            val previous = nextSailingByStopId[stopId]
             if (
               sailing.instant >= now && (previous == null || sailing.instant < previous.instant)
             ) {
-              nextSailingByStopId[stopTime.stopId] = sailing
+              nextSailingByStopId[stopId] = sailing
             }
           }
         }
@@ -420,7 +423,13 @@ object TransitNetworkDemo : Demo {
   }
 
   @Composable
-  override fun MapOverlayScope.Overlay(state: DemoAppState) {
+  override fun MapOverlayScope.Overlay(state: DemoAppState, controls: DemoMapControls) {
+    DemoOverlay()
+    DefaultMapControls(controls)
+  }
+
+  @Composable
+  private fun MapOverlayScope.DemoOverlay() {
     LoadFeed()
     val network = (feedState as? FeedState.Loaded)?.network ?: return
     val selected = selectedRouteId
@@ -445,7 +454,8 @@ object TransitNetworkDemo : Demo {
           DepartureChip(
             text = departure,
             modifier =
-              Modifier.placedAt(terminal.position, Alignment.BottomCenter).padding(bottom = 8.dp),
+              Modifier.placedAt(terminal.position, alignment = Alignment.BottomCenter)
+                .padding(bottom = 8.dp),
           )
         }
       }

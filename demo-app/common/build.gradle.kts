@@ -72,8 +72,8 @@ kotlin {
       implementation(libs.jetbrains.compose.material3)
       implementation(libs.jetbrains.compose.material3.adaptive)
       implementation(libs.materialKolor)
+      implementation(libs.htmlConverterCompose)
       implementation(libs.androidx.navigation.compose)
-      implementation(libs.kotlin.dsv)
       implementation(libs.kotlinx.serialization.json)
       implementation(libs.kermit)
       implementation(libs.ktor.client.core)
@@ -105,6 +105,7 @@ kotlin {
 
     jsMain.dependencies {
       implementation(libs.jetbrains.compose.html.core)
+      implementation(libs.kotlin.wrappers.browser)
       implementation(libs.kotlin.wrappers.js)
       implementation(libs.ktor.client.js)
       implementation(npm("fflate", libs.versions.fflate.get()))
