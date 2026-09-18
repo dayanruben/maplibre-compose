@@ -3,6 +3,7 @@
 package org.maplibre.compose.map
 
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.DpSize
@@ -17,8 +18,6 @@ import kotlin.math.PI
 import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.time.Duration
-import kotlin.time.DurationUnit
-import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -46,7 +45,9 @@ import org.maplibre.compose.mlnffi.MetalSurfaceTarget
 import org.maplibre.compose.mlnffi.MetalTextureTarget
 import org.maplibre.compose.mlnffi.MlnFfiFrameResult
 import org.maplibre.compose.mlnffi.MlnFfiLock
+import org.maplibre.compose.mlnffi.MlnFfiMapDestination
 import org.maplibre.compose.mlnffi.MlnFfiMapFrame
+import org.maplibre.compose.mlnffi.MlnFfiMapFrameProjection
 import org.maplibre.compose.mlnffi.MlnFfiMapHostSession
 import org.maplibre.compose.mlnffi.MlnFfiMapPresentationAnchor
 import org.maplibre.compose.mlnffi.MlnFfiMapRenderer
@@ -72,6 +73,7 @@ import org.maplibre.compose.style.StylePresentation
 import org.maplibre.compose.style.StyleReconciler
 import org.maplibre.compose.style.StyleRequestId
 import org.maplibre.compose.style.StyleResourceChanges
+import org.maplibre.compose.util.DpPadding
 import org.maplibre.compose.util.VisibleBounds
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.compose.util.mercatorPixelDistance
@@ -155,9 +157,6 @@ private val HANDLED_MAP_EVENTS: RuntimeEventMask =
     RuntimeEventMask.MAP_RENDER_FRAME_FINISHED +
     RuntimeEventMask.MAP_STYLE_IMAGE_MISSING
 
-/** The fraction of a capped frame interval a frame may arrive early and still be drawn. */
-private const val FRAME_INTERVAL_SLACK = 0.1
-
 internal data class NativeEngineCompatibility(
   val renderBackend: MapRenderBackend,
   val scaleFactor: Double,
@@ -207,9 +206,12 @@ internal class MlnFfiMapSession(
 
   @Volatile private var loop: MlnFfiMapRuntimeLoop? = null
 
-  @Volatile private var cameraPadding: EdgeInsets = EdgeInsets.ZERO
-  @Volatile private var appliedCameraPadding: EdgeInsets = EdgeInsets.ZERO
+  @Volatile private var viewportInsets: EdgeInsets = EdgeInsets.ZERO
+  @Volatile private var appliedViewportInsets: EdgeInsets = EdgeInsets.ZERO
   @Volatile private var renderedCameraPadding: EdgeInsets = EdgeInsets.ZERO
+
+  /** Owner thread only: do not apply camera framing against the bootstrap 1x1 viewport. */
+  private var pendingCameraPadding: DpPadding? = null
 
   /** One-shot map actions accepted before this session starts. Guarded by [stateLock]. */
   private class PendingMapAction(val run: (MapHandle) -> Unit, val abandon: () -> Unit)
@@ -338,11 +340,13 @@ internal class MlnFfiMapSession(
       getScale = ::imageScale,
     )
 
-  @Volatile private var maximumFps: Int? = null
+  @Volatile
+  override var maximumFps: Int? = null
+    private set
+
   private var cameraConstraints: CameraConstraints? = null
   private var cameraProjection: CameraProjection = CameraProjection.Perspective
   private var tileLodOptions: TileLodOptions = TileLodOptions.Standard
-  private var lastRenderTime = TimeSource.Monotonic.markNow()
 
   // region host surface lifecycle
 
@@ -370,10 +374,10 @@ internal class MlnFfiMapSession(
     hostSession = null
   }
 
-  override fun render(frame: MlnFfiMapFrame): MlnFfiFrameResult {
-    if (!lifecycle.acceptsWork || frame.extent.isEmpty) return MlnFfiFrameResult.SKIPPED
+  override fun render(frame: MlnFfiMapFrame, captureProjection: Boolean): MlnFfiFrameResult {
+    if (!lifecycle.acceptsWork || frame.extent.isEmpty) return MlnFfiFrameResult.AwaitUpdate
 
-    val loop = loop ?: return MlnFfiFrameResult.SKIPPED
+    val loop = loop ?: return MlnFfiFrameResult.AwaitUpdate
     loop.failure?.let { error ->
       if (!failureReported) {
         failureReported = true
@@ -381,27 +385,18 @@ internal class MlnFfiMapSession(
         close()
         throw IllegalStateException("The MapLibre map runtime failed", error)
       }
-      return MlnFfiFrameResult.SKIPPED
+      return MlnFfiFrameResult.AwaitUpdate
     }
 
-    val map = loop.map ?: return MlnFfiFrameResult.SKIPPED
+    val map = loop.map ?: return MlnFfiFrameResult.AwaitUpdate
     if (styleLoadTracker.presentation == StylePresentation.Retained)
-      return MlnFfiFrameResult.SKIPPED
-    renderedCameraPadding = appliedCameraPadding
+      return MlnFfiFrameResult.AwaitUpdate
+    renderedCameraPadding = mirroredViewport.effectivePadding
 
-    if (!ensureAttached(loop, map, frame)) return MlnFfiFrameResult.SKIPPED
+    if (!ensureAttached(loop, map, frame)) return MlnFfiFrameResult.AwaitUpdate
     // Consumed before rendering, so an update published during the render below is not discarded.
-    if (!renderRequested.exchange(false)) return MlnFfiFrameResult.SKIPPED
-    // The cap measures start-to-start; measuring from the end of the last render rejects every
-    // second frame near the display's rate.
-    val renderStart = TimeSource.Monotonic.markNow()
-    if (!allowRenderNow(renderStart)) {
-      // Throttled, not dropped.
-      requestRender()
-      return MlnFfiFrameResult.SKIPPED
-    }
-
-    val session = renderSession ?: return MlnFfiFrameResult.SKIPPED
+    if (!renderRequested.exchange(false)) return MlnFfiFrameResult.AwaitUpdate
+    val session = renderSession ?: return MlnFfiFrameResult.AwaitUpdate
     val update =
       try {
         session.renderUpdate()
@@ -413,10 +408,10 @@ internal class MlnFfiMapSession(
     }
     when (update.result) {
       RenderResult.NO_UPDATE,
-      RenderResult.SIZE_PENDING -> return MlnFfiFrameResult.SKIPPED
+      RenderResult.SIZE_PENDING -> return MlnFfiFrameResult.AwaitUpdate
       RenderResult.TARGET_NOT_READY -> {
-        requestRender()
-        return MlnFfiFrameResult.SKIPPED
+        renderRequested.store(true)
+        return MlnFfiFrameResult.RetryNextFrame
       }
       else -> Unit
     }
@@ -429,8 +424,70 @@ internal class MlnFfiMapSession(
           "extent ${frame.extent}"
       }
     }
-    lastRenderTime = renderStart
-    return MlnFfiFrameResult.RENDERED
+    return MlnFfiFrameResult.Rendered(
+      if (captureProjection) captureFrameProjection(frame.extent) else null
+    )
+  }
+
+  // Keep native handles outside Compose snapshots: an older snapshot must not read a closed handle.
+  private var presentedProjection: PresentedProjection? = null
+  private val presentationRevision = mutableLongStateOf(0L)
+
+  private fun publishProjection(next: PresentedProjection?) {
+    if (presentedProjection == next) return
+    presentedProjection = next
+    presentationRevision.longValue += 1
+  }
+
+  private data class PresentedProjection(
+    val frame: MlnFfiMapFrameProjection,
+    val destination: MlnFfiMapDestination,
+    val scaleFactor: Double,
+  ) {
+    fun toScreen(point: DpOffset): DpOffset =
+      DpOffset(
+        ((point.x.value * frame.extent.scaleFactor + destination.left) / scaleFactor).dp,
+        ((point.y.value * frame.extent.scaleFactor + destination.top) / scaleFactor).dp,
+      )
+  }
+
+  private class FrameProjection(
+    override val extent: MapExtent,
+    val projection: MapProjectionHandle,
+  ) : MlnFfiMapFrameProjection {
+    override val anchor: MlnFfiMapPresentationAnchor
+      get() {
+        val padding = checkNotNull(projection.camera.padding)
+        return MlnFfiMapPresentationAnchor(
+          ((extent.physicalWidth + (padding.left - padding.right) * extent.scaleFactor) / 2)
+            .toInt(),
+          ((extent.physicalHeight + (padding.top - padding.bottom) * extent.scaleFactor) / 2)
+            .toInt(),
+        )
+      }
+
+    override fun screenLocation(position: Position): DpOffset =
+      projection.pixelForLatLng(position.toLatLng()).toDpOffset()
+
+    override fun close() {
+      projection.close()
+    }
+  }
+
+  override fun presentFrame(
+    projection: MlnFfiMapFrameProjection?,
+    destination: MlnFfiMapDestination,
+    scaleFactor: Double,
+  ) {
+    projectionLock.withLock {
+      publishProjection(projection?.let { PresentedProjection(it, destination, scaleFactor) })
+    }
+  }
+
+  private fun captureFrameProjection(extent: MapExtent): MlnFfiMapFrameProjection {
+    val session = checkNotNull(renderSession)
+    val projection = session.createProjection().normalizeWrappedCenter()
+    return FrameProjection(extent, projection)
   }
 
   override fun presentationAnchor(extent: MapExtent): MlnFfiMapPresentationAnchor {
@@ -636,8 +693,11 @@ internal class MlnFfiMapSession(
     applyRequestedStyle(map)
     // A camera set before this map existed reaches it as a queued jump, which a loop that stopped
     // before running it has already abandoned.
-    appliedCameraPadding = EdgeInsets.ZERO
-    requestedCamera?.let { map.jumpTo(it.toCameraOptions(appliedCameraPadding)) }
+    appliedViewportInsets = EdgeInsets.ZERO
+    pendingCameraPadding = requestedCamera?.padding?.takeUnless { it == DpPadding.Zero }
+    requestedCamera?.let {
+      map.jumpTo(it.copy(padding = DpPadding.Zero).toCameraOptions(appliedViewportInsets))
+    }
   }
 
   /**
@@ -959,18 +1019,6 @@ internal class MlnFfiMapSession(
     hostSession?.requestFrame()
   }
 
-  /**
-   * The cap filters an arriving cadence rather than driving one, hence [FRAME_INTERVAL_SLACK]: a
-   * cap at the display's own rate would otherwise halve the frame rate.
-   */
-  private fun allowRenderNow(now: TimeSource.Monotonic.ValueTimeMark): Boolean {
-    val fps = maximumFps ?: return true
-    if (fps <= 0) return true
-    val minimumInterval = 1.0 / fps
-    val elapsed = (now - lastRenderTime).toDouble(DurationUnit.SECONDS)
-    return elapsed >= minimumInterval * (1.0 - FRAME_INTERVAL_SLACK)
-  }
-
   // endregion
 
   // region dispatch
@@ -1064,7 +1112,7 @@ internal class MlnFfiMapSession(
     if (size.width != request.extent.width || size.height != request.extent.height) return
     if (anchoredSize?.let { it.width != size.width.dp || it.height != size.height.dp } == true)
       cancelAnchoredTransition()
-    applyCameraPadding(map)
+    applyViewportInsets(map)
     snapshotViewport(map)
     // Keep the last usable viewport during resize and surface loss. A detached presentation
     // cannot be made ready by an acknowledgment that was already in flight.
@@ -1081,7 +1129,13 @@ internal class MlnFfiMapSession(
     requestedCamera = position
     configureMap { map ->
       if (guard?.isValid() == false) return@configureMap
-      map.jumpTo(position.toCameraOptions(appliedCameraPadding))
+      val applied =
+        if (hasViewport) position
+        else {
+          pendingCameraPadding = position.padding.takeUnless { it == DpPadding.Zero }
+          position.copy(padding = DpPadding.Zero)
+        }
+      map.jumpTo(applied.toCameraOptions(appliedViewportInsets))
       snapshotViewport(map)
     }
   }
@@ -1225,6 +1279,7 @@ internal class MlnFfiMapSession(
    */
   private data class MirroredViewport(
     val camera: CameraPosition = CameraPosition(),
+    val effectivePadding: EdgeInsets = EdgeInsets.ZERO,
     val size: DpSize = DpSize.Zero,
     val visibleRegion: VisibleRegion =
       VisibleRegion(Position(0.0, 0.0), Position(0.0, 0.0), Position(0.0, 0.0), Position(0.0, 0.0)),
@@ -1253,10 +1308,11 @@ internal class MlnFfiMapSession(
 
   /** Owner thread only. Publishes the applied camera and viewport for any-thread getters. */
   private fun snapshotViewport(map: MapHandle) {
-    val geometry = map.readViewportGeometry()
+    val geometry = map.readViewportGeometry(appliedViewportInsets)
     publishViewport(
       MirroredViewport(
         camera = geometry.camera,
+        effectivePadding = map.camera.padding ?: EdgeInsets.ZERO,
         size = geometry.size,
         visibleRegion = geometry.visibleRegion,
         visibleBounds = geometry.visibleBounds,
@@ -1296,36 +1352,43 @@ internal class MlnFfiMapSession(
     recordCamera(cameraPosition, guard)
   }
 
-  override fun setCameraPadding(padding: PaddingValues) {
-    val insets = padding.toEdgeInsets(layoutDirection)
-    if (cameraPadding == insets) return
-    cameraPadding = insets
+  override fun setViewportInsets(insets: PaddingValues) {
+    val resolved = insets.toEdgeInsets(layoutDirection)
+    if (viewportInsets == resolved) return
+    viewportInsets = resolved
     configureMap { map ->
       if (hasViewport) {
-        applyCameraPadding(map)
+        applyViewportInsets(map)
         snapshotViewport(map)
       }
     }
   }
 
   /** Owner thread only, with a usable viewport. */
-  private fun applyCameraPadding(map: MapHandle) {
-    val padding = cameraPadding
-    if (padding == appliedCameraPadding) return
+  private fun applyViewportInsets(map: MapHandle) {
+    val padding = viewportInsets
+    val pending = pendingCameraPadding
+    if (padding == appliedViewportInsets && pending == null) return
     cancelAnchoredTransition()
-    map.jumpTo(CameraOptions().also { it.padding = padding })
-    appliedCameraPadding = padding
+    val current = map.camera.toCameraPosition(appliedViewportInsets)
+    val effective =
+      current.copy(padding = pending ?: current.padding).toCameraOptions(padding).padding
+    map.jumpTo(CameraOptions().also { it.padding = effective })
+    appliedViewportInsets = padding
+    pendingCameraPadding = null
   }
 
   override fun cameraForBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
   ): CameraPosition =
     checkNotNull(
       runOnMap { map ->
-        cameraForBounds(map, boundingBox, bearing, tilt, padding).toCameraPosition()
+        cameraForBounds(map, boundingBox, bearing, tilt, cameraPadding, fitPadding)
+          .toCameraPosition(appliedViewportInsets)
       }
     ) {
       "The map became unavailable during the bounds query"
@@ -1335,13 +1398,16 @@ internal class MlnFfiMapSession(
     geometry: Geometry,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
   ): CameraPosition {
     val geoJson = geometry.toJson().encodeToByteArray()
     return checkNotNull(
       runOnMap { map ->
-        fitCamera(map, bearing, tilt, padding) { map.cameraForGeometry(geoJson, it) }
-          .toCameraPosition()
+        fitCamera(map, bearing, tilt, cameraPadding, fitPadding) {
+            map.cameraForGeometry(geoJson, it)
+          }
+          .toCameraPosition(appliedViewportInsets)
       }
     ) {
       "The map became unavailable during the geometry query"
@@ -1352,13 +1418,14 @@ internal class MlnFfiMapSession(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
     guard: CameraCommandGuard?,
   ) {
     if (guard?.isValid() == false) return
     val fit: (MapHandle) -> Unit = fit@{ map ->
       if (guard?.isValid() == false) return@fit
-      map.jumpTo(cameraForBounds(map, boundingBox, bearing, tilt, padding))
+      map.jumpTo(cameraForBounds(map, boundingBox, bearing, tilt, cameraPadding, fitPadding))
       snapshotViewport(map)
     }
     // MapState waits for the current attachment's viewport before it calls this adapter.
@@ -1373,9 +1440,10 @@ internal class MlnFfiMapSession(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
   ): CameraOptions =
-    fitCamera(map, bearing, tilt, padding) {
+    fitCamera(map, bearing, tilt, cameraPadding, fitPadding) {
       map.cameraForLatLngBounds(bounds = boundingBox.toLatLngBounds(), fitOptions = it)
     }
 
@@ -1383,11 +1451,14 @@ internal class MlnFfiMapSession(
     map: MapHandle,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
     fit: (CameraFitOptions) -> CameraOptions,
   ): CameraOptions {
-    val persistent = cameraPadding
-    val total = persistent + padding.toEdgeInsets(layoutDirection)
+    val current = map.camera.toCameraPosition(appliedViewportInsets)
+    val destination = current.copy(padding = cameraPadding ?: current.padding)
+    val persistent = checkNotNull(destination.toCameraOptions(appliedViewportInsets).padding)
+    val total = persistent + fitPadding.toEdgeInsets()
     val fitted =
       fit(
         CameraFitOptions().also {
@@ -1398,7 +1469,7 @@ internal class MlnFfiMapSession(
       )
 
     // Native returns the fit padding as persistent camera state. Preserve the fitted transform
-    // while replacing it with the map's declarative padding.
+    // while retaining only the viewport insets and destination camera padding.
     map.createProjection().use { projection ->
       projection.setCamera(fitted)
       val size = map.size
@@ -1428,7 +1499,7 @@ internal class MlnFfiMapSession(
     guard: CameraCommandGuard?,
   ) {
     startTransitionAwaitingRelease(animation.toAnimationOptions(), guard = guard) { map, options ->
-      map.animateTo(finalPosition.toCameraOptions(appliedCameraPadding), animation, options)
+      map.animateTo(finalPosition.toCameraOptions(appliedViewportInsets), animation, options)
     }
   }
 
@@ -1461,7 +1532,8 @@ internal class MlnFfiMapSession(
           it.zoom = zoom
           it.bearing = bearing
           it.pitch = tilt
-          it.padding = appliedCameraPadding
+          // Keep the current effective padding for an anchored move.
+          it.padding = map.camera.padding
         },
         options,
       )
@@ -1472,7 +1544,8 @@ internal class MlnFfiMapSession(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
     animation: CameraAnimation,
     guard: CameraCommandGuard?,
   ) {
@@ -1480,7 +1553,11 @@ internal class MlnFfiMapSession(
       "A bounds animation requires the current presentation viewport"
     }
     startTransitionAwaitingRelease(animation.toAnimationOptions(), guard = guard) { map, options ->
-      map.animateTo(cameraForBounds(map, boundingBox, bearing, tilt, padding), animation, options)
+      map.animateTo(
+        cameraForBounds(map, boundingBox, bearing, tilt, cameraPadding, fitPadding),
+        animation,
+        options,
+      )
     }
   }
 
@@ -1708,7 +1785,10 @@ internal class MlnFfiMapSession(
   }
 
   override fun setRenderSettings(value: RenderOptions) {
-    maximumFps = value.maximumFps
+    if (maximumFps != value.maximumFps) {
+      maximumFps = value.maximumFps
+      requestRender()
+    }
     val cameraProjectionChanged = cameraProjection != value.cameraProjection
     cameraProjection = value.cameraProjection
     configureMap { map ->
@@ -1777,11 +1857,12 @@ internal class MlnFfiMapSession(
     }
   }
 
-  override fun positionFromScreenLocation(offset: DpOffset): Position? = withSnapshotProjection {
-    it.latLngForPixelUnwrapped(offset.toScreenPoint()).toPosition()
+  override fun positionFromScreenLocation(offset: DpOffset): Position? = projectionLock.withLock {
+    mirroredViewport.projection?.latLngForPixelUnwrapped(offset.toScreenPoint())?.toPosition()
   }
 
-  override fun boxZoomFit(rect: DpRect): BoxZoomFit? = withSnapshotProjection { projection ->
+  override fun boxZoomFit(rect: DpRect): BoxZoomFit? = projectionLock.withLock {
+    val projection = mirroredViewport.projection ?: return@withLock null
     boxZoomFit(rect, mirroredViewport.camera) {
       projection.latLngForPixel(it.toScreenPoint()).toPosition()
     }
@@ -1796,7 +1877,7 @@ internal class MlnFfiMapSession(
     startTransitionAwaitingRelease(duration.toAnimationOptions(), gestureToken = gestureToken) {
       map,
       animation ->
-      val camera = cameraForBounds(map, fit.bounds, fit.bearing, fit.tilt, PaddingValues())
+      val camera = cameraForBounds(map, fit.bounds, fit.bearing, fit.tilt, null, DpPadding.Zero)
       map.easeTo(camera, animation)
     }
   }
@@ -1807,13 +1888,28 @@ internal class MlnFfiMapSession(
     projection.pixelForLatLng(position.toLatLng()).toDpOffset()
   }
 
+  override fun overlayScreenLocationFromPosition(position: Position): DpOffset? =
+    projectionLock.withLock {
+      presentationRevision.longValue
+      val presented = presentedProjection
+      if (presented != null)
+        return@withLock presented.toScreen(presented.frame.screenLocation(position))
+      val snapshot = mirroredViewport
+      val projection = snapshot.wrappedProjection ?: snapshot.projection ?: return@withLock null
+      projection.pixelForLatLng(position.toLatLng()).toDpOffset()
+    }
+
   /**
    * Native projects against a wrapped center, but anchored moves can leave the transform in another
    * world. Normalize a standalone projection for geographic-to-screen conversion. Keep the raw
    * snapshot separately so screen-to-geographic conversion still preserves the actual world copy.
    */
   private fun MapHandle.createWrappedProjection(): MapProjectionHandle {
-    val projection = createProjection()
+    return createProjection().normalizeWrappedCenter()
+  }
+
+  private fun MapProjectionHandle.normalizeWrappedCenter(): MapProjectionHandle {
+    val projection = this
     try {
       val center = camera.center
       if (center != null && center.longitude !in -180.0..<180.0) {
@@ -1830,16 +1926,6 @@ internal class MlnFfiMapSession(
       throw error
     }
   }
-
-  /**
-   * Runs [block] on the snapshot's frozen projection. Holds [projectionLock] for the call so the
-   * owner thread retires this handle only after [block] returns.
-   */
-  private inline fun <T> withSnapshotProjection(block: (MapProjectionHandle) -> T): T? =
-    projectionLock.withLock {
-      val handle = mirroredViewport.projection ?: return@withLock null
-      block(handle)
-    }
 
   override suspend fun queryRenderedFeatures(
     offset: DpOffset,

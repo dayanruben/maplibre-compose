@@ -5,14 +5,41 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.value.ColorValue
+import org.maplibre.compose.expressions.value.DpValue
 import org.maplibre.compose.expressions.value.FloatValue
 import org.maplibre.compose.expressions.value.ImageValue
+import org.maplibre.compose.style.TransitionOptions
 import org.maplibre.compose.util.toStyleJson
 import org.maplibre.spatialk.geojson.Position
 
 internal class LocationIndicatorLayer(id: String) : Layer(id) {
 
   override val type: String = "location-indicator"
+
+  fun setLocationTransition(options: TransitionOptions) = setPaintTransition("location", options)
+
+  fun setBearingTransition(options: TransitionOptions) = setPaintTransition("bearing", options)
+
+  fun setAccuracyRadiusTransition(options: TransitionOptions) =
+    setPaintTransition("accuracy-radius", options)
+
+  fun setBearingAccuracyTransition(options: TransitionOptions) =
+    setPaintTransition("bearing-accuracy", options)
+
+  fun setBearingAccuracyRadiusTransition(options: TransitionOptions) =
+    setPaintTransition("bearing-accuracy-radius", options)
+
+  fun setBearingAccuracyColorTransition(options: TransitionOptions) =
+    setPaintTransition("bearing-accuracy-color", options)
+
+  fun setBearingAccuracy(value: CompiledExpression<FloatValue>) =
+    setPaintProperty("bearing-accuracy", value)
+
+  fun setBearingAccuracyRadius(value: CompiledExpression<DpValue>) =
+    setPaintProperty("bearing-accuracy-radius", value)
+
+  fun setBearingAccuracyColor(value: CompiledExpression<ColorValue>) =
+    setPaintProperty("bearing-accuracy-color", value)
 
   fun setTopImage(topImage: CompiledExpression<ImageValue?>) {
     setImageProperty("top-image", topImage)

@@ -42,6 +42,8 @@ internal external class MaplibreMap(options: MapOptions) {
 
   fun resize()
 
+  fun triggerRepaint()
+
   fun redraw()
 
   fun remove()
@@ -65,6 +67,12 @@ internal external class MaplibreMap(options: MapOptions) {
   fun isStyleLoaded(): Boolean
 
   fun isSourceLoaded(id: String): Boolean
+
+  fun getRenderWorldCopies(): Boolean
+
+  fun getImage(id: String): GlJsStyleImage?
+
+  fun getPadding(): PaddingOptions
 
   fun getCenter(): LngLat
 
@@ -91,8 +99,6 @@ internal external class MaplibreMap(options: MapOptions) {
   fun easeTo(options: EaseToOptions)
 
   fun flyTo(options: FlyToOptions)
-
-  fun cameraForBounds(bounds: LngLatBounds, options: CameraForBoundsOptions): CenterZoomBearing?
 
   fun panBy(offset: Point, options: EaseToOptions)
 
@@ -123,6 +129,10 @@ internal external class MaplibreMap(options: MapOptions) {
     sourceId: String,
     options: QuerySourceFeatureOptions,
   ): Array<GeoJsonFeature>
+
+  fun setGlobalStateProperty(propertyName: String, value: Any?)
+
+  fun getGlobalState(): Any
 
   fun setFeatureState(feature: FeatureIdentifier, state: Any)
 

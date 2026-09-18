@@ -27,6 +27,7 @@ internal external interface JsError {
 internal external interface MapOptions {
   var container: HTMLElement
   var interactive: Boolean?
+  var trackResize: Boolean?
   var attributionControl: Boolean?
   var maplibreLogo: Boolean?
   var pixelRatio: Double?
@@ -177,6 +178,7 @@ internal external interface GeoJsonFeature {
 }
 
 internal external interface MapGeoJsonFeature : GeoJsonFeature {
+  val layer: LayerSpecification
   val source: String
   val sourceLayer: String?
 }
@@ -202,12 +204,6 @@ internal external interface CameraOptions {
   var pitch: Double?
 }
 
-internal external interface CenterZoomBearing {
-  var center: LngLat?
-  var zoom: Double?
-  var bearing: Double?
-}
-
 internal external interface AnimationOptions {
   var duration: Double?
   var easing: ((Double) -> Double)?
@@ -227,8 +223,6 @@ internal external interface FlyToOptions : PaddedCameraOptions, AnimationOptions
   var screenSpeed: Double?
   var minZoom: Double?
 }
-
-internal external interface CameraForBoundsOptions : PaddedCameraOptions
 
 internal external interface Painter {
   val context: Context

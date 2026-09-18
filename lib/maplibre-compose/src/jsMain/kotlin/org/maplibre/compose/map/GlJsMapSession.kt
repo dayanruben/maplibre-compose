@@ -13,8 +13,6 @@ import js.objects.unsafeJso
 import kotlin.coroutines.resume
 import kotlin.math.log2
 import kotlin.time.Duration
-import kotlin.time.DurationUnit
-import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.asPromise
@@ -33,7 +31,6 @@ import org.maplibre.compose.camera.internal.runCameraCommand
 import org.maplibre.compose.camera.resolveScreenPoint
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.value.BooleanValue
-import org.maplibre.compose.gljs.CameraForBoundsOptions
 import org.maplibre.compose.gljs.DEFAULT_WORKER_URL
 import org.maplibre.compose.gljs.EaseToOptions
 import org.maplibre.compose.gljs.FilterSpecification
@@ -53,7 +50,6 @@ import org.maplibre.compose.gljs.MaplibreMap
 import org.maplibre.compose.gljs.PaddedCameraOptions
 import org.maplibre.compose.gljs.PaddingOptions
 import org.maplibre.compose.gljs.Point
-import org.maplibre.compose.gljs.QueryGeometry
 import org.maplibre.compose.gljs.QueryRenderedFeaturesOptions
 import org.maplibre.compose.gljs.SetStyleOptions
 import org.maplibre.compose.gljs.isCameraEasing
@@ -78,6 +74,7 @@ import org.maplibre.compose.style.StyleReconciler
 import org.maplibre.compose.style.StyleRequestId
 import org.maplibre.compose.style.StyleResourceChanges
 import org.maplibre.compose.util.AngleMath
+import org.maplibre.compose.util.DpPadding
 import org.maplibre.compose.util.VisibleBounds
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.compose.util.metersPerDpAtLatitude
@@ -102,12 +99,10 @@ import web.gl.WebGL2RenderingContext
 import web.html.HTMLCanvasElement
 import web.html.HTMLElement
 
-/** The fraction of a capped frame interval a frame may arrive early and still be drawn. */
-private const val FRAME_INTERVAL_SLACK = 0.1
-
 /**
- * The map can only be built once Compose has a WebGL context to lend it and a size to take, so
- * calls before then are queued and reads answer from what was last asked for.
+ * Creates the engine when a host supplies its first render target and extent. Calls before then are
+ * queued and reads answer from what was last asked for. A DOM host supplies [mapContainer]; Compose
+ * hosts use an offscreen container and borrow Compose's WebGL context.
  */
 internal class GlJsMapSession(
   private val lifecycleAuthority: MapLifecycleAuthority,
@@ -115,6 +110,7 @@ internal class GlJsMapSession(
   internal var logger: MapLog?,
   internal var layoutDirection: LayoutDirection,
   private val requests: GlJsRequestController? = null,
+  private val mapContainer: HTMLElement? = null,
 ) : MapLifecycleSession, GlJsMapRenderer, CameraInputTarget {
 
   init {
@@ -147,7 +143,7 @@ internal class GlJsMapSession(
     val abandon: () -> Unit,
   )
 
-  /** Actions accepted before Compose supplies the context used to construct the map. */
+  /** Actions accepted before the host supplies the first render target. */
   private val pendingMapActions = mutableListOf<PendingMapAction>()
 
   /** Platform-access callbacks waiting for this render lease's engine map. */
@@ -165,7 +161,7 @@ internal class GlJsMapSession(
 
   private var hasReplayedPresentationState by mutableStateOf(false)
 
-  /** Whether the current engine map may be copied onto the visible Compose surface. */
+  /** Whether the current engine map may be shown by its host. */
   internal val canPresentFrames: Boolean
     get() =
       styleLoadTracker.presentation != StylePresentation.Hidden && hasReplayedPresentationState
@@ -185,14 +181,24 @@ internal class GlJsMapSession(
 
   private var lentContext: WebGL2RenderingContext? = null
 
-  private var maximumFps: Int? = null
+  override var maximumFps: Int? = null
+    private set
+
   private var cameraConstraints: CameraConstraints? = null
   private var tileLodOptions: TileLodOptions = TileLodOptions.Standard
-  private var lastRenderTime = TimeSource.Monotonic.markNow()
   private var renderedProjection by mutableStateOf<RenderedProjection?>(null)
+
+  private data class PresentedGeometry(val target: GlJsRenderTarget?, val extent: MapExtent)
+
+  private var presentedGeometry by mutableStateOf<PresentedGeometry?>(null)
+
+  override fun presentFrame(target: GlJsRenderTarget?, extent: MapExtent) {
+    presentedGeometry = PresentedGeometry(target, extent)
+  }
 
   private class RenderedProjection(
     val target: GlJsRenderTarget?,
+    val extent: MapExtent,
     val transform: GlJsTransform,
     val terrain: GlJsTerrain?,
   ) {
@@ -239,8 +245,8 @@ internal class GlJsMapSession(
       return false
     }
     if (styleLoadTracker.presentation == StylePresentation.Retained) return false
-    // A detached map cannot later adopt a context: everything it uploaded belongs to the one it
-    // has.
+    // A map with its own canvas cannot later adopt a borrowed context: everything it uploaded
+    // belongs to the context it already has.
     val composited = target as? GlJsFrameTarget.Composited
     if (target is GlJsFrameTarget.NotReady && map == null) return false
     framebuffer = composited?.target?.framebuffer
@@ -255,14 +261,7 @@ internal class GlJsMapSession(
     }
     if (target is GlJsFrameTarget.NotReady) return false
 
-    val now = TimeSource.Monotonic.markNow()
     val previous = renderedProjection
-    if (previous != null && previous.target === composited?.target && !allowRenderNow(now)) {
-      // Throttled, not dropped.
-      surface?.requestFrame()
-      return false
-    }
-
     if (composited != null) {
       // Skia drives this context between MapLibre's frames, so each renderer is told the other
       // moved the state.
@@ -283,14 +282,13 @@ internal class GlJsMapSession(
     }
 
     renderedProjection =
-      RenderedProjection(composited?.target, map._camera.transform.clone(), map.terrain)
+      RenderedProjection(composited?.target, extent, map._camera.transform.clone(), map.terrain)
 
     if (previous == null) {
       logger?.i {
         "Rendered the first map frame at ${extent.physicalWidth}x${extent.physicalHeight}"
       }
     }
-    lastRenderTime = now
     return true
   }
 
@@ -316,6 +314,7 @@ internal class GlJsMapSession(
 
   override suspend fun attach(identity: EngineMapIdentity, lease: RenderLease) {
     lifecycleRenderLease = lease
+    surface?.requestFrame()
   }
 
   override suspend fun detach(identity: EngineMapIdentity, lease: RenderLease) {
@@ -343,7 +342,7 @@ internal class GlJsMapSession(
   /**
    * MapLibre takes its WebGL context and its size at construction, so the map cannot exist before
    * the first frame that has somewhere to draw. A null [target] builds a detached map, which takes
-   * a context from its own canvas and is never drawn.
+   * a context from its own canvas.
    */
   private fun ensureMap(target: GlJsRenderTarget?, extent: MapExtent): MaplibreMap? {
     map?.let {
@@ -351,12 +350,17 @@ internal class GlJsMapSession(
     }
     if (!lifecycle.acceptsWork) return null
     if (!lifecycleAuthority.selectAdapterForPresentation(this)) return null
+    val engine = lifecycleEngineIdentity ?: return null
+    val lease = lifecycleRenderLease ?: return null
 
-    val host = document.createElement("div").unsafeCast<HTMLElement>()
-    host.style.cssText = OFFSCREEN_CONTAINER_STYLE
+    val host =
+      mapContainer
+        ?: document.createElement("div").unsafeCast<HTMLElement>().also {
+          it.style.cssText = OFFSCREEN_CONTAINER_STYLE
+          document.body.appendChild(it)
+        }
     host.style.width = "${extent.width}px"
     host.style.height = "${extent.height}px"
-    document.body.appendChild(host)
     container = host
 
     val options =
@@ -364,6 +368,9 @@ internal class GlJsMapSession(
         this.container = host
         // Gestures arrive through CameraInputTarget below.
         interactive = false
+        // Both hosts apply extents and schedule frames themselves. GL JS's ResizeObserver also
+        // calls redraw(), bypassing activation, frame limits, and retained-style presentation.
+        trackResize = false
         attributionControl = false
         maplibreLogo = false
         pixelRatio = extent.scaleFactor
@@ -392,8 +399,6 @@ internal class GlJsMapSession(
       GlJsRuntime.redirectDefaultFramebuffer(created.painter.context) { framebuffer }
     }
     GlJsRuntime.interceptRepaintRequests(created) { surface?.requestFrame() }
-    val engine = lifecycleEngineIdentity ?: return null
-    val lease = lifecycleRenderLease ?: return null
     wireEvents(created, engine, lease)
 
     map = created
@@ -425,6 +430,7 @@ internal class GlJsMapSession(
     styleLoadPending = false
     styleLoadTracker.engineBecameUnavailable()
     renderedProjection = null
+    presentedGeometry = null
     val borrowed = lentContext
     lentContext = null
     runCatching {
@@ -432,7 +438,7 @@ internal class GlJsMapSession(
       else GlJsRuntime.removingWithoutLosingContext(borrowed) { current.remove() }
     }
       .onFailure { logger?.e(it) { "MapLibre failed to close" } }
-    container?.let { runCatching { it.remove() } }
+    if (mapContainer == null) container?.let { runCatching { it.remove() } }
     container = null
     // No moveend follows a map that is going away.
     resumeTransitions()
@@ -530,17 +536,6 @@ internal class GlJsMapSession(
   private fun maxTextureSize(gl: dynamic): Array<Double> {
     val size = (gl.getParameter(gl.MAX_TEXTURE_SIZE) as? Int)?.toDouble() ?: 4096.0
     return arrayOf(size, size)
-  }
-
-  /**
-   * A cap at the display's own rate would reject any interval measured a microsecond short, halving
-   * the frame rate; hence [FRAME_INTERVAL_SLACK].
-   */
-  private fun allowRenderNow(now: TimeSource.Monotonic.ValueTimeMark): Boolean {
-    val fps = maximumFps ?: return true
-    if (fps <= 0) return true
-    val elapsed = (now - lastRenderTime).toDouble(DurationUnit.SECONDS)
-    return elapsed >= (1.0 / fps) * (1.0 - FRAME_INTERVAL_SLACK)
   }
 
   // endregion
@@ -837,7 +832,7 @@ internal class GlJsMapSession(
 
   /** Answers camera reads made before the map exists. */
   private var requestedCamera: CameraPosition? = null
-  private var cameraPadding: PaddingOptions = PaddingValues(0.dp).toPaddingOptions(layoutDirection)
+  private var viewportInsets: PaddingOptions = PaddingValues(0.dp).toPaddingOptions(layoutDirection)
 
   override fun getCameraPosition(): CameraPosition =
     withMap(requestedCamera ?: CameraPosition()) { map -> map.cameraPosition() }
@@ -847,6 +842,15 @@ internal class GlJsMapSession(
       bearing = getBearing(),
       target = getCenter().toPosition(),
       tilt = getPitch(),
+      padding =
+        getPadding().let {
+          DpPadding(
+            left = (it.left - viewportInsets.left).dp,
+            top = (it.top - viewportInsets.top).dp,
+            right = (it.right - viewportInsets.right).dp,
+            bottom = (it.bottom - viewportInsets.bottom).dp,
+          )
+        },
       zoom = getZoom(),
     )
 
@@ -857,21 +861,27 @@ internal class GlJsMapSession(
     onMap { map -> if (guard?.isValid() != false) map.jumpTo(cameraPosition.toJumpToOptions()) }
   }
 
-  override fun setCameraPadding(padding: PaddingValues) {
-    val resolved = padding.toPaddingOptions(layoutDirection)
-    if (cameraPadding.sameAs(resolved)) return
+  override fun setViewportInsets(insets: PaddingValues) {
+    val resolved = insets.toPaddingOptions(layoutDirection)
+    if (viewportInsets.sameAs(resolved)) return
     cancelAnchoredTransition()
-    cameraPadding = resolved
-    onMap { map -> map.jumpTo(unsafeJso<JumpToOptions> { this.padding = resolved }) }
+    val camera = getCameraPosition()
+    viewportInsets = resolved
+    onMap { map ->
+      map.jumpTo(unsafeJso<JumpToOptions> { this.padding = camera.effectivePadding() })
+    }
   }
 
   override fun cameraForBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
   ): CameraPosition =
-    checkNotNull(map?.cameraPositionForBounds(boundingBox, bearing, tilt, padding)) {
+    checkNotNull(
+      map?.cameraPositionForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)
+    ) {
       "The map could not calculate a camera for the bounds"
     }
 
@@ -879,39 +889,26 @@ internal class GlJsMapSession(
     geometry: Geometry,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
   ): CameraPosition =
     withMap(null as CameraPosition?) { map ->
-      val extent = appliedExtent
-      val fit =
-        fitPositions(
-          positions = geometry.positions(),
-          bearing = bearing,
-          zoom = map.getZoom(),
-          width = extent.width.toDouble(),
-          height = extent.height.toDouble(),
-          edgePadding = cameraPadding,
-          fitPadding = padding.toPaddingOptions(layoutDirection),
-          minZoom = map.getMinZoom(),
-          maxZoom = map.getMaxZoom(),
-        )
-      fit?.let {
-        CameraPosition(bearing = bearing, target = it.target, tilt = tilt, zoom = it.zoom)
-      }
+      map.cameraPositionForPositions(geometry.positions(), bearing, tilt, cameraPadding, fitPadding)
     } ?: throw IllegalStateException("The map could not calculate a camera for the geometry")
 
   override fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
     guard: CameraCommandGuard?,
   ) {
     if (guard?.isValid() == false) return
     releasePendingCameraTransition()
     onMap { map ->
       if (guard?.isValid() == false) return@onMap
-      map.cameraPositionForBounds(boundingBox, bearing, tilt, padding)?.let {
+      map.cameraPositionForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)?.let {
         map.jumpTo(it.toJumpToOptions())
       }
     }
@@ -966,12 +963,13 @@ internal class GlJsMapSession(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
     animation: CameraAnimation,
     guard: CameraCommandGuard?,
   ) {
     awaitCameraRelease(guard = guard) { map ->
-      map.cameraPositionForBounds(boundingBox, bearing, tilt, padding)?.let {
+      map.cameraPositionForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)?.let {
         map.animateTo(it, animation)
       }
     }
@@ -1010,26 +1008,53 @@ internal class GlJsMapSession(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
-    padding: PaddingValues,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
   ): CameraPosition? {
-    val previous = cameraPosition()
-    val result =
-      cameraForBounds(boundingBox.toLngLatBounds(), cameraForBoundsOptions(bearing, padding))
-        ?: return null
-    return CameraPosition(
-      bearing = result.bearing ?: bearing,
-      target = result.center?.toPosition() ?: previous.target,
-      tilt = tilt,
-      zoom = result.zoom ?: previous.zoom,
+    // GL JS cameraForBounds reads persistent padding from the live transform and cannot query
+    // destination padding. Fit all four corners through the same geometry fitter so every query
+    // uses explicit padding inputs without mutating the map or accessing private GL JS APIs.
+    // TODO: Replace this with the planned upstream GL JS destination-padding fit API
+    // once that PR lands (PR not filed yet).
+    val east =
+      if (boundingBox.east < boundingBox.west) boundingBox.east + 360.0 else boundingBox.east
+    return cameraPositionForPositions(
+      sequenceOf(
+        Position(boundingBox.west, boundingBox.south),
+        Position(boundingBox.west, boundingBox.north),
+        Position(east, boundingBox.south),
+        Position(east, boundingBox.north),
+      ),
+      bearing,
+      tilt,
+      cameraPadding,
+      fitPadding,
     )
   }
 
-  private fun cameraForBoundsOptions(
+  private fun MaplibreMap.cameraPositionForPositions(
+    positions: Sequence<Position>,
     bearing: Double,
-    padding: PaddingValues,
-  ): CameraForBoundsOptions = unsafeJso {
-    this.bearing = bearing
-    this.padding = padding.toPaddingOptions(layoutDirection)
+    tilt: Double,
+    cameraPadding: DpPadding?,
+    fitPadding: DpPadding,
+  ): CameraPosition? {
+    val current = cameraPosition()
+    val destination = current.copy(padding = cameraPadding ?: current.padding)
+    val extent = appliedExtent
+    val fit =
+      fitPositions(
+        positions = positions,
+        bearing = bearing,
+        zoom = getZoom(),
+        width = extent.width.toDouble(),
+        height = extent.height.toDouble(),
+        edgePadding = destination.effectivePadding(),
+        fitPadding = fitPadding.toPaddingOptions(),
+        minZoom = getMinZoom(),
+        maxZoom = getMaxZoom(),
+      ) ?: return null
+    return destination.copy(bearing = bearing, target = fit.target, tilt = tilt, zoom = fit.zoom)
   }
 
   override fun setCameraConstraints(value: CameraConstraints) {
@@ -1082,7 +1107,10 @@ internal class GlJsMapSession(
     }
 
   override fun setRenderSettings(value: RenderOptions) {
-    maximumFps = value.maximumFps
+    if (maximumFps != value.maximumFps) {
+      maximumFps = value.maximumFps
+      surface?.requestFrame()
+    }
     onMap { map ->
       map.showTileBoundaries = value.debug.tileBorders
       map.showCollisionBoxes = value.debug.collisionBoxes
@@ -1123,8 +1151,26 @@ internal class GlJsMapSession(
 
   override fun overlayScreenLocationFromPosition(position: Position): DpOffset? {
     val projection = renderedProjection ?: return null
+    val geometry = presentedGeometry
+    if (projection.target != null && geometry?.target !== projection.target) return null
+    fun toScreen(point: DpOffset): DpOffset {
+      if (projection.target == null || geometry == null) return point
+      val source = projection.extent
+      val destination = geometry.extent
+      if (source.isEmpty || destination.isEmpty) return point
+      return DpOffset(
+        (point.x.value * source.scaleFactor * destination.physicalWidth /
+            source.physicalWidth /
+            destination.scaleFactor)
+          .dp,
+        (point.y.value * source.scaleFactor * destination.physicalHeight /
+            source.physicalHeight /
+            destination.scaleFactor)
+          .dp,
+      )
+    }
     projection.locations[position]?.let {
-      return it
+      return toScreen(it)
     }
     if (projection.terrainChanged) {
       surface?.requestFrame()
@@ -1132,10 +1178,15 @@ internal class GlJsMapSession(
     }
     val center = projection.transform.center
     val nearestCopy = with(AngleMath) { center.lng + position.longitude.diff(center.lng) }
-    return projection.transform
-      .locationToScreenPoint(LngLat(lng = nearestCopy, lat = position.latitude), projection.terrain)
-      .toDpOffset()
-      .also { if (projection.terrain != null) projection.locations[position] = it }
+    val point =
+      projection.transform
+        .locationToScreenPoint(
+          LngLat(lng = nearestCopy, lat = position.latitude),
+          projection.terrain,
+        )
+        .toDpOffset()
+        .also { if (projection.terrain != null) projection.locations[position] = it }
+    return toScreen(point)
   }
 
   override suspend fun queryRenderedFeatures(
@@ -1143,37 +1194,53 @@ internal class GlJsMapSession(
     layerIds: Set<String>?,
     predicate: CompiledExpression<BooleanValue>?,
   ): List<Feature<Geometry, JsonObject?>> =
-    query(queryPoint(offset.x.value.toDouble(), offset.y.value.toDouble()), layerIds, predicate)
+    query(DpRect(offset.x, offset.y, offset.x, offset.y), layerIds, predicate)
 
   override suspend fun queryRenderedFeatures(
     rect: DpRect,
     layerIds: Set<String>?,
     predicate: CompiledExpression<BooleanValue>?,
-  ): List<Feature<Geometry, JsonObject?>> =
-    query(
-      queryBox(
-        DpOffset(rect.left, rect.top).toPoint(),
-        DpOffset(rect.right, rect.bottom).toPoint(),
-      ),
-      layerIds,
-      predicate,
-    )
+  ): List<Feature<Geometry, JsonObject?>> = query(rect, layerIds, predicate)
 
   private fun query(
-    geometry: QueryGeometry,
+    rect: DpRect,
     layerIds: Set<String>?,
     predicate: CompiledExpression<BooleanValue>?,
   ): List<Feature<Geometry, JsonObject?>> =
     withMap(emptyList()) { map ->
       // GL JS errors on a layer id its style lacks, where Native ignores it.
-      val known = layerIds?.filter { map.getLayer(it) != null }
-      if (known != null && known.isEmpty()) return@withMap emptyList()
+      val known = layerIds?.filter {
+        map.getLayer(it)?.type?.let { type -> type != "custom" } == true
+      }
       val options =
         unsafeJso<QueryRenderedFeaturesOptions> {
           known?.let { layers = it.toTypedArray() }
           filter = predicate?.toStyleJson()?.toJsValue<FilterSpecification>()
         }
-      map.queryRenderedFeatures(geometry, options).map { it.toGeoJsonFeature() }
+      val geometry =
+        if (rect.left == rect.right && rect.top == rect.bottom)
+          queryPoint(rect.left.value.toDouble(), rect.top.value.toDouble())
+        else
+          queryBox(
+            DpOffset(rect.left, rect.top).toPoint(),
+            DpOffset(rect.right, rect.bottom).toPoint(),
+          )
+      val features =
+        if (known != null && known.isEmpty()) mutableListOf()
+        else
+          map
+            .queryRenderedFeatures(geometry, options)
+            .map { it.layer.id to it.toGeoJsonFeature() }
+            .toMutableList()
+      // Native's dynamic indicator index also bypasses source-feature predicates.
+      val indicators = styleBinding?.indicatorFeatures(rect, layerIds).orEmpty()
+      if (indicators.isEmpty()) return@withMap features.map { it.second }
+      val order = map.getLayersOrder().withIndex().associate { it.value to it.index }
+      for (hit in indicators) {
+        val index = features.indexOfFirst { order.getValue(it.first) < order.getValue(hit.first) }
+        features.add(if (index < 0) features.size else index, hit)
+      }
+      features.map { it.second }
     }
 
   override fun metersPerDpAtLatitude(latitude: Double): Double =
@@ -1401,7 +1468,7 @@ internal class GlJsMapSession(
     gestureToken: CameraInputToken,
   ) {
     awaitCameraRelease(gestureToken = gestureToken) { map ->
-      map.cameraPositionForBounds(fit.bounds, fit.bearing, fit.tilt, PaddingValues())?.let {
+      map.cameraPositionForBounds(fit.bounds, fit.bearing, fit.tilt, null, DpPadding.Zero)?.let {
         map.easeTo(it.toEaseToOptions(duration))
       }
     }
@@ -1512,7 +1579,14 @@ internal class GlJsMapSession(
     zoom = position.zoom
     bearing = position.bearing
     pitch = position.tilt
-    padding = cameraPadding
+    padding = position.effectivePadding()
+  }
+
+  private fun CameraPosition.effectivePadding(): PaddingOptions = unsafeJso {
+    top = viewportInsets.top + padding.top.value
+    left = viewportInsets.left + padding.left.value
+    bottom = viewportInsets.bottom + padding.bottom.value
+    right = viewportInsets.right + padding.right.value
   }
 
   private fun PaddingOptions.sameAs(other: PaddingOptions): Boolean =
