@@ -5,6 +5,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.camera.CameraUpdate
 import org.maplibre.nativeffi.camera.CameraOptions
 import org.maplibre.nativeffi.camera.EdgeInsets
 import org.maplibre.nativeffi.geo.LatLng
@@ -74,12 +75,32 @@ internal fun CameraPosition.toCameraOptions(viewportInsets: EdgeInsets): CameraO
       )
   }
 
+internal fun CameraUpdate.toCameraOptions(viewportInsets: EdgeInsets): CameraOptions =
+  CameraOptions().also {
+    it.center = target?.toLatLng()
+    it.zoom = zoom
+    it.bearing = bearing
+    it.pitch = tilt
+    it.padding = padding?.let { padding ->
+      EdgeInsets(
+        viewportInsets.top + padding.top.value,
+        viewportInsets.left + padding.left.value,
+        viewportInsets.bottom + padding.bottom.value,
+        viewportInsets.right + padding.right.value,
+      )
+    }
+  }
+
+/**
+ * The camera padding inside [insets]. Fractional insets round-trip through the engine with
+ * floating-point residue, and the engine rejects any negative padding, so each side clamps at zero.
+ */
 internal fun EdgeInsets.relativeTo(insets: EdgeInsets): DpPadding =
   DpPadding(
-    left = (left - insets.left).dp,
-    top = (top - insets.top).dp,
-    right = (right - insets.right).dp,
-    bottom = (bottom - insets.bottom).dp,
+    left = (left - insets.left).coerceAtLeast(0.0).dp,
+    top = (top - insets.top).coerceAtLeast(0.0).dp,
+    right = (right - insets.right).coerceAtLeast(0.0).dp,
+    bottom = (bottom - insets.bottom).coerceAtLeast(0.0).dp,
   )
 
 internal fun DpPadding.toEdgeInsets(): EdgeInsets =

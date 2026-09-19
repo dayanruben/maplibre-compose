@@ -144,8 +144,8 @@ internal suspend fun MapFixture.declare(
       LayoutDirection.Ltr,
       ownership,
     )
-  state.beginStyleRevision(session, revision)
-  state.updateStyleResources(session, session.reconcileStyleRevision(revision))
+  state.styleAuthority.beginStyleRevision(session, revision)
+  state.styleAuthority.updateStyleResources(session, session.reconcileStyleRevision(revision))
 }
 
 internal enum class MapLibreFlavor {
@@ -187,7 +187,7 @@ internal class RecordingMapCallbacks(
     this.style = style
     // The state learns of the binding here, as it does in composition, so that work the engine
     // starts on a freshly loaded style reaches it.
-    state?.updateLoadedStyle(map, style)
+    state?.styleAuthority?.updateLoadedStyle(map, style)
     attachment?.updateViewport(map.getViewport())
     events += if (style == null) "styleChanged(null)" else MapFixture.STYLE_LOADED
   }
@@ -206,19 +206,19 @@ internal class RecordingMapCallbacks(
 
   override fun onEvent(map: MapAdapter, event: MapEvent) {
     engineEvents += event
-    state?.onEvent(map, event)
+    state?.attachmentAuthority?.onEvent(map, event)
   }
 
   override fun resolveMissingImage(map: MapAdapter, imageId: String): Deferred<Unit>? =
-    state?.resolveMissingImage(map, imageId)
+    state?.styleAuthority?.resolveMissingImage(map, imageId)
 
   override fun onGestureActive(map: MapAdapter, active: Boolean) {
     events += "gesture($active)"
-    state?.setGestureActive(map, active)
+    state?.attachmentAuthority?.setGestureActive(map, active)
   }
 
   override fun onViewportChanged(map: MapAdapter) {
     events += "viewportChanged"
-    state?.synchronizeCamera(map)
+    state?.attachmentAuthority?.synchronizeCamera(map)
   }
 }

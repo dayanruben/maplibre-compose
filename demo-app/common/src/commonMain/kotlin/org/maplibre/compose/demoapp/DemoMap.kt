@@ -26,7 +26,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,7 +52,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
-import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -67,6 +68,7 @@ import org.maplibre.compose.demoapp.generated.location_searching_24px
 import org.maplibre.compose.demoapp.generated.my_location_24px
 import org.maplibre.compose.demoapp.generated.my_location_fill_24px
 import org.maplibre.compose.demoapp.generated.navigation_24px
+import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.map.LocalMapState
 import org.maplibre.compose.map.MapEvent
@@ -92,23 +94,19 @@ import org.maplibre.compose.util.DpPadding
 import org.maplibre.spatialk.geojson.Position
 
 /** The camera flight to a newly selected demo. */
-val DemoFlight = CameraAnimation.Fly(2.seconds)
 
 /** Padding between fitted bounds and the edge of the map viewport. */
 val DemoBoundsPadding = DpPadding(left = 48.dp, top = 48.dp, right = 48.dp, bottom = 48.dp)
 
-internal suspend fun MapState.flyTo(destination: DemoDestination) {
+internal suspend fun MapState.flyTo(destination: DemoDestination, animation: CameraAnimation) {
   when (destination) {
     is DemoDestination.ExactCamera ->
-      animateCameraPosition(
-        position = destination.position,
-        animation = DemoFlight,
-      )
+      animateCamera(update = destination.position.toCameraUpdate(), animation = animation)
     is DemoDestination.FitBounds ->
       animateCameraToBounds(
         boundingBox = destination.bounds,
         fitPadding = DemoBoundsPadding,
-        animation = DemoFlight,
+        animation = animation,
       )
     DemoDestination.None -> Unit
   }
@@ -355,6 +353,8 @@ fun DemoMap(
     }
   }
   val pointerPin = selectedDemo?.pointerPin
+  val baseInteractions = state.settings.interactions
+  val baseUiOptions = state.settings.boundUiOptions
   val placementPadding =
     PaddingValues.Absolute(
       left = viewportInsets.left + MapOverlay.Spacing,
@@ -368,8 +368,20 @@ fun DemoMap(
       modifier = modifier.then(selectedDemo?.mapModifier(state.mapState) ?: Modifier),
       viewportInsets = viewportInsets.asPaddingValues(),
       renderOptions = state.settings.renderOptions,
-      interactions = selectedDemo?.interactions(state.mapState) ?: MapInteractions.Standard,
-      uiOptions = selectedDemo?.uiOptions(state.settings.uiOptions) ?: state.settings.uiOptions,
+      interactions =
+        if (state.location.placingMockLocation) {
+          MapInteractions {
+            callbacks {
+              click {
+                onEvent { event ->
+                  state.location.placeMockLocation(event.position)
+                  ClickResult.Consume
+                }
+              }
+            }
+          }
+        } else selectedDemo?.interactions(state.mapState, baseInteractions) ?: baseInteractions,
+      uiOptions = selectedDemo?.uiOptions(baseUiOptions) ?: baseUiOptions,
     ) {
       if (selectedDemo == null) DefaultMapControls(controls)
       selectedDemo?.let { demo ->
@@ -379,7 +391,11 @@ fun DemoMap(
             pointerPin?.let {
               PointerPinButton(
                 targetPosition = it.target,
-                onClick = { scope.launch { state.mapState.flyTo(it.destination) } },
+                onClick = {
+                  scope.launch {
+                    state.mapState.flyTo(it.destination, state.settings.flightAnimation)
+                  }
+                },
               ) {
                 Icon(
                   vectorResource(Res.drawable.filter_center_focus_24px),
@@ -407,7 +423,23 @@ fun DemoMap(
     }
 
     Box(Modifier.fillMaxSize().padding(placementPadding)) {
-      DiagnosticOverlays(state = state, modifier = Modifier.align(Alignment.TopCenter))
+      if (state.location.placingMockLocation) {
+        Surface(
+          modifier = Modifier.align(Alignment.TopCenter),
+          shape = MaterialTheme.shapes.medium,
+          tonalElevation = 6.dp,
+        ) {
+          Row(
+            Modifier.padding(start = 16.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+          ) {
+            Text("Tap map to set mock position", modifier = Modifier.weight(1f))
+            TextButton(onClick = state.location::cancelMockPlacement) { Text("Cancel") }
+          }
+        }
+      } else {
+        DiagnosticOverlays(state = state, modifier = Modifier.align(Alignment.TopCenter))
+      }
     }
   }
 }

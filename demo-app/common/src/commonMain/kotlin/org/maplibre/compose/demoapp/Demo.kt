@@ -9,7 +9,6 @@ import org.maplibre.compose.demoapp.demos.DataVizDemo
 import org.maplibre.compose.demoapp.demos.LiveTrackingDemo
 import org.maplibre.compose.demoapp.demos.MagnifyingLensDemo
 import org.maplibre.compose.demoapp.demos.Manhattan3dDemo
-import org.maplibre.compose.demoapp.demos.MapControlsDemo
 import org.maplibre.compose.demoapp.demos.MaterialStyleDemo
 import org.maplibre.compose.demoapp.demos.TransitNetworkDemo
 import org.maplibre.compose.demoapp.demos.editablemarkers.EditableMarkersDemo
@@ -31,6 +30,10 @@ interface Demo {
   val description: String
   val destination: DemoDestination
 
+  /** The launch route segment that opens this demo: [name] in lowercase with hyphens. */
+  val id: String
+    get() = name.lowercase().replace(' ', '-')
+
   /**
    * Replaces the user's chosen light style while this demo is selected. See [DemoStyle].
    *
@@ -48,8 +51,8 @@ interface Demo {
   val pointerPin: DemoPointerPin?
     get() = null
 
-  /** Camera controls and app interactions while this demo is selected. */
-  fun interactions(mapState: MapState): MapInteractions = MapInteractions.Standard
+  /** Camera controls and app interactions while this demo is selected, edited from [settings]. */
+  fun interactions(mapState: MapState, settings: MapInteractions): MapInteractions = settings
 
   /** Input and presentation modifiers applied to the shared map while this demo is selected. */
   @UiComposable @Composable fun mapModifier(mapState: MapState): Modifier = Modifier
@@ -73,8 +76,15 @@ interface Demo {
   }
 
   /**
-   * Controls shown in the sheet or side panel while this demo is selected. [state] exposes the
-   * shell's settings, style, and camera.
+   * The demo's primary control, one row directly under the panel's title. On compact windows the
+   * sheet peek shows this row beside the map. [state] exposes the shell's settings, style, and
+   * camera.
+   */
+  @UiComposable @Composable fun PeekPanel(state: DemoAppState) {}
+
+  /**
+   * The rest of the demo's controls, below [PeekPanel] in the scrolling part of the panel. [state]
+   * exposes the shell's settings, style, and camera.
    */
   @UiComposable @Composable fun Panel(state: DemoAppState) {}
 }
@@ -109,7 +119,6 @@ val allDemos: List<Demo> =
     Manhattan3dDemo,
     CastelloPlanDemo,
     DataVizDemo,
-    MapControlsDemo,
     LiveTrackingDemo,
     EditableMarkersDemo,
     MagnifyingLensDemo,

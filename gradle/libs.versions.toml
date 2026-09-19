@@ -1,4 +1,6 @@
 [versions]
+angle = "chromium-7151_rev1"
+angle-macosArm64Sha256 = "fea89ee72ebb3426ef8fd5ec90db463f9b06beb74ea858a1091bcef5a2e99b73"
 # Platform floors and toolchain levels.
 # Compile against API 37; targetSdk retains Android 16 behavior.
 android-compileSdk = "37"
@@ -29,13 +31,13 @@ androidx-activity = "1.13.0"
 androidx-carApp = "1.8.0-rc01"
 androidx-testRunner = "1.7.0"
 bytesize = "2.2.1"
-dbusJava = "5.2.0"
+dbusJava = "5.2.1"
 fflate = "0.8.3"
 jsJodaTimezone = "2.22.0"
 htmlConverterCompose = "1.1.1"
 hms-location = "6.12.0.300"
 nucleus = "2.5.15"
-kermit = "2.1.0"
+kermit = "2.2.0"
 kotlin-wrappers = "2026.9.1"
 kotlinx-coroutines = "1.11.0"
 kotlinx-atomicfu = "0.33.0"
@@ -66,7 +68,7 @@ gradle-compose = "1.12.0"
 androidx-compose = "1.12.0"
 jetbrains-compose-material3 = "1.12.0-alpha03"
 # 1.3.x is still beta.
-jetbrains-compose-material3-adaptive = "1.3.0-beta02"
+jetbrains-compose-material3-adaptive = "1.3.0-rc01"
 jetbrains-navigation = "2.10.0-alpha02"
 # Wear OS Compose. Android-only; the wearos demo module is its only consumer.
 androidx-wear-compose = "1.6.2"
@@ -135,6 +137,7 @@ maplibre-nativeFfi-runtimeVulkan = { module = "org.maplibre.nativeffi:maplibre-n
 maplibre-nativeFfi-runtimeVulkanKmp = { module = "org.maplibre.nativeffi:maplibre-native-ffi-runtime-vulkan", version.ref = "maplibre-nativeFfi" }
 lwjgl-core = { module = "org.lwjgl:lwjgl", version.ref = "lwjgl" }
 lwjgl-egl = { module = "org.lwjgl:lwjgl-egl", version.ref = "lwjgl" }
+lwjgl-opengles = { module = "org.lwjgl:lwjgl-opengles", version.ref = "lwjgl" }
 lwjgl-opengl = { module = "org.lwjgl:lwjgl-opengl", version.ref = "lwjgl" }
 lwjgl-vulkan = { module = "org.lwjgl:lwjgl-vulkan", version.ref = "lwjgl" }
 materialKolor = { module = "com.materialkolor:material-kolor", version.ref = "materialKolor" }

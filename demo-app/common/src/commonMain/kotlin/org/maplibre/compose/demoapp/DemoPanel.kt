@@ -2,22 +2,24 @@ package org.maplibre.compose.demoapp
 
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -31,32 +33,68 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.vectorResource
+import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.demoapp.benchmark.BenchmarkScenario
+import org.maplibre.compose.demoapp.design.ButtonRow
 import org.maplibre.compose.demoapp.design.DropdownRow
 import org.maplibre.compose.demoapp.design.SectionHeader
 import org.maplibre.compose.demoapp.design.SegmentedRow
+import org.maplibre.compose.demoapp.design.SliderRow
 import org.maplibre.compose.demoapp.design.SwitchRow
 import org.maplibre.compose.demoapp.generated.Res
 import org.maplibre.compose.demoapp.generated.arrow_back_24px
 import org.maplibre.compose.demoapp.generated.settings_24px
 import org.maplibre.compose.demoapp.generated.speed_24px
+import org.maplibre.spatialk.geojson.Position
 
+/** The panel's navigation routes. The shell reads the current one to size its surface. */
+internal object DemoRoute {
+  const val Demos = "demos"
+  const val Demo = "demo"
+  const val Benchmarks = "benchmarks"
+  const val Benchmark = "benchmark"
+  const val Settings = "settings"
+  const val LocationSettings = "settings/location"
+  const val InputSettings = "settings/input"
+  const val CameraSettings = "settings/camera"
+  const val RenderingSettings = "settings/rendering"
+}
+
+/** The height of a panel screen's top app bar, which is the peek content on every other route. */
+internal val PanelHeaderHeight = 64.dp
+
+/**
+ * The menu, settings, and the selected demo's controls. [revealMap] uncovers the map when a control
+ * needs it visible; a shell whose panel never covers the map passes a no-op. [onPeekHeightChange]
+ * reports the height of the selected demo's title bar, peek row, and [peekSpacing] below them,
+ * which a sheet keeps visible above the window's bottom inset. [launchRoute] is opened once, as if
+ * tapped from the menu; [launchHasCamera] keeps a launched demo from flying away from the
+ * launcher's camera.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun DemoPanel(
   state: DemoAppState,
+  navController: NavHostController,
   modifier: Modifier = Modifier,
-  collapsePanel: suspend () -> Unit = {},
-  collapseOnSelection: Boolean = true,
+  revealMap: suspend () -> Unit = {},
+  peekSpacing: Dp = 0.dp,
+  onPeekHeightChange: (Dp) -> Unit = {},
+  launchRoute: DemoLaunchRoute? = null,
+  launchHasCamera: Boolean = false,
 ) {
-  val navController = rememberNavController()
   val scope = rememberCoroutineScope()
   val dark = state.settings.mapStyleMode.isDark
   var flightJob by remember { mutableStateOf<Job?>(null) }
@@ -64,50 +102,81 @@ fun DemoPanel(
   // selectedDemo drives the map overlay. Keep it aligned with this destination so
   // system and predictive back clear the overlay too.
   LaunchedEffect(route) {
-    if (route == "demos") {
+    if (route != DemoRoute.LocationSettings) state.location.cancelMockPlacement()
+    if (route == DemoRoute.Demos) {
       flightJob?.cancel()
       state.selectedDemo = null
       state.shell = DemoShell.Demos
       state.benchmark.abandonRun()
     }
   }
-  // Material 3 shared axis X: siblings slide 30dp while fading through.
-  val slideDistance = with(LocalDensity.current) { 30.dp.roundToPx() }
+  val openDemo = { demo: Demo, fly: Boolean ->
+    flightJob?.cancel()
+    flightJob = scope.launch {
+      state.openDemo(demo, dark, fly) {
+        navController.navigate(DemoRoute.Demo)
+        revealMap()
+        // One frame so the settled viewport insets reach the camera before the flight.
+        withFrameNanos {}
+      }
+    }
+  }
+  val openBenchmarks = {
+    state.selectedDemo = null
+    state.shell = DemoShell.Benchmarks
+    navController.navigate(DemoRoute.Benchmarks)
+  }
+  val openScenario = { scenario: BenchmarkScenario ->
+    state.benchmark.abandonRun()
+    state.selectedScenario = scenario
+    navController.navigate(DemoRoute.Benchmark)
+  }
+  // After the route effect above, so the menu route's reset does not clear the launched demo.
+  LaunchedEffect(Unit) {
+    when (launchRoute) {
+      null -> {}
+      is DemoLaunchRoute.Demo -> openDemo(launchRoute.demo, !launchHasCamera)
+      DemoLaunchRoute.Benchmarks -> openBenchmarks()
+      is DemoLaunchRoute.Benchmark -> {
+        openBenchmarks()
+        openScenario(launchRoute.scenario)
+      }
+      is DemoLaunchRoute.Settings -> {
+        navController.navigate(DemoRoute.Settings)
+        launchRoute.page?.let { navController.navigate("${DemoRoute.Settings}/$it") }
+      }
+    }
+  }
+  val motion = MaterialTheme.motionScheme
   NavHost(
     navController = navController,
-    startDestination = "demos",
+    startDestination = DemoRoute.Demos,
     modifier = modifier,
-    enterTransition = { sharedAxisEnter(slideDistance) },
-    exitTransition = { sharedAxisExit(-slideDistance) },
-    popEnterTransition = { sharedAxisEnter(-slideDistance) },
-    popExitTransition = { sharedAxisExit(slideDistance) },
+    enterTransition = { motion.forwardEnter() },
+    exitTransition = { motion.forwardExit() },
+    popEnterTransition = { motion.backwardEnter() },
+    popExitTransition = { motion.backwardExit() },
   ) {
-    composable("demos") {
+    composable(DemoRoute.Demos) {
       DemosScreen(
-        onOpenSettings = { navController.navigate("settings") },
-        onOpenDemo = { demo ->
-          flightJob?.cancel()
-          flightJob = scope.launch {
-            state.openDemo(demo, dark) {
-              navController.navigate("demo")
-              if (collapseOnSelection) {
-                collapsePanel()
-                // One frame so the settled viewport insets reach the camera before the flight.
-                withFrameNanos {}
-              }
-            }
-          }
-        },
-        onOpenBenchmarks = {
-          state.selectedDemo = null
-          state.shell = DemoShell.Benchmarks
-          navController.navigate("benchmarks")
-        },
+        onOpenSettings = { navController.navigate(DemoRoute.Settings) },
+        onOpenDemo = { demo -> openDemo(demo, true) },
+        onOpenBenchmarks = openBenchmarks,
       )
     }
-    composable("demo") {
+    composable(DemoRoute.Demo) {
       val demo = state.selectedDemo ?: return@composable
-      SettingsSubScreen(demo.name, onBack = { navController.popBackStack() }) {
+      val density = LocalDensity.current
+      SettingsSubScreen(
+        demo.name,
+        onBack = { navController.popBackStack() },
+        header = {
+          demo.PeekPanel(state)
+          Spacer(Modifier.height(peekSpacing))
+        },
+        headerModifier =
+          Modifier.onSizeChanged { onPeekHeightChange(with(density) { it.height.toDp() }) },
+      ) {
         Text(
           text = demo.description,
           style = MaterialTheme.typography.bodyMedium,
@@ -117,64 +186,80 @@ fun DemoPanel(
         demo.Panel(state)
       }
     }
-    composable("benchmarks") {
-      BenchmarksScreen(
-        onBack = { navController.popBackStack() },
-        onOpenScenario = { scenario ->
-          state.benchmark.abandonRun()
-          state.selectedScenario = scenario
-          navController.navigate("benchmark")
-        },
-      )
+    composable(DemoRoute.Benchmarks) {
+      BenchmarksScreen(onBack = { navController.popBackStack() }, onOpenScenario = openScenario)
     }
-    composable("benchmark") {
+    composable(DemoRoute.Benchmark) {
       val scenario = state.selectedScenario
       SettingsSubScreen(scenario.title, onBack = { navController.popBackStack() }) {
         BenchmarkScenarioPanel(
           state,
           onRun = {
             scope.launch {
-              // On compact windows the panel covers the map, so reveal the run.
-              if (collapseOnSelection) collapsePanel()
+              revealMap()
               state.benchmark.requestRun()
             }
           },
         )
       }
     }
-    composable("settings") {
+    composable(DemoRoute.Settings) {
       SettingsScreen(
         state,
         onBack = { navController.popBackStack() },
-        onOpen = { navController.navigate("settings/$it") },
+        onOpen = { navController.navigate(it) },
       )
     }
-    composable("settings/rendering") {
+    composable(DemoRoute.LocationSettings) {
+      SettingsSubScreen("Location", onBack = { navController.popBackStack() }) {
+        LocationSettingsItems(state.location) { state.mapState.cameraPosition.target }
+        if (state.location.isMock) {
+          MockLocationSettings(state) {
+            state.location.beginMockPlacement()
+            scope.launch { revealMap() }
+          }
+        }
+      }
+    }
+    composable(DemoRoute.InputSettings) {
+      SettingsSubScreen("Input", onBack = { navController.popBackStack() }) {
+        InputSettingsItems(state.settings)
+      }
+    }
+    composable(DemoRoute.CameraSettings) {
+      SettingsSubScreen("Camera", onBack = { navController.popBackStack() }) {
+        CameraSettingsItems(state)
+      }
+    }
+    composable(DemoRoute.RenderingSettings) {
       SettingsSubScreen("Rendering", onBack = { navController.popBackStack() }) {
         TileLodSettingsItems(state.settings)
         RenderSettingsItems(state.settings)
-      }
-    }
-    composable("settings/controls") {
-      SettingsSubScreen("Controls", onBack = { navController.popBackStack() }) {
-        ControlSettingsItems(state.settings)
+        OverlaySettingsItems(state.settings)
       }
     }
   }
 }
 
-private const val AxisDurationMillis = 300
-private val StandardEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-private val AccelerateEasing = CubicBezierEasing(0.3f, 0f, 1f, 1f)
-private val DecelerateEasing = CubicBezierEasing(0f, 0f, 0f, 1f)
+// Material 3 forward and backward: the child screen slides across the full panel width while the
+// parent slides a quarter of the way and fades. One screen always covers the panel, so it never
+// shows empty mid-transition, unlike the shared axis fade through. The theme's motion scheme
+// supplies the specs: spatial for the slides, effects for the fades.
+private const val ParentSlideFraction = 4
 
-private fun sharedAxisEnter(slideDistance: Int): EnterTransition =
-  slideInHorizontally(tween(AxisDurationMillis, easing = StandardEasing)) { slideDistance } +
-    fadeIn(tween(AxisDurationMillis * 7 / 10, AxisDurationMillis * 3 / 10, DecelerateEasing))
+private fun MotionScheme.forwardEnter(): EnterTransition =
+  slideInHorizontally(defaultSpatialSpec()) { it }
 
-private fun sharedAxisExit(slideDistance: Int): ExitTransition =
-  slideOutHorizontally(tween(AxisDurationMillis, easing = StandardEasing)) { slideDistance } +
-    fadeOut(tween(AxisDurationMillis * 3 / 10, easing = AccelerateEasing))
+private fun MotionScheme.forwardExit(): ExitTransition =
+  slideOutHorizontally(defaultSpatialSpec()) { -it / ParentSlideFraction } +
+    fadeOut(defaultEffectsSpec())
+
+private fun MotionScheme.backwardEnter(): EnterTransition =
+  slideInHorizontally(defaultSpatialSpec()) { -it / ParentSlideFraction } +
+    fadeIn(defaultEffectsSpec())
+
+private fun MotionScheme.backwardExit(): ExitTransition =
+  slideOutHorizontally(defaultSpatialSpec()) { it }
 
 @Composable
 private fun DemosScreen(
@@ -182,24 +267,23 @@ private fun DemosScreen(
   onOpenDemo: (Demo) -> Unit,
   onOpenBenchmarks: () -> Unit,
 ) {
-  Column {
-    TopAppBar(
-      title = { Text("Demos") },
-      actions = {
-        IconButton(onClick = onOpenBenchmarks) {
-          Icon(vectorResource(Res.drawable.speed_24px), contentDescription = "Benchmarks")
-        }
-        IconButton(onClick = onOpenSettings) {
-          Icon(vectorResource(Res.drawable.settings_24px), contentDescription = "Settings")
-        }
-      },
-      colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-    )
-    Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) {
-      allDemos.forEach { demo ->
-        SubmenuRow(demo.name, demo.description) { onOpenDemo(demo) }
-      }
+  PanelScreen(
+    header = {
+      TopAppBar(
+        title = { Text("Demos") },
+        actions = {
+          IconButton(onClick = onOpenBenchmarks) {
+            Icon(vectorResource(Res.drawable.speed_24px), contentDescription = "Benchmarks")
+          }
+          IconButton(onClick = onOpenSettings) {
+            Icon(vectorResource(Res.drawable.settings_24px), contentDescription = "Settings")
+          }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+      )
     }
+  ) {
+    allDemos.forEach { demo -> SubmenuRow(demo.name, demo.description) { onOpenDemo(demo) } }
   }
 }
 
@@ -241,11 +325,19 @@ private fun SettingsScreen(
       onSelect = { state.settings.paletteMode = it },
     )
 
-    LocationSettingsItems(state.location)
-
     SectionHeader("Options")
-    SubmenuRow("Rendering", "Frame rate cap, tile detail, and debug views") { onOpen("rendering") }
-    SubmenuRow("Controls", "Map controls and diagnostic overlays") { onOpen("controls") }
+    SubmenuRow("Location", "Provider, mock position, heading, and accuracy") {
+      onOpen(DemoRoute.LocationSettings)
+    }
+    SubmenuRow("Input", "Gestures, scroll wheel, and map controls") {
+      onOpen(DemoRoute.InputSettings)
+    }
+    SubmenuRow("Camera", "How the camera flies to demos, pins, and your location") {
+      onOpen(DemoRoute.CameraSettings)
+    }
+    SubmenuRow("Rendering", "Tile detail, frame rate cap, debug views, and overlays") {
+      onOpen(DemoRoute.RenderingSettings)
+    }
   }
 }
 
@@ -260,13 +352,110 @@ internal fun SubmenuRow(label: String, description: String, onClick: () -> Unit)
 }
 
 @Composable
-private fun ControlSettingsItems(settings: DemoSettings) {
+private fun InputSettingsItems(settings: DemoSettings) {
+  SectionHeader("Gestures")
+  SwitchRow("Pan", settings.panEnabled) { settings.panEnabled = it }
+  SwitchRow("Rotate", settings.rotateEnabled) { settings.rotateEnabled = it }
+  SwitchRow("Tilt", settings.tiltEnabled) { settings.tiltEnabled = it }
+  Text(
+    "Off, the map keeps its heading or tilt across every input method. Demos that need a " +
+      "movement keep it on.",
+    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    style = MaterialTheme.typography.bodyMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+  )
+
+  SectionHeader("Scroll wheel")
+  SegmentedRow(
+    options = listOf(false, true),
+    selected = settings.scrollPans,
+    optionLabel = { if (it) "Pan" else "Zoom" },
+    onSelect = { settings.scrollPans = it },
+  )
+  Text(
+    "Pan moves the map with a wheel or trackpad; hold Ctrl to zoom. Touch is unaffected.",
+    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    style = MaterialTheme.typography.bodyMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+  )
+
   SectionHeader("Map controls")
   SwitchRow("Material 3 controls", settings.useMaterial3Controls) {
     settings.useMaterial3Controls = it
   }
   SwitchRow("Zoom buttons", settings.showZoomButtons) { settings.showZoomButtons = it }
+}
 
+/** Places far enough apart that a flight between them shows the pacing and minimum zoom. */
+private enum class FlightDestination(val title: String, val camera: CameraPosition) {
+  Seattle("Seattle", CameraPosition(target = Position(-122.3352, 47.6205), zoom = 14.0)),
+  NewYork("New York", CameraPosition(target = Position(-74.006, 40.7128), zoom = 13.0)),
+  London("London", CameraPosition(target = Position(-0.1276, 51.5072), zoom = 12.0)),
+}
+
+@Composable
+private fun CameraSettingsItems(state: DemoAppState) {
+  val settings = state.settings
+  SectionHeader("Flight")
+  SegmentedRow(
+    options = FlightStyle.entries,
+    selected = settings.flightStyle,
+    optionLabel = { it.title },
+    onSelect = { settings.flightStyle = it },
+  )
+  val fly = settings.flightStyle == FlightStyle.Fly
+  if (fly) {
+    SwitchRow("Pace by speed", settings.paceFlightBySpeed) { settings.paceFlightBySpeed = it }
+  }
+  if (fly && settings.paceFlightBySpeed) {
+    SliderRow(
+      label = "Speed",
+      value = settings.flightSpeed,
+      range = 0.5f..10f,
+      valueLabel = { "${(it * 10).roundToInt() / 10f} screens/s" },
+      onChange = { settings.flightSpeed = it },
+    )
+  } else {
+    SliderRow(
+      label = "Duration",
+      value = settings.flightDurationMillis,
+      range = 200f..5000f,
+      valueLabel = { "${it.roundToInt()} ms" },
+      onChange = { settings.flightDurationMillis = it },
+    )
+  }
+  if (fly) {
+    SliderRow(
+      label = "Minimum zoom",
+      value = settings.flightMinZoom,
+      range = 0f..12f,
+      valueLabel = { if (it > 0f) it.roundToInt().toString() else "None" },
+      onChange = { settings.flightMinZoom = it.roundToInt().toFloat() },
+    )
+  }
+  Text(
+    "Applies when a demo opens, a pointer pin is pressed, and when following your location.",
+    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    style = MaterialTheme.typography.bodyMedium,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+  )
+
+  SectionHeader("Try it")
+  val scope = rememberCoroutineScope()
+  for (destination in FlightDestination.entries) {
+    ButtonRow("Fly to ${destination.title}") {
+      scope.launch {
+        state.mapState.flyTo(
+          DemoDestination.ExactCamera(destination.camera),
+          settings.flightAnimation,
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun OverlaySettingsItems(settings: DemoSettings) {
   SectionHeader("Overlays")
   SwitchRow("Frame rate", settings.showFpsOverlay) { settings.showFpsOverlay = it }
   SwitchRow("Camera state", settings.showCameraOverlay) { settings.showCameraOverlay = it }
@@ -275,18 +464,51 @@ private fun ControlSettingsItems(settings: DemoSettings) {
   }
 }
 
+/**
+ * A titled screen with a back button. [header] sits under the title, ahead of [content], and
+ * [headerModifier] wraps the title bar and header together.
+ */
 @Composable
-internal fun SettingsSubScreen(title: String, onBack: () -> Unit, content: @Composable () -> Unit) {
-  Column {
-    TopAppBar(
-      title = { Text(title) },
-      navigationIcon = {
-        IconButton(onClick = onBack) {
-          Icon(vectorResource(Res.drawable.arrow_back_24px), contentDescription = "Back")
-        }
-      },
-      colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
-    )
-    Column(Modifier.verticalScroll(rememberScrollState()).padding(bottom = 16.dp)) { content() }
+internal fun SettingsSubScreen(
+  title: String,
+  onBack: () -> Unit,
+  header: @Composable () -> Unit = {},
+  headerModifier: Modifier = Modifier,
+  content: @Composable () -> Unit,
+) {
+  PanelScreen(
+    header = {
+      TopAppBar(
+        title = { Text(title) },
+        navigationIcon = {
+          IconButton(onClick = onBack) {
+            Icon(vectorResource(Res.drawable.arrow_back_24px), contentDescription = "Back")
+          }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent),
+      )
+      header()
+    },
+    headerModifier = headerModifier,
+    content = content,
+  )
+}
+
+/**
+ * A panel screen whose [header] scrolls with its [content], as a sheet's title does. The sheet peek
+ * shows the header, so the screen scrolls back to it whenever the sheet returns to its peek.
+ */
+@Composable
+private fun PanelScreen(
+  header: @Composable () -> Unit,
+  headerModifier: Modifier = Modifier,
+  content: @Composable () -> Unit,
+) {
+  val scrollState = rememberScrollState()
+  val peeking = LocalSheetPeeking.current
+  LaunchedEffect(peeking) { if (peeking) scrollState.animateScrollTo(0) }
+  Column(Modifier.verticalScroll(scrollState).padding(bottom = 16.dp)) {
+    Column(headerModifier) { header() }
+    content()
   }
 }

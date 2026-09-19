@@ -21,6 +21,7 @@ import kotlinx.serialization.json.JsonObject
 import org.maplibre.compose.camera.CameraAnchor
 import org.maplibre.compose.camera.CameraAnimation
 import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.camera.CameraUpdate
 import org.maplibre.compose.camera.CubicBezier
 import org.maplibre.compose.camera.Viewport
 import org.maplibre.compose.camera.internal.BoxZoomFit
@@ -845,10 +846,11 @@ internal class GlJsMapSession(
       padding =
         getPadding().let {
           DpPadding(
-            left = (it.left - viewportInsets.left).dp,
-            top = (it.top - viewportInsets.top).dp,
-            right = (it.right - viewportInsets.right).dp,
-            bottom = (it.bottom - viewportInsets.bottom).dp,
+            // Fractional insets leave floating-point residue, and GL JS rejects negative padding.
+            left = (it.left - viewportInsets.left).coerceAtLeast(0.0).dp,
+            top = (it.top - viewportInsets.top).coerceAtLeast(0.0).dp,
+            right = (it.right - viewportInsets.right).coerceAtLeast(0.0).dp,
+            bottom = (it.bottom - viewportInsets.bottom).coerceAtLeast(0.0).dp,
           )
         },
       zoom = getZoom(),
@@ -914,12 +916,12 @@ internal class GlJsMapSession(
     }
   }
 
-  override suspend fun animateCameraPosition(
-    finalPosition: CameraPosition,
+  override suspend fun animateCamera(
+    update: CameraUpdate,
     animation: CameraAnimation,
     guard: CameraCommandGuard?,
   ) {
-    awaitCameraRelease(guard = guard) { map -> map.animateTo(finalPosition, animation) }
+    awaitCameraRelease(guard = guard) { map -> map.animateTo(update, animation) }
   }
 
   override suspend fun animateCameraAround(
@@ -970,17 +972,17 @@ internal class GlJsMapSession(
   ) {
     awaitCameraRelease(guard = guard) { map ->
       map.cameraPositionForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)?.let {
-        map.animateTo(it, animation)
+        map.animateTo(it.toCameraUpdate(), animation)
       }
     }
   }
 
-  private fun MaplibreMap.animateTo(position: CameraPosition, animation: CameraAnimation) {
+  private fun MaplibreMap.animateTo(update: CameraUpdate, animation: CameraAnimation) {
     when (animation) {
       is CameraAnimation.Ease ->
         easeTo(
           unsafeJso<EaseToOptions> {
-            applyTarget(position)
+            applyUpdate(update)
             duration = animation.duration.inWholeMilliseconds.toDouble()
             easing = animation.easing.toEasingFunction()
           }
@@ -988,7 +990,7 @@ internal class GlJsMapSession(
       is CameraAnimation.Fly ->
         flyTo(
           unsafeJso<FlyToOptions> {
-            applyTarget(position)
+            applyUpdate(update)
             // A null property is not an absent one: GL JS reads `duration: null` as zero.
             animation.duration?.let { duration = it.inWholeMilliseconds.toDouble() }
             screenSpeed = animation.speed ?: CameraAnimation.Fly.DefaultSpeed
@@ -1011,11 +1013,12 @@ internal class GlJsMapSession(
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
   ): CameraPosition? {
-    // GL JS cameraForBounds reads persistent padding from the live transform and cannot query
-    // destination padding. Fit all four corners through the same geometry fitter so every query
-    // uses explicit padding inputs without mutating the map or accessing private GL JS APIs.
-    // TODO: Replace this with the planned upstream GL JS destination-padding fit API
-    // once that PR lands (PR not filed yet).
+    // GL JS cameraForBounds reads persistent padding from the live transform, cannot query
+    // destination padding, and ignores pitch. Fit all four corners through the same geometry fitter
+    // so every query uses explicit padding inputs without mutating the map.
+    // TODO: Delegate to GL JS cameraForBounds once it accepts destination padding
+    // (https://github.com/maplibre/maplibre-gl-js/issues/8480) and honors pitch
+    // (https://github.com/maplibre/maplibre-gl-js/issues/8479).
     val east =
       if (boundingBox.east < boundingBox.west) boundingBox.east + 360.0 else boundingBox.east
     return cameraPositionForPositions(
@@ -1042,18 +1045,38 @@ internal class GlJsMapSession(
     val current = cameraPosition()
     val destination = current.copy(padding = cameraPadding ?: current.padding)
     val extent = appliedExtent
-    val fit =
+    val width = extent.width.toDouble()
+    val height = extent.height.toDouble()
+    val edgePadding = destination.effectivePadding()
+    val fitPaddingOptions = fitPadding.toPaddingOptions()
+    val minZoom = getMinZoom()
+    val maxZoom = getMaxZoom()
+    val flat =
       fitPositions(
         positions = positions,
         bearing = bearing,
         zoom = getZoom(),
-        width = extent.width.toDouble(),
-        height = extent.height.toDouble(),
-        edgePadding = destination.effectivePadding(),
-        fitPadding = fitPadding.toPaddingOptions(),
-        minZoom = getMinZoom(),
-        maxZoom = getMaxZoom(),
+        width = width,
+        height = height,
+        edgePadding = edgePadding,
+        fitPadding = fitPaddingOptions,
+        minZoom = minZoom,
+        maxZoom = maxZoom,
       ) ?: return null
+    val fit =
+      refineFitForTilt(
+        transform = _camera.transform,
+        fit = flat,
+        positions = positions,
+        bearing = bearing,
+        tilt = tilt,
+        width = width,
+        height = height,
+        edgePadding = edgePadding,
+        fitPadding = fitPaddingOptions,
+        minZoom = minZoom,
+        maxZoom = maxZoom,
+      )
     return destination.copy(bearing = bearing, target = fit.target, tilt = tilt, zoom = fit.zoom)
   }
 
@@ -1284,8 +1307,7 @@ internal class GlJsMapSession(
         pendingInitialStyleAction = null
         return@invokeOnCancellation
       }
-      if (anchoredTransition === continuation) anchoredTransition = null
-      if (transitionWaiters.remove(continuation)) map?.stop()
+      transitionWaiters.remove(continuation)
     }
     val enqueue: () -> Unit = {
       val current = map
@@ -1299,6 +1321,7 @@ internal class GlJsMapSession(
     if (guard?.isValid() == false || gestureToken != null && !gestureToken.enqueue(enqueue)) {
       if (continuation.isActive) continuation.resume(Unit)
     } else if (gestureToken == null) enqueue()
+    guard?.dispatched()
   }
 
   private fun startTransitionOnMap(
@@ -1327,13 +1350,14 @@ internal class GlJsMapSession(
     val continuation = anchoredTransition
     anchoredTransition = null
     continuation?.cancel(kotlinx.coroutines.CancellationException("The anchor viewport changed"))
+    if (continuation != null) map?.stop()
   }
 
   private fun resumeTransitions() {
+    anchoredTransition = null
     if (transitionWaiters.isEmpty()) return
     val resuming = transitionWaiters.toList()
     transitionWaiters.clear()
-    if (anchoredTransition in resuming) anchoredTransition = null
     resuming.forEach { waiter -> if (waiter.isActive) runCatching { waiter.resume(Unit) } }
   }
 
@@ -1580,6 +1604,14 @@ internal class GlJsMapSession(
     bearing = position.bearing
     pitch = position.tilt
     padding = position.effectivePadding()
+  }
+
+  private fun PaddedCameraOptions.applyUpdate(update: CameraUpdate) {
+    update.target?.let { center = it.toLngLat() }
+    update.zoom?.let { zoom = it }
+    update.bearing?.let { bearing = it }
+    update.tilt?.let { pitch = it }
+    update.padding?.let { padding = CameraPosition(padding = it).effectivePadding() }
   }
 
   private fun CameraPosition.effectivePadding(): PaddingOptions = unsafeJso {

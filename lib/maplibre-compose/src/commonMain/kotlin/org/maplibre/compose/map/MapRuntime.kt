@@ -8,6 +8,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
@@ -37,12 +38,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.serialization.json.JsonElement
@@ -51,6 +49,7 @@ import org.maplibre.compose.camera.CameraAnchor
 import org.maplibre.compose.camera.CameraAnimation
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
+import org.maplibre.compose.camera.CameraUpdate
 import org.maplibre.compose.camera.Viewport
 import org.maplibre.compose.camera.forPath
 import org.maplibre.compose.camera.internal.CameraCommandGuard
@@ -74,17 +73,13 @@ import org.maplibre.compose.sources.Source
 import org.maplibre.compose.sources.SourceHandle
 import org.maplibre.compose.sources.sourceHandle
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.DesiredStyleRevision
 import org.maplibre.compose.style.LayerSummary
 import org.maplibre.compose.style.Light
 import org.maplibre.compose.style.Projection
 import org.maplibre.compose.style.Sky
 import org.maplibre.compose.style.SourceDefinition
 import org.maplibre.compose.style.StyleBinding
-import org.maplibre.compose.style.StyleHandleException
 import org.maplibre.compose.style.StyleHandleOperationGuard
-import org.maplibre.compose.style.StyleMutationException
-import org.maplibre.compose.style.StyleResourceChanges
 import org.maplibre.compose.style.TransitionOptions
 import org.maplibre.compose.style.scaledBy
 import org.maplibre.compose.style.systemAnimatorDurationScale
@@ -495,16 +490,15 @@ internal class StyleMutationReservation {
 /** Connects a [MapState] to one map surface for the lifetime of one render lease. */
 internal class MapAttachment
 internal constructor(
-  private val owner: MapState,
+  private val owner: MapAttachmentAuthority,
   internal val token: MapPresentationToken,
   internal val adapter: MapAdapter,
 ) {
   private val invalidated = CompletableDeferred<Unit>()
   private var validState: Boolean by mutableStateOf(true)
   private var viewportState: Viewport? by mutableStateOf(null)
-  private val firstViewport = CompletableDeferred<Viewport>()
   private var gestureActiveState: Boolean by mutableStateOf(false)
-  private var cameraChangingState: Boolean by mutableStateOf(false)
+  private var activeCameraChanges: Int by mutableIntStateOf(0)
   private var moveReasonState: CameraMoveReason by mutableStateOf(CameraMoveReason.NONE)
   private var engagedState: Boolean by mutableStateOf(false)
   val isValid: Boolean
@@ -517,7 +511,7 @@ internal constructor(
     get() = viewportState
 
   val isCameraMoving: Boolean
-    get() = gestureActiveState || cameraChangingState
+    get() = gestureActiveState || activeCameraChanges > 0
 
   val cameraMoveReason: CameraMoveReason
     get() = moveReasonState
@@ -553,6 +547,7 @@ internal constructor(
     guard: CameraCommandGuard?,
   ): Unit = runLeaseBound {
     awaitViewportState()
+    guard?.awaitDispatchTurn()
     adapter.fitCameraToBounds(
       boundingBox,
       bearing,
@@ -563,13 +558,18 @@ internal constructor(
     )
   }
 
-  suspend fun animateCameraPosition(
-    position: CameraPosition,
-    animation: CameraAnimation = CameraAnimation.Fly(),
+  suspend fun animateCamera(
+    update: CameraUpdate,
+    animation: CameraAnimation = CameraAnimation.Ease(),
     guard: CameraCommandGuard? = null,
   ): Unit = runLeaseBound {
     awaitViewportState()
-    adapter.animateCameraPosition(position, animation.forPathTo(position), boundGuard(guard))
+    guard?.awaitDispatchTurn()
+    adapter.animateCamera(
+      update,
+      animation.forPathTo(update.applyTo(adapter.getCameraPosition())),
+      boundGuard(guard),
+    )
   }
 
   suspend fun animateCameraAround(
@@ -581,6 +581,7 @@ internal constructor(
     guard: CameraCommandGuard? = null,
   ): Unit = runLeaseBound {
     awaitViewportState()
+    guard?.awaitDispatchTurn()
     adapter.animateCameraAround(anchor, zoom, bearing, tilt, animation, boundGuard(guard))
   }
 
@@ -594,6 +595,7 @@ internal constructor(
     guard: CameraCommandGuard?,
   ): Unit = runLeaseBound {
     awaitViewportState()
+    guard?.awaitDispatchTurn()
     val target = adapter.cameraForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)
     adapter.animateCameraToBounds(
       boundingBox,
@@ -657,12 +659,10 @@ internal constructor(
     adapter.queryRenderedFeatures(rect, layerIds, predicate.compileOrNull())
   }
 
-  suspend fun awaitViewport(): Viewport = runLeaseBound { awaitViewportState() }
-
   internal fun updateViewport(value: Viewport?) {
     owner.lifecycle.serialized {
       viewportState = value
-      value?.let(firstViewport::complete)
+      owner.viewportPublished(this, value)
     }
   }
 
@@ -683,13 +683,18 @@ internal constructor(
 
   internal fun cameraChangeStarted() {
     owner.lifecycle.serialized {
-      cameraChangingState = true
+      activeCameraChanges++
       if (!gestureActiveState) moveReasonState = CameraMoveReason.PROGRAMMATIC
     }
   }
 
   internal fun cameraChangeEnded() {
-    owner.lifecycle.serialized { cameraChangingState = false }
+    // Native ends each command separately. An inset update can end while a zoom is still moving.
+    owner.lifecycle.serialized { activeCameraChanges = (activeCameraChanges - 1).coerceAtLeast(0) }
+  }
+
+  internal fun abandonCameraChanges() {
+    owner.lifecycle.serialized { activeCameraChanges = 0 }
   }
 
   internal fun invalidate() {
@@ -698,10 +703,18 @@ internal constructor(
       validState = false
       viewportState = null
       gestureActiveState = false
-      cameraChangingState = false
+      activeCameraChanges = 0
       engagedState = false
-      invalidated.complete(Unit)
     }
+  }
+
+  /**
+   * Fails lease-bound operations parked on this attachment. Callers on an immediate dispatcher
+   * resume inline, so this runs after the owner has replaced the attachment and closed its
+   * snapshot.
+   */
+  internal fun cancelLeaseBoundOperations() {
+    invalidated.complete(Unit)
   }
 
   private fun Expression<BooleanValue>.compileOrNull(): CompiledExpression<BooleanValue>? {
@@ -712,11 +725,17 @@ internal constructor(
   private fun <T> withViewport(block: (MapAdapter) -> T): T? =
     owner.withCurrentOrNull(this) { if (viewportState == null) null else block(adapter) }
 
-  private fun boundGuard(guard: CameraCommandGuard?): CameraCommandGuard = CameraCommandGuard {
-    owner.isCurrent(this) && guard?.isValid() != false
-  }
+  private fun boundGuard(guard: CameraCommandGuard?): CameraCommandGuard =
+    object : CameraCommandGuard {
+      override fun isValid(): Boolean =
+        owner.isCurrent(this@MapAttachment) && guard?.isValid() != false
 
-  private suspend fun awaitViewportState(): Viewport = firstViewport.await()
+      override fun dispatched() {
+        guard?.dispatched()
+      }
+    }
+
+  private suspend fun awaitViewportState(): Viewport = owner.awaitViewport(this)
 
   private suspend fun <T> runLeaseBound(block: suspend () -> T): T = coroutineScope {
     if (!owner.isCurrent(this@MapAttachment)) throw MapAttachmentChangedException()
@@ -739,7 +758,7 @@ internal constructor(
   }
 }
 
-private class MapAttachmentChangedException :
+internal class MapAttachmentChangedException :
   CancellationException("The map attachment changed during the operation")
 
 /** Holds the observable style, camera, and map operations for one logical map. */
@@ -757,101 +776,20 @@ internal constructor(
     }
   }
   internal val lifecycle = MapLifecycleAuthority(this, runtime.physicalScope)
+  internal val styleAuthority = MapStyleAuthority(lifecycle, runtime, baseStyle)
+  public val style: MapStyleState = styleAuthority.style
   internal val gestureAuthority = CameraInputAuthority(this)
+  internal val attachmentAuthority =
+    MapAttachmentAuthority(lifecycle, gestureAuthority, styleAuthority, cameraPosition)
   /** Set by the current presentation; recognized gestures are ignored without one. */
   internal var recognizedInput: RecognizedMapInput? = null
-  private var baseStyleCommandRevision = 0L
-  private var cameraCommandRevision = 0L
-  private var styleHandleEpoch = 0L
-  private var styleSourceChangeRevision = 0L
-  private val imperativeSources = mutableMapOf<String, ImperativeSourceRecord>()
-  private val imperativeImages = mutableMapOf<String, ImperativeImageRecord>()
-  private var missingImageResolverState: MissingImageResolver? by mutableStateOf(null)
-  /** Resolutions started for the loaded style, by image id. */
-  private val missingImageResolutions = mutableMapOf<String, MissingImageResolution>()
-  private var activeStyleMutation: StyleMutationReservation? = null
-  /**
-   * Held while a resolved missing image reaches the style. A style command the app issues cannot
-   * anticipate this one, so the command waits it out through [beginStyleRevision] or runs beside it
-   * rather than failing on it.
-   */
-  private var backgroundStyleMutation: StyleMutationReservation? = null
-  private val eventsFlow =
-    MutableSharedFlow<MapEvent>(
-      extraBufferCapacity = 64,
-      onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-  private var closedState: Boolean by mutableStateOf(false)
-  private var cameraPositionState: CameraPosition by
-    mutableStateOf(cameraPosition, structuralEqualityPolicy())
-
-  internal var desiredStyleRevision: DesiredStyleRevision = DesiredStyleRevision.Empty
-
-  public val style: MapStyleState =
-    MapStyleState(baseStyle).also {
-      it.attach(
-        object : MapStyleStateOwner {
-          override fun setBaseStyle(value: BaseStyle) = this@MapState.setBaseStyle(value)
-
-          override fun desiredSourceDefinition(id: String) =
-            this@MapState.desiredSourceDefinition(id)
-
-          override fun isSourceWritable(id: String): Boolean = lifecycle.serialized {
-            desiredStyleRevision.sources.none { it.id == id }
-          }
-
-          override fun isLayerWritable(id: String): Boolean = lifecycle.serialized {
-            desiredStyleRevision.layers.none { it.definition.id == id }
-          }
-
-          override fun isImageWritable(id: String): Boolean = lifecycle.serialized {
-            desiredStyleRevision.images.none { it.id == id }
-          }
-
-          override fun requireSourceWritable(id: String) = lifecycle.serialized {
-            requireNoDesiredSource(id)
-          }
-
-          override fun requireLayerWritable(id: String) = lifecycle.serialized {
-            if (desiredStyleRevision.layers.any { it.definition.id == id }) {
-              throw StyleHandleException("Layer ID '$id' is declared by the style content")
-            }
-          }
-
-          override fun addStyleSource(source: Source) = this@MapState.addStyleSource(source)
-
-          override fun removeStyleSource(id: String, expectedStyle: StyleBinding, identity: Any) =
-            this@MapState.removeStyleSource(id, expectedStyle, identity)
-
-          override fun addStyleImage(
-            id: String,
-            image: ImageBitmap,
-            sdf: Boolean,
-            stretch: ImageStretch?,
-            expectedStyle: StyleBinding?,
-          ) = this@MapState.addStyleImage(id, image, sdf, stretch, expectedStyle)
-
-          override fun removeStyleImage(id: String, expectedStyle: StyleBinding, identity: Any) =
-            this@MapState.removeStyleImage(id, expectedStyle, identity)
-
-          override fun readyLoadedStyle() = this@MapState.readyLoadedStyle()
-
-          override fun <T> runStyleHandleOperation(
-            binding: StyleBinding,
-            action: () -> T,
-          ): T = this@MapState.runStyleHandleOperation(binding, action)
-        }
-      )
-    }
 
   /** Current camera state. Padding excludes the presentation's viewport insets. */
   public val cameraPosition: CameraPosition
-    get() = cameraPositionState
+    get() = attachmentAuthority.cameraPosition
 
-  internal var currentMapAttachment: MapAttachment? by mutableStateOf(null)
-    internal set
-
-  private var nextMapAttachment = CompletableDeferred<MapAttachment>()
+  internal val currentMapAttachment: MapAttachment?
+    get() = attachmentAuthority.current
 
   /** Contains the current rendered viewport, or null while no viewport is available. */
   public val viewport: Viewport?
@@ -892,7 +830,7 @@ internal constructor(
    * Unconfined collectors may run inside engine callbacks. Use a dispatcher that queues execution
    * for collectors that call map commands such as [StyleImages.add].
    */
-  public val events: Flow<MapEvent> = eventsFlow.asSharedFlow()
+  public val events: Flow<MapEvent> = attachmentAuthority.events
 
   /**
    * Supplies missing style images on demand. Null (the default) disables resolution.
@@ -907,19 +845,13 @@ internal constructor(
    * Replacing or clearing this property does not cancel calls already running.
    */
   public var missingImageResolver: MissingImageResolver?
-    get() = missingImageResolverState
+    get() = styleAuthority.missingImageResolver
     set(value) {
-      lifecycle.serialized {
-        if (missingImageResolverState === value) return
-        missingImageResolverState = value
-        // Forgotten rather than cancelled: the request that started a resolution in flight is still
-        // outstanding, and the engine waits on that resolution rather than asking the new resolver.
-        missingImageResolutions.clear()
-      }
+      styleAuthority.missingImageResolver = value
     }
 
   public val isClosed: Boolean
-    get() = closedState
+    get() = attachmentAuthority.isClosed
 
   /** Marks this state as closed and starts cleanup of the current map surface. */
   public fun close(): Unit = lifecycle.close()
@@ -934,21 +866,8 @@ internal constructor(
   /**
    * Sets the durable camera position and applies it to the current surface when one is attached.
    */
-  public fun setCameraPosition(position: CameraPosition) {
-    val guard = gestureAuthority.beginProgrammatic()
-    val command = lifecycle.serialized {
-      requireOpenLocked()
-      if (!guard.isValid()) return
-      cameraPositionState = position
-      cameraCommandRevision++
-      val attachment = currentMapAttachment ?: return
-      AttachmentCameraCommand(
-        attachment = attachment,
-        command = CameraCommand(attachment.adapter, position, cameraCommandRevision, guard),
-      )
-    }
-    applyAttachmentCameraCommand(command.attachment, command.command)
-  }
+  public fun setCameraPosition(position: CameraPosition): Unit =
+    attachmentAuthority.setCameraPosition(position)
 
   /**
    * Stops camera movement at the position reached when the backend processes this command.
@@ -970,7 +889,7 @@ internal constructor(
       currentMapAttachment ?: return
     }
     attachment.adapter.stopCameraMovement(
-      CameraCommandGuard { isCurrent(attachment) && guard.isValid() }
+      CameraCommandGuard { attachmentAuthority.isCurrent(attachment) && guard.isValid() }
     )
   }
 
@@ -984,9 +903,6 @@ internal constructor(
    * The result uses the current viewport size, insets, and camera constraints. Recalculate it if
    * those change before applying it.
    *
-   * On the browser, fitting calculates the target and zoom without [tilt], then assigns [tilt] to
-   * the result. A nonzero tilt may therefore leave part of the bounds outside the viewport.
-   *
    * @throws IllegalStateException if the backend cannot calculate a camera for the bounds.
    */
   public suspend fun cameraForBounds(
@@ -996,7 +912,9 @@ internal constructor(
     cameraPadding: DpPadding? = null,
     fitPadding: DpPadding = DpPadding.Zero,
   ): CameraPosition =
-    awaitAttachment().cameraForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)
+    attachmentAuthority
+      .awaitAttachment()
+      .cameraForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)
 
   /**
    * Waits for a viewport, then calculates a camera that fits every position of [geometry] without
@@ -1012,9 +930,6 @@ internal constructor(
    *
    * See [cameraForBounds] for padding and viewport semantics.
    *
-   * On the browser, fitting calculates the target and zoom without [tilt], then assigns [tilt] to
-   * the result. A nonzero tilt may therefore leave part of the geometry outside the viewport.
-   *
    * @throws IllegalArgumentException if [geometry] contains no positions.
    * @throws IllegalStateException if the backend cannot calculate a camera for the geometry.
    */
@@ -1026,7 +941,9 @@ internal constructor(
     fitPadding: DpPadding = DpPadding.Zero,
   ): CameraPosition {
     require(geometry.positions().any()) { "The geometry contains no positions" }
-    return awaitAttachment().cameraForGeometry(geometry, bearing, tilt, cameraPadding, fitPadding)
+    return attachmentAuthority
+      .awaitAttachment()
+      .cameraForGeometry(geometry, bearing, tilt, cameraPadding, fitPadding)
   }
 
   /**
@@ -1054,8 +971,9 @@ internal constructor(
   }
 
   /**
-   * Waits for a viewport, then fits [boundingBox] without animation. A newer camera command or
-   * accepted input cancels this call. See [cameraForBounds] for [fitPadding] and [cameraPadding].
+   * Waits for a viewport, then fits [boundingBox] without animation. A newer camera command,
+   * accepted input, or detaching cancels this call. See [cameraForBounds] for [fitPadding] and
+   * [cameraPadding].
    */
   public suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
@@ -1065,41 +983,52 @@ internal constructor(
     fitPadding: DpPadding = DpPadding.Zero,
   ): Unit = coroutineScope {
     val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
-    retryAcrossAttachments {
-      it.fitCameraToBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding, guard)
-    }
+    attachmentAuthority
+      .awaitAttachment()
+      .fitCameraToBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding, guard)
   }
 
   /**
-   * Waits for a viewport, then moves the camera to [position] with [animation]. A newer camera
-   * command or accepted input cancels this call.
+   * Animates the specified camera properties after a viewport becomes available.
    *
-   * On Android, the system animator duration scale multiplies the duration of [animation]. A scale
-   * of zero jumps to [position].
+   * On native platforms, omitted properties keep their current animation and timing. A newer
+   * command replaces only its specified properties. Flight paths also own target and zoom together.
+   * On the browser, a new command stops the previous animation; omitted properties retain their
+   * current values. Viewport-inset changes can also stop browser animations.
+   *
+   * Returns when this command finishes or all its properties have been superseded. Other commands
+   * may still be moving. Cancelling the coroutine stops waiting, but an already-started animation
+   * continues. Use [stopCameraMovement] to stop all motion. Accepted input, full camera assignment,
+   * or attachment loss cancels the call.
+   *
+   * Android's animator duration scale multiplies the duration; zero applies the update immediately.
    */
-  public suspend fun animateCameraPosition(
-    position: CameraPosition,
-    animation: CameraAnimation = CameraAnimation.Fly(),
+  public suspend fun animateCamera(
+    update: CameraUpdate,
+    animation: CameraAnimation = CameraAnimation.Ease(),
   ): Unit = coroutineScope {
-    val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
-    retryAcrossAttachments {
-      it.animateCameraPosition(position, animation.scaledBy(systemAnimatorDurationScale()), guard)
-    }
+    val guard =
+      gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job], concurrent = true)
+    attachmentAuthority
+      .awaitAttachment()
+      .animateCamera(update, animation.scaledBy(systemAnimatorDurationScale()), guard)
   }
 
   /**
    * Changes zoom, bearing, or tilt while keeping [anchor] at its screen location at animation
-   * start. Null camera components retain their starting values. The camera target moves to preserve
-   * the anchor; this operation does not accept a destination target or a flight animation.
+   * start. Null camera components are omitted and can animate independently on native platforms.
+   * The camera target moves to preserve the anchor; this operation does not accept a destination
+   * target or a flight animation.
    *
    * Waits for an attached viewport. The anchor must resolve to a visible point on the map, or this
    * call throws [IllegalArgumentException]. Camera padding and viewport insets both affect the
-   * anchor's screen location and are retained during this move. Screen coordinates are relative to
-   * the full map, not its padded area.
+   * anchor's screen location. This command leaves padding unspecified, so native padding animations
+   * can continue. Screen coordinates are relative to the full map, not its padded area.
    *
-   * A newer camera command, accepted input, coroutine cancellation, a logical viewport resize,
-   * changed viewport insets, or attachment loss cancels this call. It does not restart on another
-   * attachment. The camera remains where it was interrupted, subject to the new geometry.
+   * An overlapping native command or any browser command supersedes this move. Accepted input, a
+   * logical viewport resize, changed viewport insets, or attachment loss cancels this call.
+   * Coroutine cancellation stops waiting; use [stopCameraMovement] to stop motion. Until selective
+   * cancellation is available, anchor geometry changes stop all camera animations.
    *
    * Anchor preservation applies to flat Mercator maps, including tilted cameras. Camera constraints
    * take precedence and can move the anchor. Globe and terrain do not have this guarantee. On
@@ -1119,8 +1048,10 @@ internal constructor(
     require(animation.duration.isFinite() && animation.duration >= Duration.ZERO) {
       "Duration must be finite and nonnegative"
     }
-    val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
-    awaitAttachment()
+    val guard =
+      gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job], concurrent = true)
+    attachmentAuthority
+      .awaitAttachment()
       .animateCameraAround(
         anchor,
         zoom,
@@ -1133,8 +1064,9 @@ internal constructor(
 
   /**
    * Waits for a viewport, then moves the camera to fit [boundingBox] with [animation]. A newer
-   * camera command or accepted input cancels this call. See [cameraForBounds] for [fitPadding] and
-   * [cameraPadding].
+   * full-camera assignment or accepted input cancels this call. Further partial updates follow
+   * [animateCamera]'s replacement and coroutine-cancellation behavior. See [cameraForBounds] for
+   * [fitPadding] and [cameraPadding]. Detaching cancels the call.
    *
    * On Android, the system animator duration scale multiplies the duration of [animation]. A scale
    * of zero jumps to fit [boundingBox].
@@ -1148,8 +1080,9 @@ internal constructor(
     animation: CameraAnimation = CameraAnimation.Fly(),
   ): Unit = coroutineScope {
     val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
-    retryAcrossAttachments {
-      it.animateCameraToBounds(
+    attachmentAuthority
+      .awaitAttachment()
+      .animateCameraToBounds(
         boundingBox,
         bearing,
         tilt,
@@ -1158,7 +1091,6 @@ internal constructor(
         animation.scaledBy(systemAnimatorDurationScale()),
         guard,
       )
-    }
   }
 
   /**
@@ -1247,7 +1179,7 @@ internal constructor(
     layerIds: Set<String>? = null,
     predicate: Expression<BooleanValue> = const(true),
   ): List<Feature<Geometry, JsonObject?>> =
-    awaitAttachment().queryRenderedFeatures(offset, layerIds, predicate)
+    attachmentAuthority.awaitAttachment().queryRenderedFeatures(offset, layerIds, predicate)
 
   /**
    * Waits for a viewport, then queries rendered features that intersect [rect] in front-to-back
@@ -1262,22 +1194,10 @@ internal constructor(
     layerIds: Set<String>? = null,
     predicate: Expression<BooleanValue> = const(true),
   ): List<Feature<Geometry, JsonObject?>> =
-    awaitAttachment().queryRenderedFeatures(rect, layerIds, predicate)
+    attachmentAuthority.awaitAttachment().queryRenderedFeatures(rect, layerIds, predicate)
 
   /** Waits for the first viewport from the current or a future map attachment. */
-  public suspend fun awaitViewport(): Viewport =
-    retryAcrossAttachments(MapAttachment::awaitViewport)
-
-  private suspend fun <T> retryAcrossAttachments(operation: suspend (MapAttachment) -> T): T {
-    var attachment = awaitAttachment()
-    while (true) {
-      try {
-        return operation(attachment)
-      } catch (_: MapAttachmentChangedException) {
-        attachment = awaitReplacementAttachment()
-      }
-    }
-  }
+  public suspend fun awaitViewport(): Viewport = attachmentAuthority.awaitViewport()
 
   internal fun reservePresentation(
     owner: MapPresentationOwnerToken = MapPresentationOwnerToken()
@@ -1296,742 +1216,8 @@ internal constructor(
 
   internal fun durableStyleCallbacks(): MapAdapter.Callbacks = DurableStyleCallbacks(this)
 
-  internal fun markStyleReady(adapter: MapAdapter): Boolean {
-    while (true) {
-      val read = lifecycle.serialized {
-        if (!lifecycle.acceptsAdapter(adapter)) return false
-        if (style.loadState == StyleLoadState.Ready) return true
-        val binding = style.currentLoadedStyle() ?: return false
-        StyleResourceRead(binding, styleHandleEpoch, styleSourceChangeRevision)
-      }
-      val resources = runCatching { style.readResources(read.binding) }
-      if (resources.isFailure) {
-        val stillCurrent = lifecycle.serialized { isCurrentStyleResourceRead(adapter, read) }
-        if (!stillCurrent) return false
-        throw requireNotNull(resources.exceptionOrNull())
-      }
-      val committed = lifecycle.serialized {
-        if (!isCurrentStyleResourceRead(adapter, read)) return false
-        if (style.loadState is StyleLoadState.Failed) return false
-        if (styleSourceChangeRevision != read.sourceChangeRevision) return@serialized false
-        style.updateResources(resources.getOrThrow())
-        style.loadState = StyleLoadState.Ready
-        true
-      }
-      if (committed) return true
-    }
-  }
-
-  internal fun refreshStyleSources(adapter: MapAdapter, sourceId: String? = null): Boolean {
-    lifecycle.serialized {
-      if (!lifecycle.acceptsAdapter(adapter)) return false
-      styleSourceChangeRevision++
-    }
-    while (true) {
-      val read = lifecycle.serialized {
-        if (!lifecycle.acceptsAdapter(adapter)) return false
-        if (style.loadState != StyleLoadState.Ready) return true
-        val binding = style.currentLoadedStyle() ?: return true
-        StyleResourceRead(binding, styleHandleEpoch, styleSourceChangeRevision)
-      }
-      val sources = runCatching { style.readSources(read.binding, sourceId) }
-      if (sources.isFailure) {
-        val stillCurrent = lifecycle.serialized { isCurrentStyleResourceRead(adapter, read) }
-        if (!stillCurrent) return false
-        throw requireNotNull(sources.exceptionOrNull())
-      }
-      val committed = lifecycle.serialized {
-        if (!isCurrentStyleResourceRead(adapter, read)) return false
-        if (style.loadState != StyleLoadState.Ready) return false
-        if (styleSourceChangeRevision != read.sourceChangeRevision) return@serialized false
-        style.updateSources(sources.getOrThrow())
-        true
-      }
-      if (committed) return true
-    }
-  }
-
-  internal fun updateStyleResources(adapter: MapAdapter, changes: StyleResourceChanges) {
-    if (changes.sources.isEmpty() && changes.layerOrder == null) return
-    val read = lifecycle.serialized {
-      if (!lifecycle.acceptsAdapter(adapter) || style.loadState != StyleLoadState.Ready) return
-      val binding = style.currentLoadedStyle() ?: return
-      if (binding.identity !== changes.identity) return
-      StyleResourceRead(binding, styleHandleEpoch, styleSourceChangeRevision)
-    }
-    changes.sources.forEach { refreshStyleSources(adapter, it) }
-    val layers = runCatching { style.readLayers(read.binding, changes.layers) }
-    lifecycle.serialized {
-      if (!isCurrentStyleResourceRead(adapter, read)) return
-      changes.layerOrder?.let { style.updateLayers(layers.getOrThrow(), it) }
-    }
-  }
-
-  private fun isCurrentStyleResourceRead(adapter: MapAdapter, read: StyleResourceRead): Boolean =
-    lifecycle.acceptsAdapter(adapter) &&
-      styleHandleEpoch == read.styleHandleEpoch &&
-      style.currentLoadedStyle() === read.binding
-
-  internal fun updateLoadedStyle(adapter: MapAdapter, loadedStyle: StyleBinding?): Boolean =
-    lifecycle.serialized {
-      if (!lifecycle.acceptsAdapter(adapter)) return false
-      if (style.currentLoadedStyle() === loadedStyle) return true
-      styleHandleEpoch++
-      imperativeSources.clear()
-      imperativeImages.clear()
-      cancelMissingImageResolutions()
-      style.loadState = StyleLoadState.Loading
-      style.updateLoadedStyle(loadedStyle)
-      true
-    }
-
-  internal fun readyLoadedStyle(): StyleBinding? = lifecycle.serialized {
-    style.currentLoadedStyle()?.takeIf { style.loadState == StyleLoadState.Ready }
-  }
-
-  internal fun markStyleFailed(adapter: MapAdapter, reason: String?) {
-    lifecycle.serialized {
-      if (lifecycle.acceptsAdapter(adapter)) {
-        style.loadState = StyleLoadState.Failed(reason)
-      }
-    }
-  }
-
-  internal suspend fun beginStyleRevision(adapter: MapAdapter, revision: DesiredStyleRevision) {
-    while (true) {
-      val mutation = lifecycle.serialized {
-        if (!lifecycle.acceptsAdapter(adapter)) return
-        activeStyleMutation
-          ?: backgroundStyleMutation
-          ?: run {
-            requireNoImperativeResourceConflicts(revision)
-            styleHandleEpoch++
-            if (style.loadState is StyleLoadState.Failed) {
-              style.loadState = StyleLoadState.Loading
-            }
-            desiredStyleRevision = revision
-            return
-          }
-      }
-      mutation.completion.await()
-    }
-  }
-
-  internal fun setBaseStyle(value: BaseStyle) {
-    val command = lifecycle.serialized {
-      requireOpenLocked()
-      if (style.baseStyle == value) return
-      requireNoActiveStyleMutation()
-      styleHandleEpoch++
-      imperativeSources.clear()
-      imperativeImages.clear()
-      cancelMissingImageResolutions()
-      style.setBaseStyleState(value)
-      style.invalidateLoadedStyle()
-      val adapter = lifecycle.currentAdapter()
-      if (adapter == null) {
-        style.loadState = StyleLoadState.Pending
-        baseStyleCommandRevision++
-        return
-      } else {
-        style.loadState = StyleLoadState.Loading
-      }
-      BaseStyleCommand(adapter, value, ++baseStyleCommandRevision)
-    }
-    applyBaseStyleCommand(command)
-  }
-
-  internal fun desiredSourceDefinition(id: String): org.maplibre.compose.style.SourceDefinition? =
-    lifecycle.serialized {
-      desiredStyleRevision.sources.firstOrNull { it.id == id } ?: imperativeSources[id]?.definition
-    }
-
-  internal fun addStyleSource(source: Source): SourceHandle {
-    val definition = source.definition()
-    val record = ImperativeSourceRecord(definition)
-    val reservation = StyleMutationReservation()
-    val binding = lifecycle.serialized {
-      requireOpenLocked()
-      requireNoDesiredSource(source.id)
-      requireNoActiveStyleMutation()
-      if (source.id in imperativeSources) {
-        throw StyleHandleException("Source ID '${source.id}' already exists in style")
-      }
-      checkNotNull(style.currentLoadedStyle()).also(::requireStyleHandleLocked).also {
-        imperativeSources[source.id] = record
-        activeStyleMutation = reservation
-      }
-    }
-    var committed = false
-    try {
-      if (binding.sourceExists(source.id) == true) {
-        throw StyleHandleException("Source ID '${source.id}' already exists in style")
-      }
-      val added = binding.addSource(definition)
-      if (!added) throw IllegalStateException("The loaded-style generation changed during add")
-      lifecycle.serialized { requireStyleHandleLocked(binding) }
-      val handle = checkNotNull(refreshSourcesAfterCommand(binding)[source.id])
-      committed = true
-      return handle
-    } catch (error: StyleMutationException) {
-      throw StyleHandleException("Could not add source '${source.id}': ${error.message}", error)
-    } finally {
-      lifecycle.serialized {
-        if (!committed && imperativeSources[source.id] === record) {
-          imperativeSources.remove(source.id)
-        }
-        completeStyleMutation(reservation)
-      }
-    }
-  }
-
-  internal fun removeStyleSource(id: String, expectedStyle: StyleBinding, identity: Any): Boolean {
-    val reservation = StyleMutationReservation()
-    val binding = lifecycle.serialized {
-      requireOpenLocked()
-      requireStyleHandleLocked(expectedStyle)
-      check(expectedStyle.identity.sources.isCurrent(id, identity)) {
-        "Source '$id' has been removed or replaced"
-      }
-      requireNoDesiredSource(id)
-      requireNoActiveStyleMutation()
-      checkNotNull(style.currentLoadedStyle()).also(::requireStyleHandleLocked).also {
-        activeStyleMutation = reservation
-      }
-    }
-    try {
-      if (binding.sourceExists(id) == false) return false
-      binding.removeSource(id)
-      lifecycle.serialized {
-        requireStyleHandleLocked(binding)
-        imperativeSources.remove(id)
-        binding.identity.sources.remove(id)
-      }
-      refreshSourcesAfterCommand(binding)
-      return true
-    } catch (error: StyleMutationException) {
-      throw StyleHandleException("Could not remove source '$id': ${error.message}", error)
-    } finally {
-      lifecycle.serialized { completeStyleMutation(reservation) }
-    }
-  }
-
-  internal fun addStyleImage(
-    id: String,
-    image: ImageBitmap,
-    sdf: Boolean,
-    stretch: ImageStretch?,
-    expectedStyle: StyleBinding? = null,
-  ): StyleImageHandle {
-    val record = ImperativeImageRecord(fromResolver = false)
-    val reservation = StyleMutationReservation()
-    val binding = lifecycle.serialized {
-      requireOpenLocked()
-      expectedStyle?.let(::requireStyleHandleLocked)
-      requireNoDesiredImage(id)
-      requireNoActiveStyleMutation()
-      if (id in imperativeImages) {
-        throw StyleHandleException("Image ID '$id' already exists in style")
-      }
-      checkNotNull(style.currentLoadedStyle()).also(::requireStyleHandleLocked).also {
-        imperativeImages[id] = record
-        activeStyleMutation = reservation
-      }
-    }
-    var committed = false
-    try {
-      if (binding.imageExists(id) == true) {
-        throw StyleHandleException("Image ID '$id' already exists in style")
-      }
-      binding.identity.images.remove(id)
-      binding.addImage(id, image, sdf, stretch)
-      val handle = lifecycle.serialized {
-        requireStyleHandleLocked(binding)
-        StyleImageHandleImpl(id, style, binding)
-      }
-      committed = true
-      return handle
-    } catch (error: StyleMutationException) {
-      throw StyleHandleException("Could not add image '$id': ${error.message}", error)
-    } finally {
-      lifecycle.serialized {
-        if (!committed && imperativeImages[id] === record) imperativeImages.remove(id)
-        completeStyleMutation(reservation)
-      }
-    }
-  }
-
-  /**
-   * Starts resolution of a missing style image and returns the resolution, or null when no resolver
-   * is set, no style is loaded, or this state no longer accepts [adapter].
-   *
-   * A repeated request for an id already resolving returns that resolution, which the browser needs
-   * to keep the request pending while the first call runs.
-   *
-   * The engine reports the miss from its own thread, so the resolution runs on this state's scope
-   * rather than there.
-   */
-  internal fun resolveMissingImage(adapter: MapAdapter, imageId: String): Deferred<Unit>? =
-    lifecycle.serialized {
-      if (lifecycle.isClosed || !lifecycle.acceptsAdapter(adapter)) return@serialized null
-      val resolver = missingImageResolverState ?: return@serialized null
-      val binding = style.currentLoadedStyle() ?: return@serialized null
-      if (hasDesiredImage(imageId) || imperativeImages[imageId]?.fromResolver == false)
-        return@serialized null
-      missingImageResolutions[imageId]?.let {
-        return@serialized it.work
-      }
-      val token = Any()
-      runtime.physicalScope
-        .async(start = CoroutineStart.LAZY) {
-          supplyMissingImage(resolver, binding, imageId, token)
-        }
-        .also {
-          // Register before starting: even an inline completion must be able to remove its record.
-          missingImageResolutions[imageId] = MissingImageResolution(token, it)
-          it.start()
-        }
-    }
-
-  private suspend fun supplyMissingImage(
-    resolver: MissingImageResolver,
-    binding: StyleBinding,
-    imageId: String,
-    token: Any,
-  ) {
-    var rememberFailure = false
-    try {
-      // A queued miss may arrive after another request or style command supplied the image.
-      // Consult the engine outside the lifecycle lock: Native marshals this read to its map thread.
-      if (binding.imageExists(imageId) == true) return
-      val resolved =
-        try {
-          resolver(imageId)
-        } catch (error: CancellationException) {
-          throw error
-        } catch (error: Throwable) {
-          runtime.logger?.w(error) { "The missing-image resolver failed for image '$imageId'" }
-          null
-        }
-      if (resolved == null) {
-        rememberFailure = true
-        return
-      }
-      addResolvedStyleImage(binding, imageId, resolved)
-    } catch (error: CancellationException) {
-      throw error
-    } catch (error: Throwable) {
-      runtime.logger?.w(error) { "Could not add the resolved image '$imageId'" }
-    } finally {
-      // Keep negative results to avoid a request loop, but let a later engine miss restore an
-      // evicted image. An older resolver must not clear a replacement resolver's pending work.
-      if (!rememberFailure) {
-        lifecycle.serialized {
-          if (missingImageResolutions[imageId]?.token === token)
-            missingImageResolutions.remove(imageId)
-        }
-      }
-    }
-  }
-
-  /**
-   * Adds a resolved image to [binding].
-   *
-   * The engine asks as soon as it lays out a tile, so this waits out a style command in progress
-   * rather than failing on it, and abandons the add once [binding] is no longer the loaded style.
-   * The style that it adds to is not ready yet: the browser counts a style as loaded only once
-   * every in-view tile has parsed, and a tile does not finish parsing until this add answers it.
-   */
-  private suspend fun addResolvedStyleImage(
-    binding: StyleBinding,
-    imageId: String,
-    resolved: ResolvedStyleImage,
-  ) {
-    val record = ImperativeImageRecord(fromResolver = true)
-    val reservation = StyleMutationReservation()
-    var claimed = false
-    while (true) {
-      val inProgress = lifecycle.serialized {
-        if (lifecycle.isClosed) return
-        if (style.currentLoadedStyle() !== binding) return
-        (activeStyleMutation ?: backgroundStyleMutation)?.let {
-          return@serialized it
-        }
-        if (hasDesiredImage(imageId) || imperativeImages[imageId]?.fromResolver == false) return
-        // Resolver ownership survives eviction, but must not replace an explicitly added image.
-        if (imageId !in imperativeImages) {
-          imperativeImages[imageId] = record
-          claimed = true
-        }
-        backgroundStyleMutation = reservation
-        null
-      }
-      if (inProgress == null) break
-      inProgress.completion.await()
-    }
-    var committed = false
-    try {
-      if (binding.imageExists(imageId) == true) return
-      // An engine eviction ends the previous image identity, even when its ID is reused.
-      binding.identity.images.remove(imageId)
-      binding.addImage(imageId, resolved.image, resolved.sdf, resolved.stretch)
-      committed = lifecycle.serialized {
-        !lifecycle.isClosed && style.isCurrentLoadedStyle(binding)
-      }
-    } catch (error: CancellationException) {
-      throw error
-    } catch (error: Throwable) {
-      // A style load can invalidate [binding] between the check above and these calls, which fails
-      // the add for a style that nothing waits on any more.
-      if (lifecycle.serialized { !lifecycle.isClosed && style.isCurrentLoadedStyle(binding) }) {
-        if (error is StyleMutationException) {
-          throw StyleHandleException("Could not add image '$imageId': ${error.message}", error)
-        }
-        throw error
-      }
-    } finally {
-      lifecycle.serialized {
-        if (claimed && !committed && imperativeImages[imageId] === record)
-          imperativeImages.remove(imageId)
-        completeStyleMutation(reservation)
-      }
-    }
-  }
-
-  /** Ends every resolution in flight: none of them can still reach the style that asked. */
-  private fun cancelMissingImageResolutions() {
-    missingImageResolutions.values.forEach { it.work.cancel() }
-    missingImageResolutions.clear()
-  }
-
-  internal fun removeStyleImage(id: String, expectedStyle: StyleBinding, identity: Any): Boolean {
-    val reservation = StyleMutationReservation()
-    val binding = lifecycle.serialized {
-      requireOpenLocked()
-      requireStyleHandleLocked(expectedStyle)
-      check(expectedStyle.identity.images.isCurrent(id, identity)) {
-        "Image '$id' has been removed or replaced"
-      }
-      requireNoDesiredImage(id)
-      requireNoActiveStyleMutation()
-      checkNotNull(style.currentLoadedStyle()).also(::requireStyleHandleLocked).also {
-        activeStyleMutation = reservation
-      }
-    }
-    try {
-      if (binding.imageExists(id) == false) return false
-      binding.removeImage(id)
-      lifecycle.serialized {
-        requireStyleHandleLocked(binding)
-        imperativeImages.remove(id)
-        binding.identity.images.remove(id)
-      }
-      return true
-    } catch (error: StyleMutationException) {
-      throw StyleHandleException("Could not remove image '$id': ${error.message}", error)
-    } finally {
-      lifecycle.serialized { completeStyleMutation(reservation) }
-    }
-  }
-
-  private fun refreshSourcesAfterCommand(binding: StyleBinding): Map<String, SourceHandle> {
-    while (true) {
-      val read = lifecycle.serialized {
-        requireStyleHandleLocked(binding)
-        StyleResourceRead(binding, styleHandleEpoch, ++styleSourceChangeRevision)
-      }
-      val sources = style.readSources(binding)
-      val committed = lifecycle.serialized {
-        requireStyleHandleLocked(binding)
-        if (styleSourceChangeRevision != read.sourceChangeRevision) return@serialized false
-        style.updateSources(sources)
-        true
-      }
-      if (committed) return sources
-    }
-  }
-
-  private fun requireNoDesiredSource(id: String) {
-    if (desiredStyleRevision.sources.any { it.id == id }) {
-      throw StyleHandleException("Source ID '$id' is declared by the style content")
-    }
-  }
-
-  private fun hasDesiredImage(id: String): Boolean = desiredStyleRevision.images.any { it.id == id }
-
-  private fun requireNoDesiredImage(id: String) {
-    if (hasDesiredImage(id)) {
-      throw StyleHandleException("Image ID '$id' is declared by the style content")
-    }
-  }
-
-  private fun requireNoImperativeResourceConflicts(revision: DesiredStyleRevision) {
-    revision.sources
-      .firstOrNull { it.id in imperativeSources }
-      ?.let {
-        throw StyleHandleException("Source ID '${it.id}' is owned by an imperative addition")
-      }
-    revision.images
-      .firstOrNull { it.id in imperativeImages }
-      ?.let {
-        throw StyleHandleException("Image ID '${it.id}' is owned by an imperative addition")
-      }
-  }
-
-  private fun requireNoActiveStyleMutation() {
-    if (activeStyleMutation != null) {
-      throw StyleHandleException("Another imperative style resource command is in progress")
-    }
-  }
-
-  private fun completeStyleMutation(reservation: StyleMutationReservation) {
-    if (activeStyleMutation === reservation) activeStyleMutation = null
-    if (backgroundStyleMutation === reservation) backgroundStyleMutation = null
-    reservation.completion.complete(Unit)
-  }
-
-  internal fun <T> runStyleHandleOperation(
-    binding: StyleBinding,
-    action: () -> T,
-  ): T {
-    lifecycle.serialized { requireStyleHandleLocked(binding) }
-    val result = action()
-    lifecycle.serialized { requireStyleHandleLocked(binding) }
-    return result
-  }
-
-  private fun requireStyleHandleLocked(binding: StyleBinding) {
-    requireOpenLocked()
-    check(style.loadState == StyleLoadState.Ready && style.isCurrentLoadedStyle(binding)) {
-      "Style operation belongs to a stale or unready loaded-style identity"
-    }
-  }
-
-  /**
-   * Publishes the camera and viewport of [adapter] and returns the presentation that holds them. A
-   * map with no readable viewport keeps the values it has, so a caller that reacts to a camera
-   * event still reaches its presentation.
-   */
-  internal fun synchronizeCamera(adapter: MapAdapter): MapAttachment? {
-    if (!lifecycle.acceptsPresentation(adapter)) return null
-    val cameraPosition = adapter.getCameraPosition()
-    val viewport = adapter.getViewport()
-    return lifecycle.serialized {
-      if (!lifecycle.acceptsPresentation(adapter)) return@serialized null
-      val current = currentMapAttachment ?: return@serialized null
-      if (viewport != null) {
-        cameraPositionState = cameraPosition
-        current.updateViewport(viewport)
-      }
-      current
-    }
-  }
-
-  /**
-   * Reacts to one engine event that the lifecycle already accepted, then publishes it to [events].
-   * Ignores an [adapter] that this state no longer accepts. Publication follows the reaction, so a
-   * collector reads the values that the event produced.
-   */
-  internal fun onEvent(adapter: MapAdapter, event: MapEvent) {
-    val accepted =
-      when (event) {
-        is MapEvent.CameraMoveStarted ->
-          synchronizeCamera(adapter)?.also { it.cameraChangeStarted() } != null
-        MapEvent.CameraMoved -> synchronizeCamera(adapter) != null
-        is MapEvent.CameraMoveEnded ->
-          synchronizeCamera(adapter)?.also { it.cameraChangeEnded() } != null
-        is MapEvent.FrameRendered -> lifecycle.acceptsPresentation(adapter)
-        MapEvent.StyleLoaded,
-        is MapEvent.StyleLoadFailed,
-        is MapEvent.SourceDataFailed,
-        MapEvent.Idle -> lifecycle.acceptsAdapter(adapter)
-      }
-    if (accepted) eventsFlow.tryEmit(event)
-  }
-
-  /** Reports whether a gesture holds the camera of [adapter]. */
-  internal fun setGestureActive(adapter: MapAdapter, active: Boolean) {
-    presentedAttachment(adapter)?.setGestureActive(active)
-  }
-
-  /** Reports the engagement of the input node over [adapter]. */
-  internal fun setEngaged(adapter: MapAdapter, engaged: Boolean) {
-    presentedAttachment(adapter)?.setEngaged(engaged)
-  }
-
-  /** Ends a camera change that the engine behind [adapter] will never finish. */
-  internal fun endCameraChange(adapter: MapAdapter) {
-    presentedAttachment(adapter)?.cameraChangeEnded()
-  }
-
-  private fun presentedAttachment(adapter: MapAdapter): MapAttachment? = lifecycle.serialized {
-    if (!lifecycle.acceptsPresentation(adapter)) return@serialized null
-    currentMapAttachment
-  }
-
-  internal fun isCurrent(candidate: MapAttachment): Boolean = lifecycle.serialized {
-    isCurrentLocked(candidate)
-  }
-
-  internal fun <T> withCurrentOrNull(candidate: MapAttachment, block: () -> T): T? {
-    if (!isCurrent(candidate)) return null
-    val result = block()
-    return result.takeIf { isCurrent(candidate) }
-  }
-
-  private fun isCurrentLocked(candidate: MapAttachment): Boolean =
-    currentMapAttachment === candidate && lifecycle.isCurrent(candidate.token, candidate.adapter)
-
   private fun requireOpenLocked() {
     check(!lifecycle.isClosed) { "The map state is closed" }
-  }
-
-  internal fun commitClosed() {
-    styleHandleEpoch++
-    cancelMissingImageResolutions()
-    style.invalidateLoadedStyle()
-    Snapshot.withMutableSnapshot {
-      closedState = true
-      currentMapAttachment?.invalidate()
-      currentMapAttachment = null
-      nextMapAttachment.completeExceptionally(
-        CancellationException("The map closed while waiting for an attachment")
-      )
-    }
-  }
-
-  internal fun invalidatePresentation(adapter: MapAdapter?) {
-    Snapshot.withMutableSnapshot {
-      currentMapAttachment?.invalidate()
-      currentMapAttachment = null
-      prepareForNextAttachment()
-      if (adapter?.retainsEngineBetweenPresentations != true) {
-        style.loadState = StyleLoadState.Pending
-      }
-    }
-  }
-
-  internal fun invalidateClosedAdapter(adapter: MapAdapter) {
-    Snapshot.withMutableSnapshot {
-      styleHandleEpoch++
-      style.invalidateLoadedStyle()
-      style.loadState = StyleLoadState.Pending
-      if (currentMapAttachment?.adapter === adapter) {
-        currentMapAttachment?.invalidate()
-        currentMapAttachment = null
-        prepareForNextAttachment()
-      }
-    }
-  }
-
-  internal fun configurePresentationAdapter(adapter: MapAdapter) {
-    val configuration = lifecycle.serialized {
-      if (!lifecycle.isPendingPublication(adapter)) return
-      PresentationConfiguration(
-        camera = CameraCommand(adapter, cameraPositionState, cameraCommandRevision),
-        baseStyle = BaseStyleCommand(adapter, style.baseStyle, baseStyleCommandRevision),
-      )
-    }
-    applyCameraCommand(configuration.camera)
-    if (!lifecycle.isPendingPublication(adapter)) return
-    applyBaseStyleCommand(configuration.baseStyle)
-  }
-
-  internal fun beginStyleLoadForNewAdapter() {
-    styleHandleEpoch++
-    style.invalidateLoadedStyle()
-    style.loadState = StyleLoadState.Loading
-  }
-
-  internal fun seedPresentationViewport(token: MapPresentationToken, adapter: MapAdapter) {
-    val viewport = adapter.getViewport() ?: return
-    lifecycle.serialized {
-      val current = currentMapAttachment ?: return@serialized
-      if (current.token != token || current.adapter !== adapter || current.viewport != null) return
-      current.updateViewport(viewport)
-    }
-  }
-
-  private fun applyBaseStyleCommand(initial: BaseStyleCommand) {
-    var command = initial
-    while (true) {
-      if (lifecycle.currentAdapter() !== command.adapter) return
-      command.adapter.setBaseStyle(command.value)
-      command = lifecycle.serialized {
-        if (lifecycle.currentAdapter() !== command.adapter) return
-        if (baseStyleCommandRevision == command.revision) return
-        BaseStyleCommand(command.adapter, style.baseStyle, baseStyleCommandRevision)
-      }
-    }
-  }
-
-  private fun applyCameraCommand(initial: CameraCommand) {
-    var command = initial
-    while (true) {
-      if (lifecycle.currentAdapter() !== command.adapter) return
-      command.adapter.setCameraPosition(command.value, command.guard)
-      command = lifecycle.serialized {
-        if (lifecycle.currentAdapter() !== command.adapter) return
-        if (cameraCommandRevision == command.revision) return
-        CameraCommand(command.adapter, cameraPositionState, cameraCommandRevision, command.guard)
-      }
-    }
-  }
-
-  private fun applyAttachmentCameraCommand(
-    attachment: MapAttachment,
-    initial: CameraCommand,
-  ) {
-    val guard = CameraCommandGuard {
-      isCurrent(attachment) && initial.guard?.isValid() != false
-    }
-    var command = initial
-    while (true) {
-      if (!lifecycle.isCurrent(attachment.token, command.adapter)) return
-      command.adapter.setCameraPosition(command.value, guard)
-      command = lifecycle.serialized {
-        if (!lifecycle.isCurrent(attachment.token, command.adapter)) return
-        if (cameraCommandRevision == command.revision) return
-        CameraCommand(command.adapter, cameraPositionState, cameraCommandRevision, command.guard)
-      }
-    }
-  }
-
-  internal fun commitPresentation(
-    token: MapPresentationToken,
-    adapter: MapAdapter,
-  ) {
-    val attachment = MapAttachment(this, token, adapter)
-    currentMapAttachment = attachment
-    nextMapAttachment.complete(attachment)
-  }
-
-  private suspend fun awaitAttachment(): MapAttachment {
-    val pending = lifecycle.serialized {
-      requireOpenLocked()
-      currentMapAttachment?.let {
-        return it
-      }
-      nextMapAttachment
-    }
-    return pending.await()
-  }
-
-  private suspend fun awaitReplacementAttachment(): MapAttachment {
-    val pending = lifecycle.serialized {
-      if (lifecycle.isClosed) {
-        throw CancellationException("The map closed during the operation")
-      }
-      currentMapAttachment?.let {
-        return it
-      }
-      nextMapAttachment
-    }
-    return pending.await()
-  }
-
-  private fun prepareForNextAttachment() {
-    if (nextMapAttachment.isCompleted) nextMapAttachment = CompletableDeferred()
   }
 
   private inline fun <T> withAttachmentRead(block: (MapAttachment) -> T?): T? {
@@ -2042,35 +1228,6 @@ internal constructor(
       null
     }
   }
-
-  private data class PresentationConfiguration(
-    val camera: CameraCommand,
-    val baseStyle: BaseStyleCommand,
-  )
-
-  private data class CameraCommand(
-    val adapter: MapAdapter,
-    val value: CameraPosition,
-    val revision: Long,
-    val guard: CameraCommandGuard? = null,
-  )
-
-  private data class AttachmentCameraCommand(
-    val attachment: MapAttachment,
-    val command: CameraCommand,
-  )
-
-  private data class BaseStyleCommand(
-    val adapter: MapAdapter,
-    val value: BaseStyle,
-    val revision: Long,
-  )
-
-  private data class StyleResourceRead(
-    val binding: StyleBinding,
-    val styleHandleEpoch: Long,
-    val sourceChangeRevision: Long,
-  )
 }
 
 @JvmInline internal value class MapPresentationToken(val value: Long)

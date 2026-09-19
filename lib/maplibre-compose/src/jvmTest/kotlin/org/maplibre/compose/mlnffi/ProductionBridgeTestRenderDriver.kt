@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import java.awt.EventQueue
+import java.lang.FunctionalInterface
 import java.lang.invoke.MethodHandles
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
@@ -43,7 +44,6 @@ import org.lwjgl.egl.EGL10.eglGetDisplay
 import org.lwjgl.egl.EGL10.eglGetError
 import org.lwjgl.egl.EGL10.eglInitialize
 import org.lwjgl.egl.EGL10.eglMakeCurrent
-import org.lwjgl.egl.EGL10.eglTerminate
 import org.lwjgl.egl.EGL10.neglGetProcAddress
 import org.lwjgl.egl.EGL12.EGL_RENDERABLE_TYPE
 import org.lwjgl.egl.EGL12.eglBindAPI
@@ -51,6 +51,7 @@ import org.lwjgl.egl.EGL14.EGL_DEFAULT_DISPLAY
 import org.lwjgl.egl.EGL14.EGL_OPENGL_API
 import org.lwjgl.egl.EGL14.EGL_OPENGL_BIT
 import org.lwjgl.opengl.GL
+import org.lwjgl.opengl.GLCapabilities
 import org.lwjgl.system.APIUtil.apiCreateCIF
 import org.lwjgl.system.Callback
 import org.lwjgl.system.CallbackI
@@ -130,6 +131,7 @@ private constructor(
         when (runtimeBackend) {
           RenderBackend.METAL -> MapRenderBackend.METAL
           RenderBackend.VULKAN -> MapRenderBackend.VULKAN
+          RenderBackend.OPENGL -> MapRenderBackend.OPENGL
           else -> error("No production Desktop bridge for packaged runtime $runtimeBackend")
         }
       val environment = DesktopTestGpuEnvironment.create()
@@ -402,52 +404,16 @@ private class Direct3D12TestGpuEnvironment private constructor(private val windo
 
   override fun discardPresentedFrame() {}
 
-  override fun close() {
-    closeDestination()
-    scheduleDisposal(this)
-  }
+  // Drivers own their render bridges; the test worker owns this shared consumer environment.
+  override fun close() {}
 
   companion object {
-    /**
-     * Skiko tears a window's Direct3D device down asynchronously after [ComposeWindow.dispose], so
-     * replacing the window between test methods can race the next device's startup and crash the
-     * test VM in the native graphics driver.
-     */
-    private const val DISPOSAL_DELAY_MILLIS = 1_000L
-    private val sharedLock = Any()
-    private var shared: Direct3D12TestGpuEnvironment? = null
-    private var disposalGeneration = 0L
+    // Skiko destroys the Direct3D device asynchronously. Keep one window for the worker so a
+    // replacement never starts during teardown. Gradle exits its test worker explicitly; let the
+    // process reclaim this fixture instead of waiting for AWT or GPU work in a shutdown hook.
+    private val shared by lazy { createShared() }
 
-    fun create(): Direct3D12TestGpuEnvironment =
-      synchronized(sharedLock) {
-        disposalGeneration += 1
-        shared ?: createShared().also { shared = it }
-      }
-
-    /** Disposes the last window after a reuse window, so AWT does not keep the worker alive. */
-    private fun scheduleDisposal(environment: Direct3D12TestGpuEnvironment) {
-      val scheduledGeneration = synchronized(sharedLock) { ++disposalGeneration }
-      Thread(
-          {
-            Thread.sleep(DISPOSAL_DELAY_MILLIS)
-            val shouldDispose =
-              synchronized(sharedLock) {
-                if (shared === environment && disposalGeneration == scheduledGeneration) {
-                  shared = null
-                  true
-                } else {
-                  false
-                }
-              }
-            if (shouldDispose) {
-              runCatching { EventQueue.invokeAndWait { environment.window.dispose() } }
-            }
-          },
-          "maplibre-direct3d-test-disposal",
-        )
-        .apply { isDaemon = true }
-        .start()
-    }
+    fun create(): Direct3D12TestGpuEnvironment = shared
 
     private fun createShared(): Direct3D12TestGpuEnvironment {
       lateinit var window: ComposeWindow
@@ -486,7 +452,7 @@ private class EglTestContext private constructor() : AutoCloseable {
   private var display = EGL_NO_DISPLAY
   private var surface = EGL_NO_SURFACE
   private var context = EGL_NO_CONTEXT
-  private lateinit var capabilities: org.lwjgl.opengl.GLCapabilities
+  private lateinit var capabilities: GLCapabilities
   private lateinit var procAddressCallback: GlProcAddressCallback
   private lateinit var glInterface: GLAssembledInterface
 
@@ -571,7 +537,7 @@ private class EglTestContext private constructor() : AutoCloseable {
     eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT)
     if (context != EGL_NO_CONTEXT) eglDestroyContext(display, context)
     if (surface != EGL_NO_SURFACE) eglDestroySurface(display, surface)
-    eglTerminate(display)
+    // The display is shared with other fixtures and map producers; only our resources are owned.
     context = EGL_NO_CONTEXT
     surface = EGL_NO_SURFACE
     display = EGL_NO_DISPLAY
@@ -591,7 +557,7 @@ private class EglTestContext private constructor() : AutoCloseable {
   }
 }
 
-@java.lang.FunctionalInterface
+@FunctionalInterface
 private fun interface GlProcAddressCallbackI : CallbackI {
   fun invoke(context: Long, name: Long): Long
 
