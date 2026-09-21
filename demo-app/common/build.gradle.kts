@@ -4,6 +4,7 @@ plugins {
   id(libs.plugins.kotlin.multiplatform.get().pluginId)
   id(libs.plugins.android.library.get().pluginId)
   id(libs.plugins.kotlin.composeCompiler.get().pluginId)
+  id(libs.plugins.kotlin.serialization.get().pluginId)
   id(libs.plugins.compose.get().pluginId)
 }
 
@@ -86,6 +87,11 @@ kotlin {
 
     androidMain {
       dependencies {
+        implementation(
+          if (providers.gradleProperty("maplibre.android.backend").getOrElse("opengl") == "vulkan")
+            libs.maplibre.androidVulkan
+          else libs.maplibre.androidOpenGl
+        )
         implementation(libs.jetbrains.compose.ui.tooling)
         implementation(libs.androidx.activity.compose)
         implementation(libs.kotlinx.coroutines.android)
@@ -115,7 +121,20 @@ kotlin {
   }
 }
 
-compose.resources { packageOfResClass = "org.maplibre.compose.demoapp.generated" }
+val benchmarkResources =
+  tasks.register<Sync>("benchmarkResources") {
+    from("src/commonMain/composeResources")
+    from(layout.buildDirectory.dir("generated/benchmarkResources"))
+    into(layout.buildDirectory.dir("generated/combinedComposeResources"))
+  }
+
+compose.resources {
+  packageOfResClass = "org.maplibre.compose.demoapp.generated"
+  customDirectory(
+    sourceSetName = "commonMain",
+    directoryProvider = layout.dir(benchmarkResources.map { it.destinationDir }),
+  )
+}
 
 if (providers.gradleProperty("composeCompilerReports").orNull == "true") {
   composeCompiler { reportsDestination = layout.buildDirectory.dir("compose/reports") }

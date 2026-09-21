@@ -28,15 +28,17 @@ private fun processCpuNanos(): Long = memScoped {
 
 private var startCpuNanos = -1L
 
-internal actual fun benchmarkTrace(active: Boolean) {
+internal actual fun benchmarkCpu(active: Boolean) {
   val now = processCpuNanos()
   if (active) startCpuNanos = now
   else if (startCpuNanos >= 0 && now >= startCpuNanos)
     println("MAP_BENCHMARK CPU ${(now - startCpuNanos) / 1e6}")
 }
 
-@Composable internal actual fun BenchmarkPlatformMetrics(active: Boolean) {}
-
-internal actual fun benchmarkInput(sequence: Int, uptimeMillis: Long) {
-  println("MAP_BENCHMARK INPUT_UNCALIBRATED $sequence $uptimeMillis")
+@Composable
+internal actual fun ClassicAndroidBenchmark(
+  fixture: BenchmarkFixture,
+  onStatus: (String, Boolean) -> Unit,
+) {
+  UnsupportedClassicBenchmark(onStatus)
 }
