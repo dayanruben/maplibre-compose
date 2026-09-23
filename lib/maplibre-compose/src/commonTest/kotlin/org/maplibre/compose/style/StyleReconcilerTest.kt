@@ -5,7 +5,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 import org.maplibre.compose.layers.Anchor
-import org.maplibre.compose.layers.RasterLayer
+import org.maplibre.compose.layers.TestLayer
+import org.maplibre.compose.map.FakeImageBitmap
 import org.maplibre.compose.sources.RasterTileSource
 
 class StyleReconcilerTest {
@@ -32,7 +33,7 @@ class StyleReconcilerTest {
     val recording = RecordingOperations(style)
     val reconciler = StyleReconciler()
     val source = source("tiles")
-    val layer = RasterLayer("raster", source)
+    val layer = TestLayer("raster", "raster", source)
     val revision = revision(source, layer)
 
     reconciler.apply(recording, revision)
@@ -59,21 +60,89 @@ class StyleReconcilerTest {
     val first = source("first")
 
     assertFailsWith<IllegalStateException> {
-      reconciler.apply(style, revision(first, RasterLayer("first-layer", first)))
+      reconciler.apply(style, revision(first, TestLayer("first-layer", "raster", first)))
     }
 
     fail = false
     val second = source("second")
-    reconciler.apply(style, revision(second, RasterLayer("second-layer", second)))
+    reconciler.apply(style, revision(second, TestLayer("second-layer", "raster", second)))
 
     assertEquals(setOf("second"), delegate.installedSourceIds)
     assertEquals(setOf("second-layer"), delegate.installedLayerIds)
   }
 
+  @Test
+  fun a_changed_image_is_replaced_in_place_and_a_dropped_image_is_removed() {
+    val style = RecordingStyleBinding()
+    val reconciler = StyleReconciler()
+    val source = source("tiles")
+    val layer = TestLayer("raster", "raster", source)
+    fun revisionWith(vararg images: StyleImageDefinition) =
+      revision(source, layer).copy(images = images.toList())
+    val icon =
+      StyleImageDefinition("icon", ImageSnapshot.capture(FakeImageBitmap(1, 1)), false, null)
+
+    reconciler.apply(style, revisionWith(icon))
+    assertEquals(setOf("icon"), style.imageIds)
+    assertTrue(style.replacedImages.isEmpty())
+
+    reconciler.apply(style, revisionWith(icon.copy(sdf = true)))
+    assertEquals(listOf("icon"), style.replacedImages)
+    assertEquals(setOf("icon"), style.imageIds)
+
+    reconciler.apply(style, revisionWith())
+    assertTrue(style.imageIds.isEmpty())
+  }
+
+  @Test
+  fun a_failed_replacement_is_replaced_again_by_the_next_revision() {
+    val refused = mutableSetOf("icon")
+    val style = RecordingStyleBinding(refusedImageReplacements = refused)
+    val reconciler = StyleReconciler()
+    val source = source("tiles")
+    val layer = TestLayer("raster", "raster", source)
+    fun revisionWith(vararg images: StyleImageDefinition) =
+      revision(source, layer).copy(images = images.toList())
+    val icon =
+      StyleImageDefinition("icon", ImageSnapshot.capture(FakeImageBitmap(1, 1)), false, null)
+
+    reconciler.apply(style, revisionWith(icon))
+    assertFailsWith<StyleMutationException> {
+      reconciler.apply(style, revisionWith(icon.copy(sdf = true)))
+    }
+    refused.clear()
+
+    // The engine may hold either image, so reverting is not a no-op and not a plain add.
+    reconciler.apply(style, revisionWith(icon))
+    assertEquals(listOf("icon"), style.replacedImages)
+    assertEquals(setOf("icon"), style.imageIds)
+  }
+
+  @Test
+  fun a_failed_replacement_is_removed_when_the_next_revision_drops_it() {
+    val style = RecordingStyleBinding(refusedImageReplacements = setOf("icon"))
+    val reconciler = StyleReconciler()
+    val source = source("tiles")
+    val layer = TestLayer("raster", "raster", source)
+    fun revisionWith(vararg images: StyleImageDefinition) =
+      revision(source, layer).copy(images = images.toList())
+    val icon =
+      StyleImageDefinition("icon", ImageSnapshot.capture(FakeImageBitmap(1, 1)), false, null)
+
+    reconciler.apply(style, revisionWith(icon))
+    assertFailsWith<StyleMutationException> {
+      reconciler.apply(style, revisionWith(icon.copy(sdf = true)))
+    }
+
+    // The engine still holds the previous image, so dropping the ID removes it.
+    reconciler.apply(style, revisionWith())
+    assertTrue(style.imageIds.isEmpty())
+  }
+
   private fun source(id: String) =
     RasterTileSource(id, listOf("https://example.invalid/{z}/{x}/{y}.png"))
 
-  private fun revision(source: RasterTileSource, layer: RasterLayer) =
+  private fun revision(source: RasterTileSource, layer: TestLayer) =
     DesiredStyleRevision(
       sources = listOf(source.definition()),
       layers = listOf(DesiredStyleLayer(layer.definition(), Anchor.Top, null, null)),
@@ -87,7 +156,7 @@ class StyleReconcilerTest {
     override fun addSource(definition: SourceDefinition): Boolean =
       delegate.addSource(definition).also { additions += "source:${definition.id}" }
 
-    override fun addLayer(definition: LayerDefinition, beforeLayerId: String): Boolean =
+    override fun addLayer(definition: ResolvedLayerDefinition, beforeLayerId: String): Boolean =
       delegate.addLayer(definition, beforeLayerId).also {
         additions += "layer:${definition.id}"
       }

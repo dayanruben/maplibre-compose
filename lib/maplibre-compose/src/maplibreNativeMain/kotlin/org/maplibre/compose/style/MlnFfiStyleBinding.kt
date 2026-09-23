@@ -22,8 +22,6 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
-import org.maplibre.compose.layers.Layer
-import org.maplibre.compose.layers.UnknownLayer
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.mlnffi.MlnFfiLock
 import org.maplibre.compose.mlnffi.withLock
@@ -119,12 +117,13 @@ internal open class MlnFfiStyleBinding(
   override val logger: MapLog?
     get() = loggerProvider()
 
-  override fun addImage(definition: StyleImageDefinition) {
+  override fun setImage(definition: StyleImageDefinition) {
     val (id, snapshot, sdf, stretch) = definition
     val image = snapshot.toImageBitmap()
     val scale = getScale()
     val pixels = image.toPremultipliedRgba8()
     val stretchPx = stretch?.resolve(image.width, image.height, scale)
+    // The engine replaces an existing image in place, so no existence read is needed.
     mutateMap { map ->
       try {
         map.setStyleImage(
@@ -158,15 +157,14 @@ internal open class MlnFfiStyleBinding(
       it.styleImageStretches(id)
     }
 
-  override fun removeImage(id: String) {
+  override fun removeImage(id: String): Boolean =
     mutateMap {
       try {
         it.removeStyleImage(id)
       } catch (error: MaplibreException) {
         throw StyleMutationException(error.message, error)
       }
-    }
-  }
+    } ?: false
 
   override fun imageExists(id: String): Boolean? = readMap { it.styleImageInfo(id) != null }
 
@@ -184,7 +182,7 @@ internal open class MlnFfiStyleBinding(
   }
     .orEmpty()
 
-  override fun getLayer(id: String): Layer? = readMap { map ->
+  override fun getLayer(id: String): ResolvedLayerDefinition? = readMap { map ->
     if (!isStyleLayer(map, id)) null else reconstructLayer(map, id)
   }
 
@@ -276,11 +274,11 @@ internal open class MlnFfiStyleBinding(
 
   private var declaredSources: JsonObject? = null
 
-  private fun reconstructLayer(map: MapHandle, id: String): Layer {
+  private fun reconstructLayer(map: MapHandle, id: String): ResolvedLayerDefinition {
     val definition =
       (map.styleLayerJson(id)?.toJsonElement() as? JsonObject)
         ?: buildJsonObject { map.styleLayerType(id)?.let { put("type", it) } }
-    return UnknownLayer(id, definition)
+    return resolvedLayerDefinition(id, definition)
   }
 
   override fun invalidate() {

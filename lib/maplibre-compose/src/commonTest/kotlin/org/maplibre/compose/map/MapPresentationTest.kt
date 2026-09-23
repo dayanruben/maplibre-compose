@@ -49,8 +49,8 @@ import org.maplibre.compose.expressions.ast.ExpressionContext
 import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.expressions.value.BooleanValue
 import org.maplibre.compose.layers.Anchor
-import org.maplibre.compose.layers.BackgroundLayer
 import org.maplibre.compose.layers.LayerHandle
+import org.maplibre.compose.layers.TestLayer
 import org.maplibre.compose.layers.asLayerProperty
 import org.maplibre.compose.overlay.attributions
 import org.maplibre.compose.sources.GeoJsonData
@@ -126,7 +126,7 @@ class MapPresentationTest {
           GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
           GeoJsonOptions(),
         )
-      val layer = BackgroundLayer("animated")
+      val layer = TestLayer("animated", "background")
       val original =
         DesiredStyleRevision(
           listOf(source.definition()),
@@ -236,7 +236,7 @@ class MapPresentationTest {
             GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
             GeoJsonOptions(),
           )
-        val layer = BackgroundLayer("background")
+        val layer = TestLayer("background", "background")
         val original =
           DesiredStyleRevision(
             listOf(source.definition()),
@@ -252,7 +252,10 @@ class MapPresentationTest {
         val feature = Feature(Point(Position(0.0, 0.0)), buildJsonObject { put("cluster_id", 1) })
         val query = async { runCatching { handle.getClusterExpansionZoom(feature) } }
         started.await()
-        layer.setBackgroundOpacity((const(0.5f).compile(ExpressionContext.None)).asLayerProperty())
+        layer.paint(
+          "background-opacity",
+          (const(0.5f).compile(ExpressionContext.None)).asLayerProperty(),
+        )
         val next =
           DesiredStyleRevision(
             if (replaceSource)
@@ -327,7 +330,7 @@ class MapPresentationTest {
   fun resource_edits_update_the_catalog_without_restarting_loading() = runTest {
     val fixture = presentationFixture()
     try {
-      val backing = RecordingStyleBinding(layers = listOf(BackgroundLayer("base")))
+      val backing = RecordingStyleBinding(layers = listOf(TestLayer("base", "background")))
       val binding = backing
       val reconciler = StyleReconciler()
       fixture.state.styleAuthority.updateLoadedStyle(fixture.adapter, binding)
@@ -339,7 +342,7 @@ class MapPresentationTest {
             if (ids.isEmpty()) emptyList()
             else listOf(attributedVectorSource("added", "attribution").definition()),
             ids.map { id ->
-              DesiredStyleLayer(BackgroundLayer(id).definition(), Anchor.Top, null, null)
+              DesiredStyleLayer(TestLayer(id, "background").definition(), Anchor.Top, null, null)
             },
             emptyList(),
           )
@@ -977,7 +980,7 @@ class MapPresentationTest {
   @Test
   fun a_live_layer_handle_reads_and_writes_only_its_loaded_style() = runTest {
     val fixture = presentationFixture()
-    val loadedStyle = RecordingStyleBinding(layers = listOf(BackgroundLayer("background")))
+    val loadedStyle = RecordingStyleBinding(layers = listOf(TestLayer("background", "background")))
     fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, loadedStyle)
     fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
 
@@ -994,7 +997,7 @@ class MapPresentationTest {
   @Test
   fun a_layer_handle_does_not_revive_after_structural_replacement() = runTest {
     val fixture = presentationFixture()
-    val layer = BackgroundLayer("background")
+    val layer = TestLayer("background", "background")
     val original = DesiredStyleLayer(layer.definition(), Anchor.Top, null, null)
     val declaredRevision = DesiredStyleRevision(emptyList(), listOf(original), emptyList())
     val binding = RecordingStyleBinding()
@@ -1045,7 +1048,7 @@ class MapPresentationTest {
         attributedVectorSource("bottom", "first"),
         attributedVectorSource("top", "second"),
       )
-    val layers = listOf(BackgroundLayer("bottom"), BackgroundLayer("top"))
+    val layers = listOf(TestLayer("bottom", "background"), TestLayer("top", "background"))
     val binding = RecordingStyleBinding(sources = sources, layers = layers)
     val styleSources = fixture.state.style.sources
     val styleLayers = fixture.state.style.layers
@@ -1057,7 +1060,7 @@ class MapPresentationTest {
       styleSources.add(attributedVectorSource("unready", "unready"))
     }
     assertFailsWith<IllegalStateException> {
-      styleImages.add("unready", FakeImageBitmap(1, 1))
+      styleImages.set("unready", FakeImageBitmap(1, 1))
     }
     fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, binding)
     fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
@@ -1118,11 +1121,29 @@ class MapPresentationTest {
     val old = assertNotNull(fixture.state.style.images["marker"]?.asMutable)
 
     binding.removeImage("marker")
-    val replacement = fixture.state.style.images.add("marker", image)
+    val replacement = fixture.state.style.images.set("marker", image)
 
     assertFailsWith<IllegalStateException> { old.remove() }
     assertTrue(binding.imageExists("marker"))
     assertTrue(replacement.remove())
+    fixture.close()
+  }
+
+  @Test
+  fun setting_over_a_base_style_image_replaces_it_and_expires_its_handle() {
+    val fixture = presentationFixture()
+    val image = FakeImageBitmap(1, 1)
+    val binding = RecordingStyleBinding(images = listOf("marker" to image))
+    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, binding)
+    fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
+    val existing = assertNotNull(fixture.state.style.images["marker"]?.asMutable)
+
+    val replacement = fixture.state.style.images.set("marker", image)
+
+    assertEquals(listOf("marker"), binding.replacedImages)
+    assertFailsWith<IllegalStateException> { existing.remove() }
+    assertTrue(replacement.remove())
+    assertFalse(binding.imageExists("marker"))
     fixture.close()
   }
 
@@ -1139,34 +1160,72 @@ class MapPresentationTest {
       callbacks.onStyleReady(fixture.adapter)
 
       assertFailsWith<IllegalStateException> {
-        fixture.state.styleAuthority.addStyleImage("stale", FakeImageBitmap(1, 1), false, null, old)
+        fixture.state.styleAuthority.setStyleImage("stale", FakeImageBitmap(1, 1), false, null, old)
       }
       assertTrue(replacement.imageIds.isEmpty())
-      assertTrue(fixture.state.style.images.add("stale", FakeImageBitmap(1, 1)).remove())
+      assertTrue(fixture.state.style.images.set("stale", FakeImageBitmap(1, 1)).remove())
     } finally {
       fixture.close()
     }
   }
 
   @Test
-  fun imperative_image_commands_add_remove_and_reject_duplicates() {
+  fun imperative_image_commands_set_and_remove() {
     val fixture = presentationFixture()
     val binding = RecordingStyleBinding()
     val image = FakeImageBitmap(1, 1)
     fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, binding)
     fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
 
-    val handle = fixture.state.style.images.add("marker", image)
+    val handle = fixture.state.style.images.set("marker", image)
     assertEquals(setOf("marker"), binding.imageIds)
-    assertFailsWith<StyleHandleException> { fixture.state.style.images.add("marker", image) }
     assertNull(fixture.state.style.images["missing"])
     assertTrue(handle.remove())
     assertTrue(binding.imageIds.isEmpty())
-    val replacement = fixture.state.style.images.add("marker", image)
+    val replacement = fixture.state.style.images.set("marker", image)
     assertFailsWith<IllegalStateException> { handle.remove() }
     assertEquals(setOf("marker"), binding.imageIds)
     fixture.state.style.asMutable!!.baseStyle = BaseStyle.Empty
     assertFailsWith<IllegalStateException> { replacement.remove() }
+    fixture.close()
+  }
+
+  @Test
+  fun setting_an_image_replaces_it_in_place_and_expires_the_previous_handle() {
+    val fixture = presentationFixture()
+    val binding = RecordingStyleBinding()
+    val image = FakeImageBitmap(1, 1)
+    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, binding)
+    fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
+
+    val added = fixture.state.style.images.set("marker", image)
+    assertEquals(setOf("marker"), binding.imageIds)
+    assertTrue(binding.replacedImages.isEmpty())
+    val replaced = fixture.state.style.images.set("marker", image)
+    assertEquals(listOf("marker"), binding.replacedImages)
+    assertEquals(setOf("marker"), binding.imageIds)
+    assertFailsWith<IllegalStateException> { added.remove() }
+    assertTrue(replaced.remove())
+    assertTrue(binding.imageIds.isEmpty())
+    fixture.close()
+  }
+
+  @Test
+  fun a_failed_replacement_keeps_the_previous_image_and_its_handle() {
+    val fixture = presentationFixture()
+    val binding = RecordingStyleBinding(refusedImageReplacements = setOf("marker"))
+    val image = FakeImageBitmap(1, 1)
+    fixture.state.missingImageResolver = { ResolvedStyleImage(image) }
+    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, binding)
+    fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
+
+    val added = fixture.state.style.images.set("marker", image)
+    assertFailsWith<StyleHandleException> { fixture.state.style.images.set("marker", image) }
+    assertEquals(setOf("marker"), binding.imageIds)
+    // The image stays imperatively owned: the resolver does not treat it as missing.
+    assertNull(fixture.state.styleAuthority.resolveMissingImage(fixture.adapter, "marker"))
+    assertTrue(added.remove())
+    assertTrue(binding.imageIds.isEmpty())
     fixture.close()
   }
 
@@ -1179,7 +1238,7 @@ class MapPresentationTest {
     val fixture = presentationFixture()
     val binding =
       RecordingStyleBinding(
-        layers = listOf(BackgroundLayer("background")),
+        layers = listOf(TestLayer("background", "background")),
         animatorDurationScaleState = mutableStateOf(0.5f),
       )
     val transition = fixture.state.style.transition
@@ -1312,7 +1371,7 @@ class MapPresentationTest {
     val pending =
       assertNotNull(fixture.state.styleAuthority.resolveMissingImage(fixture.adapter, "icon"))
     started.await()
-    fixture.state.style.images.add("icon", FakeImageBitmap(1, 1))
+    fixture.state.style.images.set("icon", FakeImageBitmap(1, 1))
     // An explicit addition can answer a pending Native request and become eligible for eviction.
     binding.removeImage("icon")
     release.complete(Unit)
@@ -1518,7 +1577,7 @@ class MapPresentationTest {
   fun retained_mutation_capabilities_cannot_write_a_new_declaration() = runTest {
     val fixture = presentationFixture()
     val source = attributedVectorSource("owned", "attribution")
-    val layer = BackgroundLayer("owned")
+    val layer = TestLayer("owned", "background")
     val image = FakeImageBitmap(1, 1)
     val binding =
       RecordingStyleBinding(
@@ -1550,6 +1609,7 @@ class MapPresentationTest {
       mutableLayer.setPaintProperty("background-opacity", JsonPrimitive(0.5))
     }
     assertFailsWith<StyleHandleException> { mutableImage.remove() }
+    assertFailsWith<StyleHandleException> { fixture.state.style.images.set("owned", image) }
     assertTrue(binding.sourceExists("owned") == true)
     assertTrue(binding.imageExists("owned") == true)
     fixture.close()
@@ -1610,7 +1670,7 @@ class MapPresentationTest {
     assertTrue(fixture.state.style.sources["shared"] != null)
 
     assertTrue(fixture.state.style.sources["shared"]!!.asMutable!!.remove())
-    fixture.state.style.images.add("shared", image)
+    fixture.state.style.images.set("shared", image)
     assertFailsWith<StyleHandleException> {
       fixture.state.styleAuthority.beginStyleRevision(
         fixture.adapter,
@@ -1643,13 +1703,13 @@ class MapPresentationTest {
       RecordingStyleBinding(
         beforeAddImage = {
           nestedFailure =
-            runCatching { fixture.state.style.images.add("shared", image) }.exceptionOrNull()
+            runCatching { fixture.state.style.images.set("shared", image) }.exceptionOrNull()
         }
       )
     fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, binding)
     fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
 
-    fixture.state.style.images.add("shared", image)
+    fixture.state.style.images.set("shared", image)
 
     assertIs<StyleHandleException>(nestedFailure)
     assertEquals(StyleLoadState.Ready, fixture.state.style.loadState)

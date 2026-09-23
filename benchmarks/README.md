@@ -73,7 +73,7 @@ with `--config '{"durationMs":3000,"rateHz":2}'`.
 | `resize`         | Change map dimensions                                          | Declarative             |
 | `padding`        | Change camera padding                                          | Declarative             |
 | `recompose`      | Recompose unchanged map content                                | Declarative             |
-| `images`         | Register and remove bitmap images                              | Imperative              |
+| `images`         | Replace a bitmap image in place                                | Imperative              |
 
 The classic Android adapter supports every workload above except `recompose`,
 which measures Compose-specific work. It shares the fixtures, camera path,
@@ -97,13 +97,16 @@ workload, scene, and implementation combinations fail before capture.
 
 ## Measurement
 
-Every run loads its scene, executes a full warm-up pass, resets, then measures
-one pass. Logs report completed operation counts, submission timings where
-available, and completion timings for style and source-latency workloads.
-Submission measures the API call or state assignment; a declarative state
-assignment does not include subsequent recomposition. Style readiness and a
-rendered-feature revision are distinct completion signals, neither a display
-presentation timestamp.
+Every run loads its scene, executes a full warm-up pass, resets, collects
+garbage, then measures one pass. Without the collection, warm-up garbage and
+ART's timed post-fork collection landed inside some windows and not others,
+which alone put idle Compose runs at 60 ms against 14 ms for the classic SDK.
+Logs report completed operation counts, submission timings where available, and
+completion timings for style and source-latency workloads. Submission measures
+the API call or state assignment; a declarative state assignment does not
+include subsequent recomposition. Style readiness and a rendered-feature
+revision are distinct completion signals, neither a display presentation
+timestamp.
 
 Native runs record process CPU time and engine encoding/rendering statistics.
 Render events can be dropped by the public event stream; their count is not a

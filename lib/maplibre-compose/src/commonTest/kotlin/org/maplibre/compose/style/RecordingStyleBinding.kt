@@ -6,8 +6,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import org.maplibre.compose.layers.Layer
-import org.maplibre.compose.layers.UnknownLayer
+import org.maplibre.compose.layers.TestLayer
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.sources.CustomGeometrySourceOptions
 import org.maplibre.compose.sources.CustomVectorTileSourceOptions
@@ -28,10 +27,11 @@ import org.maplibre.spatialk.geojson.Position
 internal class RecordingStyleBinding(
   images: List<Pair<String, ImageBitmap>> = emptyList(),
   sources: List<Source> = emptyList(),
-  layers: List<Layer> = emptyList(),
+  layers: List<TestLayer> = emptyList(),
   override val supportsCustomDemEncoding: Boolean = false,
   override val supportsRasterDemScheme: Boolean = true,
   private val refusedSourceRemovals: Set<String> = emptySet(),
+  private val refusedImageReplacements: Set<String> = emptySet(),
   private val refusedLayerProperties: Set<String> = emptySet(),
   override val supportsSky: Boolean = true,
   override val supportsProjection: Boolean = true,
@@ -74,6 +74,9 @@ internal class RecordingStyleBinding(
   val imageIds: Set<String>
     get() = images.keys
 
+  /** Every [setImage] ID, for in-place replacement assertions. */
+  val replacedImages: MutableList<String> = mutableListOf()
+
   var customVectorProvider: VectorTileProvider? = null
     private set
 
@@ -90,18 +93,21 @@ internal class RecordingStyleBinding(
 
   override val logger: MapLog? = null
 
-  override fun addImage(definition: StyleImageDefinition) {
+  override fun setImage(definition: StyleImageDefinition) {
     if (!addImageHookInvoked) {
       addImageHookInvoked = true
       beforeAddImage?.invoke(definition.id)
     }
-    check(definition.id !in images) { "Image ID '${definition.id}' already exists in style" }
+    if (definition.id in images) {
+      if (definition.id in refusedImageReplacements) {
+        throw StyleMutationException("Image '${definition.id}' was refused", null)
+      }
+      replacedImages += definition.id
+    }
     images[definition.id] = definition.image
   }
 
-  override fun removeImage(id: String) {
-    check(images.remove(id) != null) { "Image ID '$id' not found in style" }
-  }
+  override fun removeImage(id: String): Boolean = images.remove(id) != null
 
   override fun imageExists(id: String): Boolean = id in images
 
@@ -112,8 +118,8 @@ internal class RecordingStyleBinding(
 
   override fun sourceIds(): List<String> = sources.keys.toList()
 
-  override fun getLayer(id: String): Layer? =
-    baseLayers[id] ?: layers[id]?.let { UnknownLayer(id, it) }
+  override fun getLayer(id: String): ResolvedLayerDefinition? =
+    layers[id]?.let { TestLayer(id, it).definition() }
 
   override fun layerIds() = orderedLayerIds.toList()
 
