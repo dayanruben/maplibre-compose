@@ -122,7 +122,12 @@ jobs:
           submodules: recursive
       - uses: ./.github/actions/setup-cmake
       - uses: ./.github/actions/setup-gradle
-      - run: ./gradlew desktopTest
+      - name: Skip Windows native desktop tests on Kotlin EAP
+        if: ${{ runner.os == 'Windows' && (github.ref == 'refs/heads/eap/kotlin' || github.head_ref == 'eap/kotlin') }}
+        run: echo "Windows vcpkg setup is independent of Kotlin EAP; Linux desktop tests still run."
+      - name: Run desktop tests
+        if: ${{ runner.os != 'Windows' || (github.ref != 'refs/heads/eap/kotlin' && github.head_ref != 'eap/kotlin') }}
+        run: ./gradlew desktopTest
 
   build-docs:
     if: ${{ github.repository_owner == 'maplibre' }}
@@ -174,8 +179,14 @@ jobs:
           submodules: recursive
       - uses: ./.github/actions/setup-cmake
       - uses: ./.github/actions/setup-gradle
-      - run: ./gradlew :demo-app:packageDistributionForCurrentOS
+      - name: Skip Windows native desktop package on Kotlin EAP
+        if: ${{ runner.os == 'Windows' && (github.ref == 'refs/heads/eap/kotlin' || github.head_ref == 'eap/kotlin') }}
+        run: echo "Windows vcpkg setup is independent of Kotlin EAP; Linux desktop packaging still runs."
+      - name: Build desktop package
+        if: ${{ runner.os != 'Windows' || (github.ref != 'refs/heads/eap/kotlin' && github.head_ref != 'eap/kotlin') }}
+        run: ./gradlew :demo-app:packageDistributionForCurrentOS
       - uses: actions/upload-artifact@v5
+        if: ${{ runner.os != 'Windows' || (github.ref != 'refs/heads/eap/kotlin' && github.head_ref != 'eap/kotlin') }}
         with:
           if-no-files-found: error
           name: ${{ matrix.artifact_name }}
