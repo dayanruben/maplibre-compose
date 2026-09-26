@@ -208,6 +208,9 @@ jobs:
             "demo-app/build/compose/binaries/main/${{ matrix.artifact_type }}/*"
 
   all-good:
+    if:
+      ${{ always() && !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled') }}
     needs:
       - format
       - lint-hk
