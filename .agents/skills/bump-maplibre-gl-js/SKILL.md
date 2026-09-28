@@ -1,6 +1,6 @@
 ---
 name: bump-maplibre-gl-js
-description: Update the hand-written MapLibre GL JS bindings after bumping the pinned maplibre-gl version. Use when changing `maplibre-js` in gradle/libs.versions.toml, or when the browser platform breaks against a new MapLibre GL JS release.
+description: Upgrade the pinned MapLibre GL JS release and its hand-written bindings. Use when bumping `maplibre-js` or when the browser breaks against a new release.
 ---
 
 # Upgrade MapLibre GL JS
@@ -13,17 +13,19 @@ by hand, are `internal`, and cover the members this platform calls.
 
 ```sh
 upgrade_dir=$(mktemp -d)
-cp build/js/node_modules/maplibre-gl/dist/maplibre-gl.d.ts "$upgrade_dir/maplibre-gl.d.ts"
-cp -R build/js/node_modules/maplibre-gl/src "$upgrade_dir/src"
+cp lib/maplibre-compose/build/maplibre-gl-js/maplibre-gl.d.ts "$upgrade_dir/maplibre-gl.d.ts"
+cp -R third_party/maplibre-gl-js/src "$upgrade_dir/src"
 ```
 
 Keep the temporary path for later comparisons. If the old package is absent,
 retrieve the version pinned before the upgrade.
 
-## 2. Bump and reinstall
+## 2. Bump and rebuild
 
-Edit `maplibre-js` and set `maplibre-styleSpec` to the spec version bundled by
-the new release in `gradle/libs.versions.toml`.
+Update the upstream submodule pin and reconcile the carried patches as described
+in [the patch workflow](../../../patches/maplibre-gl-js/README.md). Edit
+`maplibre-js` and set `maplibre-styleSpec` to the spec version bundled by the
+new release in `gradle/libs.versions.toml`.
 
 Also review `maplibre-geojsonVt` and `maplibre-vtPbf` against the new release's
 `@maplibre/geojson-vt` and `@maplibre/vt-pbf` dependency ranges in
@@ -36,6 +38,7 @@ installation.
 Then:
 
 ```sh
+mise run build:maplibre-gl-js
 ./gradlew kotlinNpmInstall
 ./gradlew kotlinUpgradeYarnLock   # refreshes the committed kotlin-js-store/yarn.lock
 ```
@@ -43,7 +46,7 @@ Then:
 ## 3. Diff the declarations
 
 ```sh
-diff -u "$upgrade_dir/maplibre-gl.d.ts" build/js/node_modules/maplibre-gl/dist/maplibre-gl.d.ts
+diff -u "$upgrade_dir/maplibre-gl.d.ts" lib/maplibre-compose/build/maplibre-gl-js/maplibre-gl.d.ts
 ```
 
 Read the diff only for names that appear in `GlJsModule.kt` or `GlJsTypes.kt`:
@@ -54,20 +57,15 @@ When either tile library changes, compare `geoJSONToTile` and `fromGeojsonVt`
 with `GlJsVectorTiles.kt` and `GlJsVectorTilePbf.kt`. Check their option fields
 and the tile shape passed between them by `GlJsCustomGeometryAttachment`.
 
-Kotlin compilation does not validate `external` declarations against upstream
-TypeScript. Compare the declared members with the new `.d.ts`; runtime tests
-cover only the members they exercise.
-
-- **Is every declared member still there, spelled the same?** For each member in
-  the two files, find it in the new `.d.ts`. A rename upstream compiles fine
-  here and fails at runtime with `undefined is not a function`.
-- **Did a type widen or narrow?** A field that became optional, a return that
-  gained `| undefined`, an argument that stopped accepting the shape passed. The
-  declarations deliberately state narrower types than MapLibre's `*Like` unions.
-  For example, they use `LngLat` for `LngLatLike` and `Point` for `PointLike`.
-  Check that these narrower types remain valid.
-- **Is anything declared that upstream never had?** Left over from an earlier
-  version, or mistyped. Search the `.d.ts` for it.
+Kotlin compilation does not check `external` declarations against upstream
+TypeScript, and runtime tests cover only the members they exercise, so an
+upstream rename compiles here and fails at runtime with
+`undefined is not a function`. Check every declared member against the new
+`.d.ts`: it still exists under the same name, and its type has not widened or
+narrowed (a field became optional, a return gained `| undefined`). The
+declarations deliberately use narrower types than MapLibre's `*Like` unions,
+such as `LngLat` for `LngLatLike` and `Point` for `PointLike`; confirm those
+still hold.
 
 ## 4. Look for new capability worth binding
 
@@ -109,9 +107,9 @@ internals. Compare the upstream sources to verify these assumptions:
 | `setTransition`                | `src/style/style.ts`. `getTransition()` must still read `this.stylesheet.transition`; if `setTransition` in `_getOperationsToPerform` stops being a no-op, MapLibre has a real setter to call instead |
 
 ```sh
-diff -u "$upgrade_dir/src/gl/value.ts" build/js/node_modules/maplibre-gl/src/gl/value.ts
-diff -u "$upgrade_dir/src/ui/map.ts" build/js/node_modules/maplibre-gl/src/ui/map.ts
-diff -u "$upgrade_dir/src/style/style.ts" build/js/node_modules/maplibre-gl/src/style/style.ts
+diff -u "$upgrade_dir/src/gl/value.ts" third_party/maplibre-gl-js/src/gl/value.ts
+diff -u "$upgrade_dir/src/ui/map.ts" third_party/maplibre-gl-js/src/ui/map.ts
+diff -u "$upgrade_dir/src/style/style.ts" third_party/maplibre-gl-js/src/style/style.ts
 ```
 
 Custom geometry also relies on public `addProtocol` and
@@ -127,7 +125,7 @@ mise run test:js
 mise run check
 ```
 
-Follow `AGENTS.md` for Chrome setup and browser test constraints. Browser test
-reports are in `lib/maplibre-compose/build/reports/tests/jsBrowserTest/`. Verify
-adopted style capabilities through `style-spec-parity`, and run tests on other
-platforms when shared behavior changes.
+Browser test reports are in
+`lib/maplibre-compose/build/reports/tests/jsBrowserTest/`. Verify adopted style
+capabilities through `style-spec-parity`, and run tests on other platforms when
+shared behavior changes.

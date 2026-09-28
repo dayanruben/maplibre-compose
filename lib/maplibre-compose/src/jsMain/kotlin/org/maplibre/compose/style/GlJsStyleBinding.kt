@@ -44,6 +44,7 @@ import org.maplibre.compose.gljs.keys
 import org.maplibre.compose.gljs.subscribe
 import org.maplibre.compose.layers.GlJsLocationIndicator
 import org.maplibre.compose.layers.IndicatorImage
+import org.maplibre.compose.layers.LayerSummary
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.sources.CLUSTER_ID_PROPERTY
 import org.maplibre.compose.sources.CustomGeometrySourceOptions
@@ -198,14 +199,19 @@ internal class GlJsStyleBinding(
   /** GL JS rejects a raster-dem source that carries a `scheme`, and reads only XYZ tiles. */
   override val supportsRasterDemScheme: Boolean = false
 
+  override val baseLayers: List<LayerSummary> =
+    map.getLayersOrder().mapNotNull { id ->
+      map.getLayer(id)?.let { LayerSummary(id, it.type, it.source, it.sourceLayer) }
+    }
+  override val baseSources: Map<String, Source?> = sourceIds().associateWith(::getSource)
+
   // GL JS runs the remove and add in one task, so no frame renders between them.
   override fun setImage(definition: StyleImageDefinition) {
     requireLoaded()
     val (id, snapshot, sdf, stretch) = definition
-    val image = snapshot.toImageBitmap()
     val scale = getScale()
-    val pixels = image.toGlJsImage()
-    val stretchPx = stretch?.resolve(image.width, image.height, scale)
+    val pixels = snapshot.toGlJsImage()
+    val stretchPx = stretch?.resolve(snapshot.width, snapshot.height, scale)
     val metadata =
       unsafeJso<StyleImageMetadata> {
         pixelRatio = scale.toDouble()
@@ -272,10 +278,10 @@ internal class GlJsStyleBinding(
     return map.getStyle().sources.keys().toList()
   }
 
-  override fun getLayer(id: String): ResolvedLayerDefinition? {
+  override fun getLayer(id: String): LayerDefinition? {
     requireLoaded()
     indicators[id]?.let {
-      return resolvedLayerDefinition(id, it.definition)
+      return layerDefinitionFromJson(id, it.definition)
     }
     return map.getLayer(id)?.let(::reconstructLayer)
   }
@@ -305,23 +311,6 @@ internal class GlJsStyleBinding(
     return if (restoringContext) layerOrder else map.getLayersOrder().toList()
   }
 
-  override fun layerSummaries(): Map<String, LayerSummary> {
-    requireLoaded()
-    return map
-      .getLayersOrder()
-      .mapNotNull { id ->
-        map.getLayer(id)?.let {
-          id to
-            LayerSummary(
-              if (id in indicators) "location-indicator" else it.type,
-              it.source,
-              it.sourceLayer,
-            )
-        }
-      }
-      .toMap()
-  }
-
   private fun reconstructSource(id: String): Source? {
     val source = map.getSource<SourceHandle>(id) ?: return null
     return reconstructedSource(
@@ -333,14 +322,14 @@ internal class GlJsStyleBinding(
     )
   }
 
-  private fun reconstructLayer(layer: StyleLayer): ResolvedLayerDefinition {
+  private fun reconstructLayer(layer: StyleLayer): LayerDefinition {
     val definition =
       layer.serialize().toJsonElement() as? JsonObject
         ?: buildJsonObject {
           put("id", layer.id)
           put("type", layer.type)
         }
-    return resolvedLayerDefinition(layer.id, definition)
+    return layerDefinitionFromJson(layer.id, definition)
   }
 
   override fun addSource(sourceId: String, source: JsonObject): Boolean {
@@ -471,8 +460,9 @@ internal class GlJsStyleBinding(
       },
     )
 
-  override fun setImageSourceImage(sourceId: String, image: ImageBitmap) {
-    setImageSourceUrl(sourceId, image.toDataUrl())
+  override fun prepareImageSourceUpdate(sourceId: String, image: ImageSnapshot): () -> Unit {
+    val url = image.toDataUrl()
+    return { setImageSourceUrl(sourceId, url) }
   }
 
   override fun setImageSourceUrl(sourceId: String, url: String) {
@@ -485,13 +475,6 @@ internal class GlJsStyleBinding(
     requireLoaded()
     val corners = coordinates.map { arrayOf(it.longitude, it.latitude) }.toTypedArray()
     map.getSource<GlJsImageSource>(sourceId)?.setCoordinates(corners)
-  }
-
-  override fun imageSourceCoordinates(sourceId: String): List<Position>? {
-    requireLoaded()
-    return map.getSource<GlJsImageSource>(sourceId)?.coordinates?.map {
-      Position(longitude = it[0], latitude = it[1])
-    }
   }
 
   override fun submitGeoJsonData(
@@ -558,17 +541,19 @@ internal class GlJsStyleBinding(
     return ClusterQuery(source, clusterId)
   }
 
-  override fun setFeatureState(
+  override fun prepareFeatureStateUpdate(
     sourceId: String,
     sourceLayerId: String?,
     featureId: String,
     state: JsonObject,
-  ) {
-    requireLoaded()
+  ): () -> Unit {
     val js = state.toJsValue<Any>()
-    posted("Feature '$featureId' in source '$sourceId'", state) {
-      for (ident in featureIdentifiers(sourceId, sourceLayerId, featureId)) {
-        mutate("set the feature state") { map.setFeatureState(ident, js) }
+    return {
+      requireLoaded()
+      posted("Feature '$featureId' in source '$sourceId'", null) {
+        for (ident in featureIdentifiers(sourceId, sourceLayerId, featureId)) {
+          mutate("set the feature state") { map.setFeatureState(ident, js) }
+        }
       }
     }
   }

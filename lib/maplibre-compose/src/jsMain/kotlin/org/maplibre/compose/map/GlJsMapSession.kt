@@ -32,6 +32,7 @@ import org.maplibre.compose.camera.internal.runCameraCommand
 import org.maplibre.compose.camera.resolveScreenPoint
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.value.BooleanValue
+import org.maplibre.compose.gljs.CameraForBoundsOptions
 import org.maplibre.compose.gljs.DEFAULT_WORKER_URL
 import org.maplibre.compose.gljs.EaseToOptions
 import org.maplibre.compose.gljs.FilterSpecification
@@ -67,13 +68,13 @@ import org.maplibre.compose.logging.MapLogLevel
 import org.maplibre.compose.logging.MapLogSource
 import org.maplibre.compose.resource.GlJsRequestController
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.DesiredStyleRevision
 import org.maplibre.compose.style.GlJsStyleBinding
 import org.maplibre.compose.style.StyleLoadTracker
 import org.maplibre.compose.style.StylePresentation
 import org.maplibre.compose.style.StyleReconciler
 import org.maplibre.compose.style.StyleRequestId
 import org.maplibre.compose.style.StyleResourceChanges
+import org.maplibre.compose.style.StyleSnapshot
 import org.maplibre.compose.util.AngleMath
 import org.maplibre.compose.util.DpPadding
 import org.maplibre.compose.util.VisibleBounds
@@ -88,6 +89,7 @@ import org.maplibre.compose.util.toLngLat
 import org.maplibre.compose.util.toLngLatBounds
 import org.maplibre.compose.util.toPaddingOptions
 import org.maplibre.compose.util.toPoint
+import org.maplibre.compose.util.toPosition
 import org.maplibre.compose.util.toStyleJson
 import org.maplibre.compose.util.toVisibleBounds
 import org.maplibre.spatialk.geojson.BoundingBox
@@ -118,8 +120,8 @@ internal class GlJsMapSession(
   }
 
   internal var callbacks: MapAdapter.Callbacks = callbacks
-  private val lifecycle by lazy { lifecycleAuthority.bind(this) }
-  private val lifecycleCallbacks by lazy { MapLifecycleCallbacks(lifecycle) { this.callbacks } }
+  override val lifecycle = lifecycleAuthority.createBinding(this)
+  private val lifecycleCallbacks = MapLifecycleCallbacks(lifecycle) { this.callbacks }
   private var lifecycleEngineIdentity: EngineMapIdentity? = null
   private var lifecycleRenderLease: RenderLease? = null
   private var lifecycleStyleRequestIdentity: StyleRequestIdentity? = null
@@ -304,6 +306,7 @@ internal class GlJsMapSession(
   }
 
   fun start() {
+    lifecycleAuthority.register(this)
     lifecycle.beginAttachIfOpen()
   }
 
@@ -666,9 +669,7 @@ internal class GlJsMapSession(
     if (hasReplayedPresentationState) onMap(::applyRequestedStyle)
   }
 
-  override suspend fun reconcileStyleRevision(
-    revision: DesiredStyleRevision
-  ): StyleResourceChanges {
+  override suspend fun reconcileStyleRevision(revision: StyleSnapshot): StyleResourceChanges {
     val binding = checkNotNull(styleBinding)
     val engine = checkNotNull(lifecycleEngineIdentity)
     val style = checkNotNull(lifecycleStyleIdentity)
@@ -839,7 +840,7 @@ internal class GlJsMapSession(
     }
   }
 
-  override fun cameraForBounds(
+  override suspend fun cameraForBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
@@ -852,7 +853,7 @@ internal class GlJsMapSession(
       "The map could not calculate a camera for the bounds"
     }
 
-  override fun cameraForGeometry(
+  override suspend fun cameraForGeometry(
     geometry: Geometry,
     bearing: Double,
     tilt: Double,
@@ -863,7 +864,7 @@ internal class GlJsMapSession(
       map.cameraPositionForPositions(geometry.positions(), bearing, tilt, cameraPadding, fitPadding)
     } ?: throw IllegalStateException("The map could not calculate a camera for the geometry")
 
-  override fun fitCameraToBounds(
+  override suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
@@ -978,25 +979,24 @@ internal class GlJsMapSession(
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
   ): CameraPosition? {
-    // GL JS cameraForBounds reads persistent padding from the live transform, cannot query
-    // destination padding, and ignores pitch. Fit all four corners through the same geometry fitter
-    // so every query uses explicit padding inputs without mutating the map.
-    // TODO: Delegate to GL JS cameraForBounds once it accepts destination padding
-    // (https://github.com/maplibre/maplibre-gl-js/issues/8480) and honors pitch
-    // (https://github.com/maplibre/maplibre-gl-js/issues/8479).
-    val east =
-      if (boundingBox.east < boundingBox.west) boundingBox.east + 360.0 else boundingBox.east
-    return cameraPositionForPositions(
-      sequenceOf(
-        Position(boundingBox.west, boundingBox.south),
-        Position(boundingBox.west, boundingBox.north),
-        Position(east, boundingBox.south),
-        Position(east, boundingBox.north),
-      ),
-      bearing,
-      tilt,
-      cameraPadding,
-      fitPadding,
+    val current = readCameraPosition(viewportInsets)
+    val destination = current.copy(padding = cameraPadding ?: current.padding)
+    val camera =
+      cameraForBounds(
+        boundingBox.toLngLatBounds(),
+        unsafeJso<CameraForBoundsOptions> {
+          this.bearing = bearing
+          pitch = tilt
+          mapPadding = destination.effectivePadding()
+          padding = fitPadding.toPaddingOptions()
+          maxZoom = getMaxZoom()
+        },
+      ) ?: return null
+    return destination.copy(
+      target = camera.center.toPosition(),
+      zoom = camera.zoom.coerceIn(getMinZoom(), getMaxZoom()),
+      bearing = camera.bearing,
+      tilt = camera.pitch,
     )
   }
 

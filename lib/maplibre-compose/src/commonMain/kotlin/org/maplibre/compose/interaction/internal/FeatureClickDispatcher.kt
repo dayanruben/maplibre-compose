@@ -7,13 +7,12 @@ import org.maplibre.compose.interaction.ClickResult
 import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.layers.FeaturesClickHandler
 import org.maplibre.compose.map.MapState
-import org.maplibre.compose.style.DesiredStyleLayer
-import org.maplibre.compose.style.DesiredStyleRevision
 import org.maplibre.compose.style.StyleBinding
+import org.maplibre.compose.style.StyleSnapshot
 
 internal class FeatureClickDispatcher(
   private val state: MapState,
-  private val desiredRevision: State<State<DesiredStyleRevision?>>,
+  private val desiredRevision: State<State<StyleSnapshot?>>,
   private val loadedStyle: State<StyleBinding?>,
   private val interactions: State<MapInteractions>,
 ) {
@@ -39,14 +38,24 @@ internal class FeatureClickDispatcher(
         loadedStyle.value === style &&
         (style == null || style.isLoaded)
 
-    fun current(node: DesiredStyleLayer): DesiredStyleLayer? =
+    fun current(node: StyleSnapshot.Layer): StyleSnapshot.Layer? =
       desiredRevision.value.value?.layers?.firstOrNull {
         it.definition.id == node.definition.id && it.registration === node.registration
       }
 
     return ClickPath(::valid) { event ->
       if (!valid()) return@ClickPath ClickResult.Consume
-      val layerIds = style?.takeIf { nodes.isNotEmpty() && it.isLoaded }?.layerIds().orEmpty()
+      // The published handles carry the engine's layer order, so a tap makes no engine call. They
+      // appear one owner read after the style loads; a tap in that window waits for them rather
+      // than reading the unpublished set as an empty layer stack. The wait is lease-bound, so a
+      // presentation that ends first drops the tap instead of parking the dispatcher.
+      if (nodes.isNotEmpty()) {
+        attachment.runLeaseBound { state.style.awaitLoaded() }
+        if (!valid()) return@ClickPath ClickResult.Consume
+      }
+      val layerIds =
+        if (nodes.isNotEmpty() && style?.isLoaded == true) state.style.layerHandles().keys.toList()
+        else emptyList()
 
       val dispatchedGroups = mutableSetOf<Any>()
       for (id in layerIds.asReversed()) {
@@ -86,7 +95,7 @@ internal class FeatureClickDispatcher(
   }
 }
 
-private fun DesiredStyleLayer.handler(family: TapFamily): FeaturesClickHandler? =
+private fun StyleSnapshot.Layer.handler(family: TapFamily): FeaturesClickHandler? =
   when (family) {
     TapFamily.Tap -> onClick
     TapFamily.DoubleTap -> onDoubleClick

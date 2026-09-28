@@ -3,9 +3,11 @@ package org.maplibre.compose.style
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.ImageBitmap
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.maplibre.compose.layers.TestLayer
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.sources.CustomGeometrySourceOptions
@@ -56,8 +58,9 @@ internal class RecordingStyleBinding(
   val layerPropertyBatches: MutableList<List<LayerPropertyWrite>> = mutableListOf()
   private val images =
     images.associate { (id, bitmap) -> id to ImageSnapshot.capture(bitmap) }.toMutableMap()
-  private val baseSources = sources.associateBy { it.id }.toMutableMap()
-  private val baseLayers = layers.associateBy { it.id }.toMutableMap()
+  override val baseSources = sources.associateBy { it.id }
+  private val sourceObjects = baseSources.toMutableMap()
+  override val baseLayers = layers.map { it.definition().summary() }
   private val orderedLayerIds = mutableListOf<String>()
   private val featureStates = mutableMapOf<Triple<String, String?, String>, JsonObject>()
   private var addImageHookInvoked = false
@@ -69,13 +72,16 @@ internal class RecordingStyleBinding(
     get() = this.sources.keys - baseSources.keys
 
   val installedLayerIds: Set<String>
-    get() = this.layers.keys - baseLayers.keys
+    get() = this.layers.keys - baseLayers.map { it.id }
 
   val imageIds: Set<String>
     get() = images.keys
 
   /** Every [setImage] ID, for in-place replacement assertions. */
   val replacedImages: MutableList<String> = mutableListOf()
+
+  /** Every [setImage] and [removeImage] that reached this engine, in order. */
+  val imageWrites: MutableList<String> = mutableListOf()
 
   var customVectorProvider: VectorTileProvider? = null
     private set
@@ -105,20 +111,24 @@ internal class RecordingStyleBinding(
       replacedImages += definition.id
     }
     images[definition.id] = definition.image
+    imageWrites += "set ${definition.id} ${definition.image.width}"
   }
 
-  override fun removeImage(id: String): Boolean = images.remove(id) != null
+  override fun removeImage(id: String): Boolean {
+    imageWrites += "remove $id"
+    return images.remove(id) != null
+  }
 
   override fun imageExists(id: String): Boolean = id in images
 
   override fun getSource(id: String): Source? =
-    baseSources[id] ?: sources[id]?.let { reconstructedSource(id, it) }
+    sourceObjects[id] ?: sources[id]?.let { reconstructedSource(id, it) }
 
   override fun getSources(): List<Source> = sources.keys.mapNotNull(::getSource)
 
   override fun sourceIds(): List<String> = sources.keys.toList()
 
-  override fun getLayer(id: String): ResolvedLayerDefinition? =
+  override fun getLayer(id: String): LayerDefinition? =
     layers[id]?.let { TestLayer(id, it).definition() }
 
   override fun layerIds() = orderedLayerIds.toList()
@@ -134,13 +144,13 @@ internal class RecordingStyleBinding(
       throw StyleMutationException("Source '$sourceId' is still in use", null)
     }
     sources.remove(sourceId)
-    baseSources.remove(sourceId)
+    sourceObjects.remove(sourceId)
   }
 
   fun replaceSource(source: Source) {
     check(source.id in baseSources) { "Source ID '${source.id}' not found in style" }
     sources[source.id] = source.toJson()
-    baseSources[source.id] = source
+    sourceObjects[source.id] = source
   }
 
   override fun sourceExists(sourceId: String): Boolean = sourceId in sources
@@ -154,13 +164,11 @@ internal class RecordingStyleBinding(
     return true
   }
 
-  override fun setImageSourceImage(sourceId: String, image: ImageBitmap) = Unit
+  override fun prepareImageSourceUpdate(sourceId: String, image: ImageSnapshot): () -> Unit = {}
 
   override fun setImageSourceUrl(sourceId: String, url: String) = Unit
 
   override fun setImageSourceCoordinates(sourceId: String, coordinates: List<Position>) = Unit
-
-  override fun imageSourceCoordinates(sourceId: String): List<Position>? = null
 
   /** The GeoJSON data each install applied, in order, keyed by source. */
   val installedGeoJson: MutableMap<String, MutableList<GeoJsonData>> = mutableMapOf()
@@ -231,7 +239,6 @@ internal class RecordingStyleBinding(
 
   override fun removeLayer(layerId: String) {
     layers.remove(layerId)
-    baseLayers.remove(layerId)
     orderedLayerIds.remove(layerId)
   }
 
@@ -353,19 +360,24 @@ internal class RecordingStyleBinding(
     if (supportsProjection) this.projection = projection
   }
 
-  override fun setFeatureState(
+  override fun prepareFeatureStateUpdate(
     sourceId: String,
     sourceLayerId: String?,
     featureId: String,
     state: JsonObject,
-  ) {
-    val key = Triple(sourceId, sourceLayerId, featureId)
-    val previous = featureStates[key].orEmpty()
-    val removed = state.filterValues { it is kotlinx.serialization.json.JsonNull }.keys
-    featureStates[key] =
-      JsonObject(
-        (previous - removed) + state.filterValues { it !is kotlinx.serialization.json.JsonNull }
-      )
+  ): () -> Unit {
+    val json = state.toString()
+    return {
+      val captured = Json.parseToJsonElement(json).jsonObject
+      val key = Triple(sourceId, sourceLayerId, featureId)
+      val previous = featureStates[key].orEmpty()
+      val removed = captured.filterValues { it is kotlinx.serialization.json.JsonNull }.keys
+      featureStates[key] =
+        JsonObject(
+          (previous - removed) +
+            captured.filterValues { it !is kotlinx.serialization.json.JsonNull }
+        )
+    }
   }
 
   override suspend fun featureState(

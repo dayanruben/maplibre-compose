@@ -12,10 +12,10 @@ import org.khronos.webgl.Uint8Array
 import org.khronos.webgl.get
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.internal.CameraInputTarget
+import org.maplibre.compose.gljs.DEFAULT_WORKER_URL
 import org.maplibre.compose.gljs.GlJsFrameTarget
 import org.maplibre.compose.gljs.GlJsRuntime
 import org.maplibre.compose.gljs.GlJsSurfaceSession
-import org.maplibre.compose.gljs.LOCAL_WORKER_URL
 import org.maplibre.compose.gljs.yieldToBrowser
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.map.GlJsMapSession
@@ -24,8 +24,8 @@ import org.maplibre.compose.map.MapEvent
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.map.mapRuntimeForTest
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.DesiredStyleRevision
 import org.maplibre.compose.style.StyleBinding
+import org.maplibre.compose.style.StyleSnapshot
 
 /** A [GlJsMapSession] on a canvas of its own, with no Compose or skiko, never composited. */
 internal class GlJsMapFixture(private var extent: MapExtent) : MapFixture {
@@ -95,7 +95,7 @@ internal class GlJsMapFixture(private var extent: MapExtent) : MapFixture {
         events.count { it == MapFixture.STYLE_LOADED } > styleLoadsBefore
       }
     }
-    glJsSession.reconcileStyleRevision(DesiredStyleRevision.Empty)
+    glJsSession.reconcileStyleRevision(StyleSnapshot.Empty)
     state.styleAuthority.updateLoadedStyle(glJsSession, checkNotNull(recorder.style))
     state.styleAuthority.markStyleReady(glJsSession)
   }
@@ -191,7 +191,7 @@ internal class GlJsMapFixture(private var extent: MapExtent) : MapFixture {
 internal actual fun createMapFixture(extent: MapExtent): MapFixture {
   // `pointAtWorker` keeps the first call. Pin the locally served worker here so a MapFixture
   // test that runs before `runBrowserMapTest` still keeps the suite off the CDN.
-  GlJsRuntime.pointAtWorker(LOCAL_WORKER_URL)
+  GlJsRuntime.pointAtWorker(DEFAULT_WORKER_URL)
   return GlJsMapFixture(extent)
 }
 
@@ -205,7 +205,7 @@ internal actual val mapLibreFlavor: MapLibreFlavor = MapLibreFlavor.GL_JS
 actual typealias MapTestResult = JsPromise
 
 internal actual fun runMapTest(block: suspend CoroutineScope.() -> Unit): MapTestResult {
-  GlJsRuntime.pointAtWorker(LOCAL_WORKER_URL)
+  GlJsRuntime.pointAtWorker(DEFAULT_WORKER_URL)
   return MainScope().promise { block() }.unsafeCast<JsPromise>()
 }
 

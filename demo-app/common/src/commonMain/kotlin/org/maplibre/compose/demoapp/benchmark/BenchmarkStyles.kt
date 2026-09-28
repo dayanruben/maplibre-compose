@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.*
 import org.maplibre.compose.benchmark.*
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.demoapp.generated.Res
+import org.maplibre.compose.map.ResolvedStyleImage
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.spatialk.geojson.Position
@@ -27,26 +28,34 @@ internal fun benchmarkCamera(x: Double) =
 internal fun tourCamera(progress: Double) =
   org.maplibre.compose.benchmark.tourCamera(progress).toCompose()
 
-internal class BenchmarkFixture(prepared: PreparedBenchmarkFixture) {
+internal class BenchmarkFixture(
+  val prepared: PreparedBenchmarkFixture,
+  val images: List<ResolvedStyleImage>,
+  val bitmaps: List<ImageBitmap>,
+) {
   val config = prepared.config
   val data = prepared.data.map(GeoJsonData::JsonString)
   val baseStyles = prepared.baseStyles.map(BaseStyle::Json)
   val line = prepared.line
-  val images =
-    if (config.scenario == BenchmarkScenario.Images)
-      BenchmarkColors.map { color ->
-        ImageBitmap(32, 32).also {
-          Canvas(it).drawRect(0f, 0f, 32f, 32f, Paint().apply { this.color = color })
-        }
-      }
-    else emptyList()
+  val partitioned = prepared.partitioned
 }
 
-internal suspend fun loadBenchmarkFixture(config: BenchmarkConfig) =
-  BenchmarkFixture(
+internal suspend fun loadBenchmarkFixture(config: BenchmarkConfig): BenchmarkFixture {
+  val prepared =
     org.maplibre.compose.benchmark.loadBenchmarkFixture(
       config,
       read = { Res.readBytes("files/benchmarks/$it").decodeToString() },
       uri = { Res.getUri("files/benchmarks/$it") },
     )
-  )
+  val bitmaps =
+    if (prepared.usesImages)
+      BenchmarkColors.map { color ->
+        val size = prepared.imageSize
+        ImageBitmap(size, size).also {
+          Canvas(it)
+            .drawRect(0f, 0f, size.toFloat(), size.toFloat(), Paint().apply { this.color = color })
+        }
+      }
+    else emptyList()
+  return BenchmarkFixture(prepared, bitmaps.map { ResolvedStyleImage.fromBitmap(it) }, bitmaps)
+}

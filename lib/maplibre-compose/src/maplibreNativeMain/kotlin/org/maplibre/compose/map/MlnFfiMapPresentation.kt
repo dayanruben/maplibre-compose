@@ -12,6 +12,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import kotlinx.coroutines.CancellationException
 import org.maplibre.compose.interaction.internal.FeatureClickDispatcher
 import org.maplibre.compose.mlnffi.MapRenderBackend
+import org.maplibre.compose.offline.awaitReady
 
 /**
  * Owns a native presentation and its style composition for one compatible engine. Pixel density and
@@ -26,7 +27,7 @@ internal fun <T> MlnFfiMapPresentation(
   presentationOwner: MapPresentationOwnerToken,
   options: MapViewOptions,
   content: @Composable (MlnFfiMapSession, FeatureClickDispatcher) -> T,
-): T {
+): T? {
   val compatibility =
     NativeEngineCompatibility(renderBackend, LocalDensity.current.density.toDouble())
   return key(compatibility) {
@@ -65,6 +66,7 @@ private fun rememberMlnFfiMapSession(
           cacheFile = applicationOptions.cacheFile,
           resourceProviderFactory = applicationOptions.resourceProviderFactory,
           resourceConfig = state.runtime.resourceConfig,
+          awaitRuntimeReady = state.runtime.offlineManager::awaitReady,
         )
       }
   val session = remember(unpreparedSession) { unpreparedSession.apply { preparePresentation() } }

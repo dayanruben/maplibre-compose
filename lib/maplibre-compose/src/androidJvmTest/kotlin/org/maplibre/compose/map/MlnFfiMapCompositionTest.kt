@@ -17,6 +17,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,8 +43,6 @@ import androidx.compose.ui.test.moveTo
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
-import androidx.compose.ui.test.performMouseInput
-import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -56,6 +56,7 @@ import kotlin.math.sin
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotSame
 import kotlin.test.assertNull
@@ -69,17 +70,16 @@ import org.maplibre.compose.interaction.DragResponse
 import org.maplibre.compose.interaction.MapInteractions
 import org.maplibre.compose.interaction.PointerButton
 import org.maplibre.compose.layers.BackgroundLayer
-import org.maplibre.compose.layers.CircleLayer
+import org.maplibre.compose.layers.Layer
 import org.maplibre.compose.layers.RasterLayer
 import org.maplibre.compose.mlnffi.FfiTestPlatform
+import org.maplibre.compose.mlnffi.performMouseInputOnUiThread
+import org.maplibre.compose.mlnffi.performTouchInputOnUiThread
 import org.maplibre.compose.mlnffi.runFfiComposeUiTest
 import org.maplibre.compose.mlnffi.setFfiTestMapContent
 import org.maplibre.compose.overlay.MapOverlay
 import org.maplibre.compose.overlay.include
-import org.maplibre.compose.sources.GeoJsonData
-import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.RasterTileSource
-import org.maplibre.compose.sources.rememberGeoJsonSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.testing.RecordingList
 import org.maplibre.compose.util.MaplibreComposable
@@ -91,10 +91,7 @@ class MlnFfiMapCompositionTest {
 
   private val cacheFile = FfiTestPlatform.createCacheFile()
 
-  // Compose and the test drive this map from different threads in the desktop and device
-  // harnesses, so the runtime opts out of main-thread confinement here.
-  private val runtimeOptions =
-    MapRuntimeOptions(cacheFile = cacheFile, mainDispatcher = UnconfinedTestMain)
+  private val runtimeOptions = MapRuntimeOptions(cacheFile = cacheFile)
 
   /** Camera round trips lose a little precision through the projection. */
   private val POSITION_TOLERANCE = 1e-4
@@ -159,7 +156,7 @@ class MlnFfiMapCompositionTest {
             onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty()
         }
         val before = state.cameraPosition
-        onNodeWithTag("map").performMouseInput {
+        performMouseInputOnUiThread(onNodeWithTag("map")) {
           moveTo(point(60f, 60f))
           press()
           moveBy(point(40f, 0f))
@@ -168,13 +165,13 @@ class MlnFfiMapCompositionTest {
         waitForIdle()
         assertEquals(1, claims)
         assertEquals(before, state.cameraPosition)
-        onNodeWithTag("button").performMouseInput { click(center) }
+        performMouseInputOnUiThread(onNodeWithTag("button")) { click(center) }
         waitForIdle()
         assertEquals(1, buttonClicks)
         assertEquals(1, claims)
         assertEquals(0, placements)
-        onNodeWithTag("map").performMouseInput { exit() }
-        onNodeWithTag("map").performTouchInput {
+        performMouseInputOnUiThread(onNodeWithTag("map")) { exit() }
+        performTouchInputOnUiThread(onNodeWithTag("map")) {
           down(0, point(60f, 60f))
           down(1, point(100f, 100f))
           moveTo(0, point(40f, 40f))
@@ -185,9 +182,9 @@ class MlnFfiMapCompositionTest {
         waitForIdle()
         assertEquals(2, claims)
         assertEquals(before, state.cameraPosition)
-        onNodeWithTag("map").performMouseInput { click(point(200f, 200f)) }
+        performMouseInputOnUiThread(onNodeWithTag("map")) { click(point(200f, 200f)) }
         waitUntil(timeoutMillis = 5_000L) { placements == 1 }
-        onNodeWithTag("map").performMouseInput {
+        performMouseInputOnUiThread(onNodeWithTag("map")) {
           // Keep this drag outside the preceding click's double-click slop.
           moveTo(point(200f, 120f))
           press()
@@ -197,8 +194,8 @@ class MlnFfiMapCompositionTest {
         waitUntil(timeoutMillis = 5_000L) { state.cameraPosition.target != before.target }
         assertEquals(1, placements)
         val zoomBefore = state.cameraPosition.zoom
-        onNodeWithTag("map").performMouseInput { exit() }
-        onNodeWithTag("map").performTouchInput {
+        performMouseInputOnUiThread(onNodeWithTag("map")) { exit() }
+        performTouchInputOnUiThread(onNodeWithTag("map")) {
           down(0, point(120f, 160f))
           down(1, point(180f, 160f))
           moveTo(0, point(100f, 160f))
@@ -256,7 +253,7 @@ class MlnFfiMapCompositionTest {
       val before = state.cameraPosition
       assertFalse(mapFocused.load())
       assertFalse(state.isEngaged)
-      onNodeWithTag("map").performTouchInput {
+      performTouchInputOnUiThread(onNodeWithTag("map")) {
         down(point(150f, 150f))
         repeat(20) { moveBy(point(2f, 0f)) }
         up()
@@ -271,7 +268,7 @@ class MlnFfiMapCompositionTest {
       // A completed map tap remains valid when the child claims a nearby second contact.
       mainClock.autoAdvance = false
       try {
-        onNodeWithTag("map").performTouchInput {
+        performTouchInputOnUiThread(onNodeWithTag("map")) {
           advanceEventTime(1_000)
           down(point(150f, 150f))
           up()
@@ -327,7 +324,7 @@ class MlnFfiMapCompositionTest {
         pans = 0
         pinches = 0
         twists = 0
-        onNodeWithTag("map").performTouchInput {
+        performTouchInputOnUiThread(onNodeWithTag("map")) {
           down(0, point(90f, 150f))
           down(1, point(210f, 150f))
           repeat(40) { index ->
@@ -447,7 +444,7 @@ class MlnFfiMapCompositionTest {
               !state.isCameraMoving &&
               state.cameraMoveReason == CameraMoveReason.PROGRAMMATIC
           }
-          map.performTouchInput {
+          performTouchInputOnUiThread(map) {
             down(center)
             repeat(4) { moveBy(Offset(0f, direction * 16f * density), delayMillis = 8) }
             up()
@@ -701,16 +698,14 @@ class MlnFfiMapCompositionTest {
   fun a_later_revision_supersedes_reconciliation_failure_before_the_surface_is_revealed() =
     runFfiComposeUiTest {
       withTestRuntime(runtimeOptions) { runtime ->
-        // Synchronous GeoJSON parsing rejects malformed data inside the revision itself.
-        var malformedData by mutableStateOf(true)
+        // The engine rejects an unknown layer type during reconciliation.
+        var unsupportedLayer by mutableStateOf(true)
         val state =
           runtime.createMapState(baseStyle = BaseStyle.Empty) {
-            val points =
-              rememberGeoJsonSource(
-                data = GeoJsonData.JsonString(if (malformedData) "{" else EMPTY_FEATURE_COLLECTION),
-                options = GeoJsonOptions(synchronousUpdate = true),
-              )
-            CircleLayer(id = "application-circles", source = points, color = const(Color.Red))
+            Layer(
+              id = "application-layer",
+              type = if (unsupportedLayer) "unknown-layer-type" else "background",
+            )
           }
 
         setFfiTestMapContent(runtimeOptions) { MaplibreMap(state = state) }
@@ -723,12 +718,12 @@ class MlnFfiMapCompositionTest {
         )
         onNodeWithContentDescription("Map").assertExists("a map without a style has no semantics")
 
-        malformedData = false
+        unsupportedLayer = false
         waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
           state.style.loadState == StyleLoadState.Ready
         }
         val session = requireNotNull(state.currentMapAttachment).adapter as MlnFfiMapSession
-        assertTrue("application-circles" in session.currentStyleLayerIds())
+        assertTrue("application-layer" in session.currentStyleLayerIds())
         assertTrue(onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty())
       }
     }
@@ -754,12 +749,14 @@ class MlnFfiMapCompositionTest {
 
       assertTrue(!firstAttachment.isValid)
       assertEquals(StyleLoadState.Ready, state.style.loadState)
-      state.style.asMutable!!.baseStyle = BaseStyle.Json("{")
+      runOnUiThread { state.style.asMutable!!.baseStyle = BaseStyle.Json("{") }
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
         state.currentMapAttachment == null && state.style.loadState is StyleLoadState.Failed
       }
-      state.style.asMutable!!.baseStyle = RETAINED_STYLE
-      assertEquals(StyleLoadState.Loading, state.style.loadState)
+      runOnUiThread {
+        state.style.asMutable!!.baseStyle = RETAINED_STYLE
+        assertEquals(StyleLoadState.Loading, state.style.loadState)
+      }
 
       presented = true
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
@@ -772,6 +769,54 @@ class MlnFfiMapCompositionTest {
 
       presented = false
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.currentMapAttachment == null }
+    }
+  }
+
+  @Test
+  fun a_replaced_map_composable_hands_its_state_to_the_replacement() = runFfiComposeUiTest {
+    withTestRuntime(runtimeOptions) { runtime ->
+      val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
+      var generation by mutableIntStateOf(0)
+
+      setFfiTestMapContent(runtimeOptions, presentationCount = 2) {
+        key(generation) { MaplibreMap(state = state) }
+      }
+      waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { state.currentMapAttachment != null }
+      val firstAttachment = requireNotNull(state.currentMapAttachment)
+      val firstMap = firstAttachment.adapter
+
+      generation++
+      waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+        state.currentMapAttachment.let { it != null && it !== firstAttachment }
+      }
+
+      assertTrue(!firstAttachment.isValid)
+      assertSame(firstMap, requireNotNull(state.currentMapAttachment).adapter)
+    }
+  }
+
+  @Test
+  fun a_second_map_cannot_present_a_presented_state() = runFfiComposeUiTest {
+    withTestRuntime(runtimeOptions) { runtime ->
+      val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
+      var includeRival by mutableStateOf(false)
+
+      setFfiTestMapContent(runtimeOptions, presentationCount = 2) {
+        MaplibreMap(state = state)
+        if (includeRival) MaplibreMap(state = state)
+      }
+      waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
+        state.currentMapAttachment != null && state.style.loadState == StyleLoadState.Ready
+      }
+      val presentation = requireNotNull(state.currentMapAttachment)
+
+      runOnIdle { includeRival = true }
+      val error = assertFailsWith<IllegalStateException> { waitForIdle() }
+
+      assertEquals("The map state already has a presentation", error.message)
+      assertSame(presentation, state.currentMapAttachment)
+      assertTrue(presentation.isValid)
+      assertEquals(StyleLoadState.Ready, state.style.loadState)
     }
   }
 
@@ -920,19 +965,19 @@ class MlnFfiMapCompositionTest {
     assertTrue(errors.any { it.startsWith("mapLoadFailed") }, "The load was not reported: $errors")
 
     val before = mapState.cameraPosition.target
-    onNodeWithTag(MAP_LOAD_PLACEHOLDER_TAG).performTouchInput { down(center) }
+    performTouchInputOnUiThread(onNodeWithTag(MAP_LOAD_PLACEHOLDER_TAG)) { down(center) }
     runOnUiThread { baseStyle = BaseStyle.Empty }
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
       mapState.style.loadState == StyleLoadState.Ready &&
         onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty()
     }
-    onNodeWithContentDescription("Map").performTouchInput {
+    performTouchInputOnUiThread(onNodeWithContentDescription("Map")) {
       moveBy(Offset(60f, 0f))
       up()
     }
     waitForIdle()
     assertEquals(before, mapState.cameraPosition.target, "a loading contact became a map drag")
-    onNodeWithContentDescription("Map").performTouchInput {
+    performTouchInputOnUiThread(onNodeWithContentDescription("Map")) {
       down(center)
       moveBy(Offset(60f, 0f))
       up()
@@ -1083,8 +1128,6 @@ class MlnFfiMapCompositionTest {
       BaseStyle.Json(
         """{"version":8,"sources":{},"layers":[{"id":"replacement-style","type":"background"}]}"""
       )
-
-    const val EMPTY_FEATURE_COLLECTION = """{"type":"FeatureCollection","features":[]}"""
 
     const val RENDER_TIMEOUT_MILLIS = 30_000L
 

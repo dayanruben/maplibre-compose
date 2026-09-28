@@ -1,22 +1,18 @@
 package org.maplibre.compose.map
 
-import androidx.compose.ui.unit.LayoutDirection
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
@@ -25,7 +21,6 @@ import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import org.maplibre.compose.layers.TestLayer
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.GeoJsonOptions
@@ -35,10 +30,10 @@ import org.maplibre.compose.sources.TileSetOptions
 import org.maplibre.compose.sources.VectorTileSource
 import org.maplibre.compose.sources.VectorTileSourceHandle
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.DesiredStyleRevision
 import org.maplibre.compose.style.RecordingStyleBinding
-import org.maplibre.compose.style.StyleHandleException
 import org.maplibre.compose.style.StyleReconciler
+import org.maplibre.compose.style.StyleSnapshot
+import org.maplibre.compose.testing.setImage
 
 class MapSnapshotterTest {
 
@@ -60,8 +55,7 @@ class MapSnapshotterTest {
     val runtime =
       mapRuntimeForTest(
         createSnapshotterAdapter = { adapter },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, _, _, _ -> DesiredStyleRevision.Empty },
+        styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
     val firstRequest = MapSnapshotRequest(width = 20, height = 10)
@@ -85,74 +79,12 @@ class MapSnapshotterTest {
   }
 
   @Test
-  fun every_capture_evaluates_current_state_with_its_own_environment() = runTest {
-    var externalState = "first"
-    val evaluations = mutableListOf<Triple<String, Float, LayoutDirection>>()
-    val requests = mutableListOf<MapSnapshotRequest>()
-    var adapterCreations = 0
-    val image = FakeImageBitmap(1, 1)
-    val adapter =
-      FakeSnapshotterAdapter(
-        capture = { request, _ ->
-          requests += request
-          image
-        }
-      )
-    val runtime =
-      mapRuntimeForTest(
-        createSnapshotterAdapter = {
-          adapterCreations++
-          adapter
-        },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, density, layoutDirection, _ ->
-            evaluations += Triple(externalState, density.density, layoutDirection)
-            DesiredStyleRevision.Empty
-          },
-      )
-    val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    val first =
-      MapSnapshotRequest(
-        width = 10,
-        height = 10,
-        density = 2f,
-        layoutDirection = LayoutDirection.Ltr,
-      )
-    val second =
-      MapSnapshotRequest(
-        width = 30,
-        height = 20,
-        density = 3f,
-        layoutDirection = LayoutDirection.Rtl,
-      )
-
-    snapshotter.capture(first)
-    externalState = "second"
-    snapshotter.capture(second)
-
-    assertEquals(
-      listOf(
-        Triple("first", 2f, LayoutDirection.Ltr),
-        Triple("second", 3f, LayoutDirection.Rtl),
-      ),
-      evaluations,
-    )
-    assertEquals(listOf(first, second), requests)
-    assertEquals(1, adapterCreations)
-    snapshotter.close()
-    snapshotter.awaitClosed()
-    runtime.close()
-    runtime.awaitClosed()
-  }
-
-  @Test
   fun a_published_snapshot_style_accepts_imperative_source_and_image_commands() = runTest {
     val binding = RecordingStyleBinding()
     val runtime =
       mapRuntimeForTest(
         createSnapshotterAdapter = { FakeSnapshotterAdapter(prepare = { _, _ -> binding }) },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, _, _, _ -> DesiredStyleRevision.Empty },
+        styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
     val source =
@@ -167,96 +99,21 @@ class MapSnapshotterTest {
       val sourceHandle = snapshotter.style.sources.add(source)
       assertEquals("imperative", sourceHandle.id)
       assertTrue(snapshotter.style.sources["imperative"] is GeoJsonSourceHandle)
-      val imageHandle = snapshotter.style.images.set("imperative", FakeImageBitmap(1, 1))
+      val imageHandle = snapshotter.style.setImage("imperative", FakeImageBitmap(1, 1))
       assertEquals(setOf("imperative"), binding.imageIds)
-      assertTrue(imageHandle.remove())
-      assertTrue(sourceHandle.remove())
+      imageHandle.remove()
+      snapshotter.style.awaitCommands()
+      sourceHandle.remove()
+      snapshotter.style.awaitCommands()
       assertTrue(snapshotter.style.sources.none())
       snapshotter.style.sources.add(source)
-      snapshotter.style.images.set("imperative", FakeImageBitmap(1, 1))
+      snapshotter.style.setImage("imperative", FakeImageBitmap(1, 1))
       assertFailsWith<IllegalStateException> { sourceHandle.remove() }
       assertFailsWith<IllegalStateException> { imageHandle.remove() }
       assertTrue(binding.sourceExists("imperative") == true)
       assertEquals(setOf("imperative"), binding.imageIds)
     }
 
-    close(snapshotter, runtime)
-  }
-
-  @Test
-  fun an_image_prepared_for_a_previous_snapshot_style_is_rejected() = runTest {
-    var binding = RecordingStyleBinding()
-    val runtime =
-      mapRuntimeForTest(
-        createSnapshotterAdapter = { FakeSnapshotterAdapter(prepare = { _, _ -> binding }) },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, _, _, _ -> DesiredStyleRevision.Empty },
-      )
-    val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    try {
-      withContext(Dispatchers.Unconfined) {
-        snapshotter.capture(MapSnapshotRequest(1, 1))
-        val old = binding
-        binding = RecordingStyleBinding()
-        snapshotter.style.asMutable!!.baseStyle =
-          BaseStyle.Json("""{"version":8,"name":"replacement","sources":{},"layers":[]}""")
-        snapshotter.capture(MapSnapshotRequest(1, 1))
-        assertFailsWith<IllegalStateException> {
-          snapshotter.style
-            .requireOwner()
-            .setStyleImage("stale", FakeImageBitmap(1, 1), false, null, old)
-        }
-        assertTrue(binding.imageIds.isEmpty())
-        assertTrue(snapshotter.style.images.set("stale", FakeImageBitmap(1, 1)).remove())
-      }
-    } finally {
-      close(snapshotter, runtime)
-    }
-  }
-
-  @Test
-  fun adding_an_image_after_engine_eviction_retires_the_snapshot_image_handle() = runTest {
-    val image = FakeImageBitmap(1, 1)
-    val binding = RecordingStyleBinding(images = listOf("marker" to image))
-    val runtime =
-      mapRuntimeForTest(
-        createSnapshotterAdapter = { FakeSnapshotterAdapter(prepare = { _, _ -> binding }) },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, _, _, _ -> DesiredStyleRevision.Empty },
-      )
-    val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    withContext(Dispatchers.Unconfined) {
-      snapshotter.capture(MapSnapshotRequest(1, 1))
-      val old = assertNotNull(snapshotter.style.images["marker"]?.asMutable)
-      binding.removeImage("marker")
-      val replacement = snapshotter.style.images.set("marker", image)
-
-      assertFailsWith<IllegalStateException> { old.remove() }
-      assertTrue(binding.imageExists("marker"))
-      assertTrue(replacement.remove())
-    }
-    close(snapshotter, runtime)
-  }
-
-  @Test
-  fun a_failed_snapshot_image_replacement_keeps_the_previous_handle() = runTest {
-    val image = FakeImageBitmap(1, 1)
-    val binding = RecordingStyleBinding(refusedImageReplacements = setOf("marker"))
-    val runtime =
-      mapRuntimeForTest(
-        createSnapshotterAdapter = { FakeSnapshotterAdapter(prepare = { _, _ -> binding }) },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, _, _, _ -> DesiredStyleRevision.Empty },
-      )
-    val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    withContext(Dispatchers.Unconfined) {
-      snapshotter.capture(MapSnapshotRequest(1, 1))
-      val added = snapshotter.style.images.set("marker", image)
-      assertFailsWith<StyleHandleException> { snapshotter.style.images.set("marker", image) }
-      assertTrue(binding.imageExists("marker"))
-      assertTrue(added.remove())
-      assertFalse(binding.imageExists("marker"))
-    }
     close(snapshotter, runtime)
   }
 
@@ -276,8 +133,7 @@ class MapSnapshotterTest {
     val runtime =
       mapRuntimeForTest(
         createSnapshotterAdapter = { FakeSnapshotterAdapter(prepare = { _, _ -> binding }) },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, _, _, _ -> DesiredStyleRevision.Empty },
+        styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
     val request = MapSnapshotRequest(1, 1)
@@ -296,7 +152,7 @@ class MapSnapshotterTest {
   fun reused_snapshot_style_invalidates_a_structurally_replaced_source() = runTest {
     val original = attributedVectorSource("original")
     val replacement = attributedVectorSource("replacement")
-    var desired = DesiredStyleRevision(listOf(original.definition()), emptyList(), emptyList())
+    var desired = StyleSnapshot(listOf(original.definition()), emptyList(), emptyList())
     val binding = RecordingStyleBinding()
     val reconciler = StyleReconciler()
     val runtime =
@@ -317,7 +173,7 @@ class MapSnapshotterTest {
     snapshotter.capture(request)
     val stale = assertIs<VectorTileSourceHandle>(snapshotter.style.sources["shared"])
 
-    desired = DesiredStyleRevision(listOf(replacement.definition()), emptyList(), emptyList())
+    desired = StyleSnapshot(listOf(replacement.definition()), emptyList(), emptyList())
     snapshotter.capture(request)
 
     assertFailsWith<IllegalStateException> { stale.resetFeatureStates("layer") }
@@ -345,8 +201,7 @@ class MapSnapshotterTest {
             },
           )
         },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, _, _, _ -> DesiredStyleRevision.Empty },
+        styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
     snapshotter.capture(MapSnapshotRequest(1, 1))
@@ -354,8 +209,8 @@ class MapSnapshotterTest {
     val capture = async { snapshotter.capture(MapSnapshotRequest(1, 1)) }
     captureStarted.await()
 
-    assertFailsWith<StyleHandleException> {
-      snapshotter.style.images.set("crossing", FakeImageBitmap(1, 1))
+    assertFailsWith<IllegalStateException> {
+      snapshotter.style.setImage("crossing", FakeImageBitmap(1, 1))
     }
 
     finishCapture.complete(Unit)
@@ -404,82 +259,59 @@ class MapSnapshotterTest {
   }
 
   @Test
-  fun cancellation_during_prepare_delays_the_next_capture_until_platform_cleanup() = runTest {
-    val started = Channel<MapSnapshotRequest>(Channel.UNLIMITED)
-    val cleanupStarted = CompletableDeferred<Unit>()
-    val releaseCleanup = CompletableDeferred<Unit>()
-    val image = FakeImageBitmap(1, 1)
-    val adapter =
-      FakeSnapshotterAdapter(
-        prepare = { _, request ->
-          started.send(request)
-          if (request.width == 1) awaitCancellation()
-          RecordingStyleBinding()
-        },
-        capture = { _, _ ->
-          image
-        },
-        cancel = {
-          cleanupStarted.complete(Unit)
-          releaseCleanup.await()
-          SnapshotterEngineDisposition.RETAINED
-        },
-      )
-    val runtime = runtimeWith(adapter)
-    val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    val activeRequest = MapSnapshotRequest(1, 1)
-    val nextRequest = MapSnapshotRequest(2, 2)
-    val active = async { snapshotter.capture(activeRequest) }
-    val next = async { snapshotter.capture(nextRequest) }
-    assertSame(activeRequest, started.receive())
-
-    active.cancelAndJoin()
-    cleanupStarted.await()
-
-    assertFalse(started.tryReceive().isSuccess)
-    releaseCleanup.complete(Unit)
-    assertSame(nextRequest, started.receive())
-    assertSame(image, next.await())
-    close(snapshotter, runtime)
-  }
-
-  @Test
-  fun caller_timeout_abandons_the_result_and_delays_the_next_capture() = runTest {
-    val started = Channel<MapSnapshotRequest>(Channel.UNLIMITED)
-    val cleanupStarted = CompletableDeferred<Unit>()
-    val releaseCleanup = CompletableDeferred<Unit>()
-    val nextImage = FakeImageBitmap(2, 2)
-    val adapter =
-      FakeSnapshotterAdapter(
-        capture = { request, _ ->
-          started.send(request)
-          if (request.width == 1) awaitCancellation()
-          nextImage
-        },
-        cancel = {
-          cleanupStarted.complete(Unit)
-          releaseCleanup.await()
-          SnapshotterEngineDisposition.RETAINED
-        },
-      )
-    val runtime = runtimeWith(adapter)
-    val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    val timedOut =
-      async(Dispatchers.Default) {
-        assertFailsWith<TimeoutCancellationException> {
-          withTimeout(50.milliseconds) { snapshotter.capture(MapSnapshotRequest(1, 1)) }
-        }
+  @OptIn(ExperimentalCoroutinesApi::class)
+  fun active_cancellation_delays_the_next_request_until_platform_cleanup() = runTest {
+    for (duringPreparation in listOf(true, false)) {
+      val started = Channel<MapSnapshotRequest>(Channel.UNLIMITED)
+      val cleanupStarted = CompletableDeferred<Unit>()
+      val releaseCleanup = CompletableDeferred<Unit>()
+      val image = FakeImageBitmap(1, 1)
+      suspend fun enterStage(request: MapSnapshotRequest) {
+        started.send(request)
+        if (request.width == 1) awaitCancellation()
       }
-    assertEquals(1, started.receive().width)
-    val next = async { snapshotter.capture(MapSnapshotRequest(2, 2)) }
-    cleanupStarted.await()
+      val adapter =
+        FakeSnapshotterAdapter(
+          prepare = { _, request ->
+            if (duringPreparation) enterStage(request)
+            RecordingStyleBinding()
+          },
+          capture = { request, _ ->
+            if (!duringPreparation) enterStage(request)
+            image
+          },
+          cancel = {
+            cleanupStarted.complete(Unit)
+            releaseCleanup.await()
+            SnapshotterEngineDisposition.RETAINED
+          },
+        )
+      val runtime =
+        mapRuntimeForTest(
+          physicalScope = backgroundScope,
+          createSnapshotterAdapter = { adapter },
+          styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
+        )
+      val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
+      val activeRequest = MapSnapshotRequest(1, 1)
+      val nextRequest = MapSnapshotRequest(2, 2)
+      val active = async { snapshotter.capture(activeRequest) }
+      val next = async { snapshotter.capture(nextRequest) }
+      try {
+        assertSame(activeRequest, started.receive())
+        active.cancelAndJoin()
+        cleanupStarted.await()
+        runCurrent()
 
-    assertFalse(started.tryReceive().isSuccess)
-    releaseCleanup.complete(Unit)
-    timedOut.await()
-    assertEquals(2, started.receive().width)
-    assertSame(nextImage, next.await())
-    close(snapshotter, runtime)
+        assertFalse(started.tryReceive().isSuccess)
+        releaseCleanup.complete(Unit)
+        assertSame(nextRequest, started.receive())
+        assertSame(image, next.await())
+      } finally {
+        releaseCleanup.complete(Unit)
+        close(snapshotter, runtime)
+      }
+    }
   }
 
   @Test
@@ -488,10 +320,12 @@ class MapSnapshotterTest {
     val captureStarted = CompletableDeferred<Unit>()
     val image = FakeImageBitmap(1, 1)
     val initialBinding = RecordingStyleBinding()
-    val binding = initialBinding
     val adapter =
       FakeSnapshotterAdapter(
-        prepare = { _, _ -> binding },
+        // A capture after the cancellation loads a fresh style, as the engine does.
+        prepare = { _, _ ->
+          if (initialBinding.isLoaded) initialBinding else RecordingStyleBinding()
+        },
         capture = { request, _ ->
           if (request.width == 2) {
             captureStarted.complete(Unit)
@@ -507,8 +341,7 @@ class MapSnapshotterTest {
       mapRuntimeForTest(
         physicalScope = this,
         createSnapshotterAdapter = { adapter },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, _, _, _ -> DesiredStyleRevision.Empty },
+        styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
 
@@ -555,8 +388,7 @@ class MapSnapshotterTest {
       mapRuntimeForTest(
         physicalScope = this,
         createSnapshotterAdapter = { adapter },
-        styleEvaluator =
-          StyleCompositionEvaluator { _, _, _, _, _, _ -> DesiredStyleRevision.Empty },
+        styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
     val active = async { snapshotter.capture(MapSnapshotRequest(1, 1)) }
@@ -773,7 +605,7 @@ class MapSnapshotterTest {
   private fun runtimeWith(
     adapter: SnapshotterAdapter,
     styleEvaluator: StyleCompositionEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ ->
-      DesiredStyleRevision.Empty
+      StyleSnapshot.Empty
     },
   ): MapRuntime =
     mapRuntimeForTest(

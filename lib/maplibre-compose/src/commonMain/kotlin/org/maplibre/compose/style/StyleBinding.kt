@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
+import org.maplibre.compose.layers.LayerSummary
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.sources.CustomGeometrySourceOptions
 import org.maplibre.compose.sources.CustomVectorTileSourceOptions
@@ -32,14 +33,22 @@ import org.maplibre.spatialk.geojson.Position
  * Style unload invalidates the binding. An operation on an invalid binding produces a stale-style
  * error.
  *
- * A property write does not wait for the engine: MapLibre Native runs it on the map's owner thread
- * after the call returns, and MapLibre GL JS runs it during the call. The engine's rejection of
- * such a write is logged through [reportRejectedWrite]. A structural command, such as adding a
- * source, layer, or image, waits for the engine and throws [StyleMutationException] on refusal.
+ * A property write does not block waiting for the owner: MapLibre Native posts it to the map's
+ * owner thread, or applies it inline when already there. MapLibre GL JS applies it during the call.
+ * The engine's rejection of such a write is logged through [reportRejectedWrite]. Source definition
+ * updates run synchronously and throw on refusal; imperative handles queue them with
+ * [postSourceUpdate]. A structural command, such as adding a source, layer, or image, waits for the
+ * engine and throws [StyleMutationException] on refusal.
  */
 internal interface StyleBinding {
   /** Identifies the loaded base-style generation for this binding. */
   val identity: StyleIdentity
+
+  /** Immutable base resources captured before the binding is published or composition runs. */
+  val baseSources: Map<String, Source?>
+
+  /** Base-style layers in stack order. */
+  val baseLayers: List<LayerSummary>
 
   val isLoaded: Boolean
 
@@ -61,11 +70,32 @@ internal interface StyleBinding {
   val logger: MapLog?
 
   /**
+   * Runs [action] where this binding's synchronous operations execute inline, and suspends until it
+   * has run. On MapLibre Native that is the map's owner thread, so the calls [action] makes need no
+   * round trip each and the caller's thread never waits on the owner. MapLibre GL JS runs [action]
+   * during the call.
+   *
+   * @return the result, or null when the style has unloaded or the owner stops before [action]
+   *   runs. An operation inside [action] still fails if the style unloads while it runs.
+   */
+  suspend fun <T> awaitOwner(action: () -> T): T? = if (isLoaded) action() else null
+
+  /**
    * Adds an image, or replaces the image with its ID in place. A replacement never shows a frame
    * without the image, which a remove followed by an add does on an engine that renders between the
    * two.
    */
   fun setImage(definition: StyleImageDefinition)
+
+  /**
+   * Installs a batch in one owner operation, retaining an independent result for each image. An
+   * engine that converts pixels before the upload does so off the caller, so this function suspends
+   * and must not run inside [awaitOwner].
+   */
+  suspend fun setImages(definitions: List<StyleImageDefinition>): List<Result<Unit>> =
+    definitions.map {
+      runCatching { setImage(it) }
+    }
 
   fun setImage(id: String, image: ImageBitmap, sdf: Boolean, stretch: ImageStretch?) {
     setImage(StyleImageDefinition(id, ImageSnapshot.capture(image), sdf, stretch))
@@ -83,17 +113,9 @@ internal interface StyleBinding {
 
   fun sourceIds(): List<String> = getSources().map { it.id }
 
-  fun getLayer(id: String): ResolvedLayerDefinition?
+  fun getLayer(id: String): LayerDefinition?
 
   fun layerIds(): List<String>
-
-  /**
-   * Every layer's [LayerSummary] keyed by ID, in stack order from bottom to top. A layer the engine
-   * adds for its own use is omitted, as [getLayer] omits it. The default reads each layer
-   * separately; engines can override this to read metadata without reconstructing full layers.
-   */
-  fun layerSummaries(): Map<String, LayerSummary> =
-    layerIds().mapNotNull { id -> getLayer(id)?.summary()?.let { id to it } }.toMap()
 
   /**
    * Adds a complete layer object directly below [beforeLayerId], or on top when that is empty.
@@ -103,7 +125,7 @@ internal interface StyleBinding {
    */
   fun addLayer(layer: JsonObject, beforeLayerId: String): Boolean
 
-  fun addLayer(definition: ResolvedLayerDefinition, beforeLayerId: String): Boolean {
+  fun addLayer(definition: LayerDefinition, beforeLayerId: String): Boolean {
     requireCurrent()
     return addLayer(definition.value, beforeLayerId)
   }
@@ -341,17 +363,19 @@ internal interface StyleBinding {
     image: ImageBitmap,
   ): Boolean
 
-  /** Replaces an image source's content with a bitmap. */
-  fun setImageSourceImage(sourceId: String, image: ImageBitmap)
+  /** Queues an imperative write for the installation captured by the source handle. */
+  fun postSourceUpdate(sourceId: String, resourceIdentity: Any, action: () -> Unit) {
+    if (identity.sources.isCurrent(sourceId, resourceIdentity)) action()
+  }
+
+  /** Prepares owned pixels on the caller; the returned command applies them synchronously. */
+  fun prepareImageSourceUpdate(sourceId: String, image: ImageSnapshot): () -> Unit
 
   /** Replaces an image source's content with a URL. */
   fun setImageSourceUrl(sourceId: String, url: String)
 
   /** Sets an image source's four corners in MapLibre order. */
   fun setImageSourceCoordinates(sourceId: String, coordinates: List<Position>)
-
-  /** @return null if the style has unloaded, or the source is not a live image source. */
-  fun imageSourceCoordinates(sourceId: String): List<Position>?
 
   /**
    * Adds a GeoJSON source from its data and options. The default implementation writes style-spec
@@ -375,7 +399,8 @@ internal interface StyleBinding {
    *
    * The binding owns preparation and ordering. A newer submission supersedes older pending data.
    * Native preparation uses the source's applied options, or [fallbackOptions] if those options are
-   * unavailable, and runs synchronously when [GeoJsonOptions.synchronousUpdate] is enabled.
+   * unavailable. Preparation runs on a worker; native tiling policy does not change submission
+   * ordering or make callers wait.
    */
   fun submitGeoJsonData(sourceId: String, data: GeoJsonData, fallbackOptions: GeoJsonOptions)
 
@@ -451,16 +476,16 @@ internal interface StyleBinding {
   fun reportSourceChanged(sourceId: String) {}
 
   /**
-   * Merges [state] into the state of one feature; a null value in [state] drops that key. The write
-   * runs on the engine's thread, possibly after this function returns. A state the engine rejects
-   * is reported through [reportRejectedWrite] and leaves the previous state in place.
+   * Captures [state] on the caller; the returned command merges it into one feature's state. A null
+   * value drops that key. Submit the command through [postSourceUpdate] to preserve the source
+   * installation's identity and report an engine rejection.
    */
-  fun setFeatureState(
+  fun prepareFeatureStateUpdate(
     sourceId: String,
     sourceLayerId: String?,
     featureId: String,
     state: JsonObject,
-  )
+  ): () -> Unit
 
   /** @return an empty object when the feature has no state, or the style has unloaded. */
   suspend fun featureState(sourceId: String, sourceLayerId: String?, featureId: String): JsonObject
@@ -495,25 +520,9 @@ internal interface StyleBinding {
   ): List<Feature<Geometry, JsonObject?>>
 }
 
-/**
- * The values of a layer that are fixed for a loaded style generation: its style-spec [type], the
- * [source] it draws from, and the [sourceLayer] within that source, each null when the layer names
- * none.
- */
-internal data class LayerSummary(val type: String, val source: String?, val sourceLayer: String?)
-
-/**
- * The base-style layers of this generation, keyed by ID in stack order. The first call reads them
- * from the engine and every later call returns that read. Composition never modifies the base
- * style, so the read stays valid for the generation, but it must happen before the composition adds
- * its first layer: a layer in the engine at that time counts as a base layer.
- */
-internal fun StyleBinding.baseLayerSummaries(): Map<String, LayerSummary> = identity.baseLayers {
-  layerSummaries()
-}
-
-internal fun ResolvedLayerDefinition.summary(): LayerSummary =
+internal fun LayerDefinition.summary(): LayerSummary =
   LayerSummary(
+    id = id,
     type = type,
     source = sourceId ?: value.rootString("source"),
     sourceLayer = value.rootString("source-layer"),

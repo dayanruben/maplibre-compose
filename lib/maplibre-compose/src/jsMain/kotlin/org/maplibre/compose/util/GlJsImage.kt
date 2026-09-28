@@ -5,22 +5,44 @@ import js.buffer.ArrayBuffer
 import js.objects.unsafeJso
 import js.typedarrays.Uint8Array
 import org.maplibre.compose.gljs.StyleImageData
+import org.maplibre.compose.style.ImageSnapshot
 import web.dom.document
 import web.html.HTMLCanvasElement
 
 /** Alpha stays straight: GL JS uploads style images with `UNPACK_PREMULTIPLY_ALPHA_WEBGL` on. */
 internal fun ImageBitmap.toGlJsImage(): StyleImageData {
-  val pixels = Uint8Array<ArrayBuffer>(width * height * 4)
-  writeStraightRgba(pixels.asDynamic())
+  val argb = IntArray(width * height)
+  readPixels(argb)
+  return glJsImage(width, height) { argb[it] }
+}
+
+internal fun ImageSnapshot.toGlJsImage(): StyleImageData = glJsImage(width, height, ::pixelAt)
+
+private inline fun glJsImage(
+  imageWidth: Int,
+  imageHeight: Int,
+  pixelAt: (Int) -> Int,
+): StyleImageData {
+  val pixels = Uint8Array<ArrayBuffer>(imageWidth * imageHeight * 4)
+  for (index in 0 until imageWidth * imageHeight) {
+    val pixel = pixelAt(index)
+    val offset = index * 4
+    pixels.asDynamic()[offset] = (pixel ushr 16) and 0xFF
+    pixels.asDynamic()[offset + 1] = (pixel ushr 8) and 0xFF
+    pixels.asDynamic()[offset + 2] = pixel and 0xFF
+    pixels.asDynamic()[offset + 3] = (pixel ushr 24) and 0xFF
+  }
   return unsafeJso {
-    width = this@toGlJsImage.width.toDouble()
-    height = this@toGlJsImage.height.toDouble()
+    width = imageWidth.toDouble()
+    height = imageHeight.toDouble()
     data = pixels
   }
 }
 
 /** Encodes a Compose bitmap as a PNG `data:` URL. */
-internal fun ImageBitmap.toDataUrl(): String {
+internal fun ImageBitmap.toDataUrl(): String = ImageSnapshot.capture(this).toDataUrl()
+
+internal fun ImageSnapshot.toDataUrl(): String {
   val canvas = document.createElement("canvas").unsafeCast<HTMLCanvasElement>()
   canvas.width = width
   canvas.height = height
@@ -34,11 +56,10 @@ internal fun ImageBitmap.toDataUrl(): String {
   return canvas.asDynamic().toDataURL().unsafeCast<String>()
 }
 
-/** [ImageBitmap.readPixels] hands back straight-alpha ARGB. */
-private fun ImageBitmap.writeStraightRgba(target: dynamic) {
-  val argb = IntArray(width * height)
-  readPixels(argb)
-  argb.forEachIndexed { index, pixel ->
+/** Stored pixels have straight-alpha ARGB channels. */
+private fun ImageSnapshot.writeStraightRgba(target: dynamic) {
+  for (index in 0 until width * height) {
+    val pixel = pixelAt(index)
     val offset = index * 4
     target[offset] = (pixel ushr 16) and 0xFF
     target[offset + 1] = (pixel ushr 8) and 0xFF

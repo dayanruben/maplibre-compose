@@ -21,6 +21,7 @@ import kotlin.time.Duration
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.io.files.Path
 import kotlinx.serialization.json.JsonObject
@@ -45,6 +46,7 @@ import org.maplibre.compose.mlnffi.MapRenderBackend
 import org.maplibre.compose.mlnffi.MetalSurfaceTarget
 import org.maplibre.compose.mlnffi.MetalTextureTarget
 import org.maplibre.compose.mlnffi.MlnFfiFrameResult
+import org.maplibre.compose.mlnffi.MlnFfiGate
 import org.maplibre.compose.mlnffi.MlnFfiLock
 import org.maplibre.compose.mlnffi.MlnFfiMapDestination
 import org.maplibre.compose.mlnffi.MlnFfiMapFrame
@@ -67,13 +69,13 @@ import org.maplibre.compose.resource.MapResourceConfig
 import org.maplibre.compose.resource.MlnFfiResourceProvider
 import org.maplibre.compose.resource.MlnFfiResourceProviderFactory
 import org.maplibre.compose.style.BaseStyle
-import org.maplibre.compose.style.DesiredStyleRevision
 import org.maplibre.compose.style.MlnFfiStyleBinding
 import org.maplibre.compose.style.StyleLoadTracker
 import org.maplibre.compose.style.StylePresentation
 import org.maplibre.compose.style.StyleReconciler
 import org.maplibre.compose.style.StyleRequestId
 import org.maplibre.compose.style.StyleResourceChanges
+import org.maplibre.compose.style.StyleSnapshot
 import org.maplibre.compose.util.DpPadding
 import org.maplibre.compose.util.VisibleBounds
 import org.maplibre.compose.util.VisibleRegion
@@ -178,12 +180,13 @@ internal class MlnFfiMapSession(
   private val cacheFile: Path,
   private val resourceProviderFactory: MlnFfiResourceProviderFactory = ::MlnFfiResourceProvider,
   private val resourceConfig: MapResourceConfig = MapResourceConfig(),
+  private val awaitRuntimeReady: suspend () -> Unit = {},
 ) : MapLifecycleSession, MlnFfiMapRenderer, CameraInputTarget {
 
   @Volatile internal var callbacks: MapAdapter.Callbacks = callbacks
   @Volatile internal var durableCallbacks: MapAdapter.Callbacks = EmptyMapAdapterCallbacks
-  private val lifecycle by lazy { lifecycleAuthority.bind(this) }
-  private val lifecycleCallbacks by lazy { MapLifecycleCallbacks(lifecycle) { this.callbacks } }
+  override val lifecycle = lifecycleAuthority.createBinding(this)
+  private val lifecycleCallbacks = MapLifecycleCallbacks(lifecycle) { this.callbacks }
   @Volatile private var lifecycleEngineIdentity: EngineMapIdentity? = null
   @Volatile private var lifecycleRenderLease: RenderLease? = null
   /** Presentation producer installed and sampled only on the native map's owner thread. */
@@ -235,24 +238,61 @@ internal class MlnFfiMapSession(
   private val hasViewport: Boolean
     get() = appliedViewportRequest != null
 
-  /**
-   * Renderer-thread state, with [renderSessionReady] and [attachedTarget]: read and written only on
-   * the host's renderer thread, which [render] runs on and
-   * [MlnFfiMapHostSession.withRendererAccess] reaches from any other thread.
-   */
-  private var renderSession: RenderSessionHandle? = null
+  /** A host and every native borrow of its targets retire together on its renderer thread. */
+  private class RendererAttachment(val host: MlnFfiMapHostSession) {
+    var handle: RenderSessionHandle? = null
+    var ready = false
+    var target: MlnFfiRenderTarget? = null
+    @Volatile var releaseRequested = false
+    val released = CompletableDeferred<Result<Unit>>()
 
-  /** The FFI creates its renderer during the first successful render. */
-  private var renderSessionReady = false
+    fun closeHandle() {
+      handle?.close()
+      handle = null
+      ready = false
+      target = null
+    }
 
-  @Volatile private var hostSession: MlnFfiMapHostSession? = null
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun release(): Result<Unit> {
+      if (released.isCompleted) return released.getCompleted()
+      releaseRequested = true
+      return runCatching { closeHandle() }.also { released.complete(it) }
+    }
+
+    private fun requestRelease() {
+      releaseRequested = true
+      // Rejection means the host is shutting down. Its onSurfaceLost still owns this release.
+      host.enqueueRenderer { release() }
+    }
+
+    suspend fun releaseAndAwait() {
+      requestRelease()
+      released.await().getOrThrow()
+    }
+
+    /** Host handoff runs on the incoming host's renderer context, never its native map owner. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun releaseBeforeHandoff() {
+      requestRelease()
+      if (!released.isCompleted) {
+        val done = MlnFfiGate()
+        released.invokeOnCompletion { done.open() }
+        done.awaitUntilOpen()
+      }
+      released.getCompleted().getOrThrow()
+    }
+  }
+
+  @Volatile private var rendererAttachment: RendererAttachment? = null
+  private val hostSession: MlnFfiMapHostSession?
+    get() = rendererAttachment?.host
+
+  private val renderSession: RenderSessionHandle?
+    get() = rendererAttachment?.handle
 
   internal val canPresentFrames: Boolean
     get() = styleLoadTracker.presentation != StylePresentation.Hidden
-
-  private data class TargetKey(val generation: Long, val extent: MapExtent)
-
-  private var attachedTarget: TargetKey? = null
 
   /** Renderer-thread state, read by tests. */
   @Volatile
@@ -315,22 +355,31 @@ internal class MlnFfiMapSession(
     }
   }
 
-  private fun createStyleBinding(engine: EngineMapIdentity): MlnFfiStyleBinding =
+  private fun createStyleBinding(engine: EngineMapIdentity, map: MapHandle): MlnFfiStyleBinding =
     MlnFfiStyleBinding(
+      map = map,
       loggerProvider = { logger },
       sessionOpen = { lifecycle.acceptsWork },
       accessMap = { action ->
         if (!lifecycle.acceptsWork) false else runOnMap(action).let { true }
       },
       postMap = { action, abandon ->
-        if (!lifecycle.acceptsWork) false else loop?.post(action, abandon) ?: false
+        if (!lifecycle.acceptsWork) false else loop?.dispatch(action, abandon) ?: false
       },
       enqueueRenderSession = { action ->
-        val host = hostSession
-        if (!lifecycle.acceptsWork || host == null) {
+        val attachment = rendererAttachment
+        if (!lifecycle.acceptsWork || attachment == null) {
           false
         } else {
-          host.enqueueRenderer { action(renderSession.takeIf { renderSessionReady }) }
+          attachment.host.enqueueRenderer {
+            action(
+              attachment.handle.takeIf {
+                rendererAttachment === attachment &&
+                  !attachment.releaseRequested &&
+                  attachment.ready
+              }
+            )
+          }
         }
       },
       sourceChanged = { sourceId ->
@@ -359,14 +408,22 @@ internal class MlnFfiMapSession(
   // region host surface lifecycle
 
   override fun onSurfaceAvailable(session: MlnFfiMapHostSession) {
-    if (!lifecycle.acceptsWork) {
-      logger?.w { "Ignoring a host surface offered to a closed map session" }
-      return
+    while (!lifecycleAuthority.isClosed && lifecycle.acceptsWork && !session.isClosed) {
+      val previous = stateLock.withLock { rendererAttachment }
+      previous?.releaseBeforeHandoff()
+      val published = stateLock.withLock {
+        if (rendererAttachment !== previous) false
+        else {
+          if (lifecycleAuthority.isClosed || !lifecycle.acceptsWork || session.isClosed) return
+          rendererAttachment = RendererAttachment(session)
+          true
+        }
+      }
+      if (published) {
+        requestRender()
+        return
+      }
     }
-    hostSession = session
-    // An idle map publishes no render update, so a surface that returns after loss is never drawn
-    // into without this.
-    requestRender()
   }
 
   override fun onSurfaceChanged(extent: MapExtent) {
@@ -374,16 +431,26 @@ internal class MlnFfiMapSession(
     requestRender()
   }
 
-  override fun onSurfaceLost() {
+  override fun onSurfaceLost(session: MlnFfiMapHostSession) {
     // The render session must go before the host session is dropped: that is the only route to the
     // thread allowed to close the handle.
     logger?.i { "Host surface lost; closing the render session and waiting for a new one" }
-    closeRenderSession()
-    hostSession = null
+    val attachment = stateLock.withLock {
+      val current = rendererAttachment?.takeIf { it.host === session } ?: return
+      viewportRequest = null
+      current
+    }
+    attachment.host.withRendererAccess { attachment.release().getOrThrow() }
+    stateLock.withLock { if (rendererAttachment === attachment) rendererAttachment = null }
   }
 
-  override fun render(frame: MlnFfiMapFrame, captureProjection: Boolean): MlnFfiFrameResult {
-    if (!lifecycle.acceptsWork || frame.extent.isEmpty) return MlnFfiFrameResult.AwaitUpdate
+  override fun render(
+    host: MlnFfiMapHostSession,
+    frame: MlnFfiMapFrame,
+    captureProjection: Boolean,
+  ): MlnFfiFrameResult {
+    if (!lifecycle.acceptsWork || frame.extent.isEmpty || rendererAttachment?.host !== host)
+      return MlnFfiFrameResult.AwaitUpdate
 
     val loop = loop ?: return MlnFfiFrameResult.AwaitUpdate
     loop.failure?.let { error ->
@@ -412,7 +479,7 @@ internal class MlnFfiMapSession(
         throw MlnFfiRecoverableFrameException("The MapLibre render session failed", error)
       }
     if (update.result == RenderResult.RENDERED) {
-      renderSessionReady = true
+      rendererAttachment?.ready = true
     }
     when (update.result) {
       RenderResult.NO_UPDATE,
@@ -532,6 +599,7 @@ internal class MlnFfiMapSession(
     lifecycleAuthority.selectAdapterForPresentation(this) && lifecycle.beginAttachIfOpen()
 
   override suspend fun attachPresentation() {
+    lifecycleAuthority.register(this)
     lifecycle.attachRetainedEngine()
   }
 
@@ -544,6 +612,7 @@ internal class MlnFfiMapSession(
   }
 
   override suspend fun createEngine(identity: EngineMapIdentity) {
+    awaitRuntimeReady()
     lifecycleEngineIdentity = identity
     lifecycleStyleRequestIdentity = lifecycle.claimStyleRequestIdentity(identity)
     startEngine(identity)
@@ -552,6 +621,22 @@ internal class MlnFfiMapSession(
   override suspend fun attach(identity: EngineMapIdentity, lease: RenderLease) {
     updateOwnerThreadPresentationAfterDrain { ownerThreadRenderLease = lease }
     lifecycleRenderLease = lease
+    val attachment = rendererAttachment
+    if (attachment?.releaseRequested == true) {
+      attachment.released.await().getOrThrow()
+      attachment.host.enqueueRenderer {
+        stateLock.withLock {
+          if (
+            rendererAttachment === attachment && lifecycle.acceptsWork && !attachment.host.isClosed
+          ) {
+            rendererAttachment = RendererAttachment(attachment.host)
+          }
+        }
+        requestRender()
+      }
+    } else {
+      requestRender()
+    }
   }
 
   override suspend fun detach(identity: EngineMapIdentity, lease: RenderLease) {
@@ -562,9 +647,7 @@ internal class MlnFfiMapSession(
     }
     callbacks = durableCallbacks
     if (lifecycleRenderLease == lease) lifecycleRenderLease = null
-    // This must happen before the first suspension. A host may tear down its renderer thread as
-    // soon as close() returns, but the native handle can only be closed through that thread.
-    closeRenderSessionForLifecycle()
+    rendererAttachment?.releaseAndAwait()
     updateOwnerThreadPresentation {
       if (ownerThreadRenderLease == lease) ownerThreadRenderLease = null
     }
@@ -590,17 +673,13 @@ internal class MlnFfiMapSession(
     gestureFences.toList().also { gestureFences.clear() }.forEach { it.complete() }
   }
 
-  private fun closePlatform() {
-    try {
-      stopLoop()
-    } finally {
-      hostSession = null
-      // The owner thread is gone, so this is the last published handle. Destruction is any-thread.
-      retireProjection()
-    }
+  private suspend fun closePlatform() {
+    stopLoop()
+    rendererAttachment = null
   }
 
   fun start() {
+    lifecycleAuthority.register(this)
     lifecycle.beginAttachIfOpen()
   }
 
@@ -618,7 +697,7 @@ internal class MlnFfiMapSession(
           resourceProviderFactory = resourceProviderFactory,
           resourceConfig = resourceConfig,
           onMapCreated = ::onMapCreated,
-          onEvent = { handleEvent(identity, it) },
+          onEvent = { map, event -> handleEvent(identity, map, event) },
           onEventsDrained = { onEventsDrained(identity, it) },
           requestFrame = ::requestRender,
           mapEventMask = HANDLED_MAP_EVENTS,
@@ -634,7 +713,7 @@ internal class MlnFfiMapSession(
   }
 
   /** MapLibre refuses to destroy a map that still has a render session attached. */
-  private fun stopLoop() {
+  private suspend fun stopLoop() {
     val abandoned = mutableListOf<PendingMapAction>()
     val stopping = stateLock.withLock {
       val current = loop
@@ -652,47 +731,20 @@ internal class MlnFfiMapSession(
     appliedStyleRequest = null
     styleLoadTracker.engineBecameUnavailable()
     // After loop is cleared: a frame queued behind this close re-reads it in ensureAttached.
-    closeRenderSession()
+    // A failed renderer release must retain the map and borrowed target, not destroy their owners.
+    rendererAttachment?.releaseAndAwait()
     try {
       stopping?.close()
+      stopping?.awaitClosed()
     } finally {
-      // After the join, so the owner thread is gone and this is the only reader of that state.
+      // Owner completion acknowledges that this is now the only reader of its state.
+      retireProjection()
       activeGestureToken?.complete()
       activeGestureToken = null
       pendingGestureEndToken = null
       gestureFences.toList().also { gestureFences.clear() }.forEach { it.complete() }
       resumeStrandedTransitions()
     }
-  }
-
-  /** Best-effort cleanup for render and surface transitions that cannot report a failure. */
-  private fun closeRenderSession() {
-    releaseRenderSession()?.let { logger?.e(it) { "Failed to close the MapLibre render session" } }
-  }
-
-  /** Lifecycle cleanup reports this resource failure so [MapLifecycleAuthority.awaitClosed] can. */
-  private fun closeRenderSessionForLifecycle() {
-    releaseRenderSession()?.let { throw it }
-  }
-
-  /**
-   * Closes whatever is attached once this reaches the host's renderer thread, and returns the
-   * failure. Nothing is attached without a host: [onSurfaceLost] closes the session before it drops
-   * one.
-   */
-  private fun releaseRenderSession(): Throwable? {
-    val host = hostSession ?: return null
-    return runCatching { host.withRendererAccess { closeAttachedSession() } }.exceptionOrNull()
-  }
-
-  /** Renderer thread only. Clears the bookkeeping first, so a failed close is not retried. */
-  private fun closeAttachedSession() {
-    val handle = renderSession ?: return
-    renderSession = null
-    renderSessionReady = false
-    attachedTarget = null
-    stateLock.withLock { viewportRequest = null }
-    handle.close()
   }
 
   // endregion
@@ -722,18 +774,24 @@ internal class MlnFfiMapSession(
   ): Boolean {
     val extent = frame.extent
     if (extent.isEmpty) return false
-    if (this.loop !== loop || !lifecycle.acceptsWork) return false
+    if (this.loop !== loop || !lifecycle.acceptsWork || lifecycleRenderLease == null) return false
 
-    val key = TargetKey(frame.target.generation, extent)
-    val attached = attachedTarget
-    if (attached == key && renderSession != null) return true
+    val attachment = rendererAttachment ?: return false
+    if (attachment.releaseRequested) return false
+    val attached = attachment.target
+    if (
+      attached?.generation == frame.target.generation &&
+        attached.extent == extent &&
+        attachment.handle != null
+    )
+      return true
 
     // A renderer compiles its shaders for one pixel ratio, so a scale-factor change needs a new
     // one.
     val live = renderSession
     if (live != null && attached != null && attached.extent.scaleFactor == extent.scaleFactor) {
       if (retargetBorrowedTexture(live, frame.target, extent)) {
-        attachedTarget = key
+        attachment.target = frame.target
         retargetCount++
         // The replacement texture holds nothing yet; this request buys the frame that fills it.
         renderRequested.store(true)
@@ -743,19 +801,18 @@ internal class MlnFfiMapSession(
     }
 
     // Attaching before closing throws, because a map permits only one live session.
-    runCatching { closeAttachedSession() }
-      .onFailure { logger?.e(it) { "Failed to close the MapLibre render session" } }
+    attachment.closeHandle()
 
     // There is no map.resize: attaching sets the map's size from the descriptor's logical extent.
-    renderSession =
+    attachment.handle =
       try {
         attachBorrowedTexture(map, frame.target, extent)
       } catch (error: Throwable) {
         logger?.e(error) { "Failed to attach a render session to the host target" }
         throw error
       }
-    renderSessionReady = false
-    attachedTarget = key
+    attachment.ready = false
+    attachment.target = frame.target
     attachCount++
     requestViewport(extent)
     // The new texture holds nothing yet; this request buys the frame that fills it.
@@ -880,7 +937,7 @@ internal class MlnFfiMapSession(
   // region events, on the map's owner thread
 
   /** Runs on the map's owner thread, as do the callbacks it makes. */
-  private fun handleEvent(engine: EngineMapIdentity, event: RuntimeEvent) {
+  private fun handleEvent(engine: EngineMapIdentity, map: MapHandle, event: RuntimeEvent) {
     val lease = ownerThreadRenderLease
     val mapEvent = event.toMapEvent()
     when (event.type) {
@@ -888,7 +945,7 @@ internal class MlnFfiMapSession(
 
       RuntimeEventType.MAP_STYLE_LOADED -> {
         val producer = styleEventProducer?.takeIf { it.engine == engine } ?: return
-        val binding = createStyleBinding(engine)
+        val binding = createStyleBinding(engine, map)
         val trackerRequest = appliedStyleRequest ?: return binding.invalidate()
         if (!styleLoadTracker.loaded(trackerRequest, binding.identity)) {
           binding.invalidate()
@@ -1194,22 +1251,23 @@ internal class MlnFfiMapSession(
     onMap {}
   }
 
-  override suspend fun reconcileStyleRevision(
-    revision: DesiredStyleRevision
-  ): StyleResourceChanges {
+  override suspend fun reconcileStyleRevision(revision: StyleSnapshot): StyleResourceChanges {
     val binding = checkNotNull(styleBinding)
     val engine = checkNotNull(lifecycleEngineIdentity)
     val style = checkNotNull(lifecycleStyleIdentity)
     try {
-      val changes = styleReconciler.apply(binding, revision)
-      if (!styleLoadTracker.contentReady) {
-        runOnMap {
-          if (styleLoadTracker.reconciled(binding.identity)) {
+      val prepared = styleReconciler.prepare(binding, revision)
+      return checkNotNull(
+        loop?.await {
+          val changes = styleReconciler.apply(binding, prepared)
+          if (!styleLoadTracker.contentReady && styleLoadTracker.reconciled(binding.identity)) {
             lifecycleCallbacks.onStyleReady(engine, style, this)
           }
+          changes
         }
+      ) {
+        "The map became unavailable during style reconciliation"
       }
-      return changes
     } catch (error: CancellationException) {
       throw error
     } catch (error: Throwable) {
@@ -1420,7 +1478,7 @@ internal class MlnFfiMapSession(
     pendingCameraPadding = null
   }
 
-  override fun cameraForBounds(
+  override suspend fun cameraForBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
@@ -1428,7 +1486,7 @@ internal class MlnFfiMapSession(
     fitPadding: DpPadding,
   ): CameraPosition =
     checkNotNull(
-      runOnMap { map ->
+      loop?.await { map ->
         cameraForBounds(map, boundingBox, bearing, tilt, cameraPadding, fitPadding)
           .toCameraPosition(appliedViewportInsets)
       }
@@ -1436,7 +1494,7 @@ internal class MlnFfiMapSession(
       "The map became unavailable during the bounds query"
     }
 
-  override fun cameraForGeometry(
+  override suspend fun cameraForGeometry(
     geometry: Geometry,
     bearing: Double,
     tilt: Double,
@@ -1445,7 +1503,7 @@ internal class MlnFfiMapSession(
   ): CameraPosition {
     val geoJson = geometry.toJson().encodeToByteArray()
     return checkNotNull(
-      runOnMap { map ->
+      loop?.await { map ->
         fitCamera(map, bearing, tilt, cameraPadding, fitPadding) {
             map.cameraForGeometry(geoJson, it)
           }
@@ -1456,7 +1514,7 @@ internal class MlnFfiMapSession(
     }
   }
 
-  override fun fitCameraToBounds(
+  override suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
     tilt: Double,
@@ -1474,7 +1532,7 @@ internal class MlnFfiMapSession(
     check(hasViewport && lifecycle.acceptsWork && loop != null) {
       "A bounds fit requires the current presentation viewport"
     }
-    check(runOnMap(fit) != null) { "The map became unavailable during the bounds fit" }
+    check(loop?.await(fit) != null) { "The map became unavailable during the bounds fit" }
   }
 
   private fun cameraForBounds(
@@ -2005,29 +2063,35 @@ internal class MlnFfiMapSession(
       continuation.resume(emptyList())
       return@suspendCancellableCoroutine
     }
-    val host = hostSession
-    if (host == null) {
+    val attachment = rendererAttachment
+    if (attachment == null) {
       continuation.resume(emptyList())
       return@suspendCancellableCoroutine
     }
-    val accepted = host.enqueueRenderer {
-      if (!continuation.isActive) return@enqueueRenderer
-      val session = renderSession
-      if (session == null || !renderSessionReady) {
-        continuation.resume(emptyList())
-        return@enqueueRenderer
-      }
-      continuation.resumeWith(
-        runCatching {
-          session
-            .queryRenderedFeatures(geometry, renderedQueryOptions(layerIds, predicate))
-            .toGeoJsonFeatures()
-            // Native walks style layers from the bottom. MapState and GL JS put the
-            // feature in front first.
-            .asReversed()
+    val accepted =
+      attachment.host.enqueueRenderer {
+        if (!continuation.isActive) return@enqueueRenderer
+        val session = attachment.handle
+        if (
+          rendererAttachment !== attachment ||
+            attachment.releaseRequested ||
+            session == null ||
+            !attachment.ready
+        ) {
+          continuation.resume(emptyList())
+          return@enqueueRenderer
         }
-      )
-    }
+        continuation.resumeWith(
+          runCatching {
+            session
+              .queryRenderedFeatures(geometry, renderedQueryOptions(layerIds, predicate))
+              .toGeoJsonFeatures()
+              // Native walks style layers from the bottom. MapState and GL JS put the
+              // feature in front first.
+              .asReversed()
+          }
+        )
+      }
     if (!accepted && continuation.isActive) continuation.resume(emptyList())
   }
 

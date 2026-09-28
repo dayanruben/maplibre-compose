@@ -1,39 +1,21 @@
 # Map benchmarks
 
-A local tool for comparing map performance across code changes and between
-MapLibre Compose and the classic Android and iOS SDKs.
+Measure map performance across code changes, against the classic Android and iOS
+SDKs, and over time on the documentation site's [benchmarks page][page].
 
-## Run and compare
-
-Build, then capture at least three repetitions on one device:
+## Compare two builds
 
 ```sh
 mise run benchmark:build:android
 mise run benchmark:run -- android --device SERIAL --case paint-points \
   --repeat 3 --output build/benchmarks/before
-```
-
-Rebuild after your change and repeat with `--output build/benchmarks/after`,
-then compare:
-
-```sh
+# Change the code, rebuild, and capture into build/benchmarks/after, then:
 mise run benchmark:compare -- build/benchmarks/before build/benchmarks/after
 ```
 
-To compare SDKs instead, repeat with `--implementation classic-android` or
-`classic-ios` on the corresponding platform. Compose defaults to
-`compose-imperative`; `compose-declarative` is also available. The runner
-selects the app to install.
-
-Each capture saves `app.log` and `performance.json`, including the app's build
-commit, dirty-checkout flag, and pinned SDK versions. `--output` is required and
-must name a new directory. Comparisons report medians, ranges, and percentage
-changes; single runs can also be compared.
-
-## Other platforms
-
-Prefix the tasks below with `mise run`. Add `--case`, `--repeat`, and `--output`
-as in the Android example.
+Add `--implementation classic-android` or `classic-ios` to compare SDKs.
+`mise run benchmark:run -- list` prints the presets in [cases.json](cases.json);
+`--config '{"rateHz":2}'` overrides a setting.
 
 | Target        | Build task                        | Run task                                         |
 | ------------- | --------------------------------- | ------------------------------------------------ |
@@ -42,39 +24,106 @@ as in the Android example.
 | Desktop       | `benchmark:build:desktop`         | `benchmark:run -- desktop --app EXECUTABLE_PATH` |
 | Browser       | `benchmark:build:js`              | `benchmark:run -- web`                           |
 
-Boot the iOS simulator before running. For an iPhone, configure Xcode signing,
-unlock and trust the phone, and find its identifier with
-`xcrun devicectl list devices`. Android and iOS build tasks produce both the
-Compose and classic SDK apps.
+## What a run reports
 
-## Choose a workload
+- Process CPU time, per operation and per second.
+- Time to style ready and to the first frame.
+- Submission and completion latency, for workloads with a completion signal.
+- First close-call return and adapter cleanup completion for lifecycle
+  workloads.
+- Frame intervals, and window frame timings on Android.
+- Engine encoding and rendering time per frame.
 
-List presets with `mise run benchmark:run -- list` and select one with `--case`.
-Presets cover camera movement, style and source updates, layer changes, and
-other map operations. Supported implementations vary by workload; `recompose` is
-Compose-only, as is `overlays-points`, which runs the camera tour with the
-default Compose map controls. Other workloads hide optional map controls on both
-SDKs, retaining attribution for real-data basemap scenes.
+Use one device, viewport, and data set per comparison, keep the device idle and
+cool, and prefer physical hardware. SDK comparisons measure the delivered
+stacks, including their MapLibre Native revisions.
 
-Override preset settings with JSON, for example
-`--config '{"durationMs":3000,"rateHz":2}'`. See [cases.json](cases.json) for
-presets and `mise run benchmark:run -- --help` for command options.
+## Operation boundaries
 
-## Interpret results
+`image-cycle` reuses prepared 32×32 pixels and times removal plus registration
+together. Completion includes queued commands and map settlement.
+`image-preparation` instead converts a 256×256 bitmap on every update before
+registering it in a visible symbol layer. Its submission time includes
+suspending preparation; it is not a measure of how long the UI thread blocks.
+`image-registration` remains the prepared-image replacement control, using the
+same 256×256 dimensions and rate. No workload reads prepared pixels back just to
+consume a result.
 
-- Use the same device, viewport, workload, and prepared data. Keep the device
-  otherwise idle and thermally stable, with Android animation scale at 1×. Use
-  physical hardware for performance conclusions.
-- Each run warms up before measurement. Compare operation counts alongside
-  timings: fewer completed operations can look like lower cost.
-- Submission timings measure API calls or state assignments, excluding later
-  declarative recomposition. Completion signals and render-event counts are not
-  display presentation timestamps, FPS, or jank measurements.
-- Browser runs provide workload timings but no process CPU or native engine
-  timings. Comparisons omit unavailable metrics. SDKs may embed different
-  MapLibre Native revisions, so SDK comparisons measure the delivered stacks.
+`style-overlay` replaces a 600-layer base style and declares an overlay using
+`getBaseSource` and a predicate anchor, then waits for that overlay to render.
+Each style variant uses a different overlay ID so a query cannot accept the
+previous style's overlay. `overlay-update` toggles that overlay over an
+unchanged style and waits for a rendered-feature query to observe the change.
+These exercise metadata consumers; `style-publication` uses the same base style
+without metadata consumers, through style-ready. Its completion signal precedes
+rendering, so its latency cannot be subtracted from `style-overlay` to isolate
+consumer cost. All three cases partition the point layers to avoid multiplying
+visible overdraw.
 
-Build and run tasks prepare and cache benchmark data on first use; measured runs
-use packaged resources offline. To refresh the cache, run
-`mise deps install benchmarks --force` and rebuild. See [fixtures](fixtures/)
-for attribution and font licensing.
+`source-completion` uses 1,000 points and waits for the submitted revision to
+appear in a rendered-feature query. It exercises the default asynchronous
+preparation path. It does not measure the removed synchronous-preparation API.
+Larger fixtures can complete only a few updates per run; report operation counts
+and use a longer `durationMs` when investigating them.
+
+`map-return` owns each map explicitly. The runner measures the first `close()`
+while the map is still presented, then detaches the presentation and waits for
+cleanup. `close_ms` measures caller return; `close_completion_ms` includes
+presentation detach and `awaitClosed()`. Compose awaits native cleanup; the
+classic iOS adapter removes the view but has no native destruction completion
+signal. UI-frame measurements cover both phases. One unmeasured map primes
+caches. There is no second composition-owned close.
+
+`runtime-startup` creates no map. It uses a dedicated empty local database,
+primes one runtime, then measures warm-process reopenings: submission is
+constructor return, completion is readiness observed on the main dispatcher, and
+close timings separate caller return from finished cleanup. It has no
+map-startup or engine-frame metrics. This is not cold-process startup, a cold
+filesystem-cache measurement, or a populated offline-pack benchmark. It is
+available on MapLibre Native platforms only.
+
+All completion signals are engine observations, not proof of screen
+presentation.
+
+## Publish to the benchmarks page
+
+```sh
+mise run benchmark:publish -- android --device SERIAL --scope pixel-8 --label "Pixel 8"
+```
+
+Runs the tracked presets three times each and uploads medians and repetition
+ranges under the device scope. [cases.json](cases.json) selects the tracked
+cases, their platforms, and which also run the classic SDK. Images and metadata
+consumers are tracked alongside the existing map workloads. Runtime readiness
+runs on Android, iOS and desktop; map return runs on Android and iOS. Classic
+comparisons run only where the preset requests one and the platform has that
+SDK.
+
+Submission, completion, close return and cleanup completion remain separate
+metrics on the page. Uploads need a clean checkout of a commit on `main`;
+otherwise the results stay under `build/benchmarks/publish`.
+
+Backfill history with fresh captures using the same workload definitions and
+fixtures. Each device's measurement replaces its earlier results for that
+commit. Do not mix old logs or archived builds with different operation
+boundaries into the same comparison.
+
+## Archived builds
+
+Prepared Android benchmark APKs are preserved in the
+[artifact archive][artifacts] for measuring older releases on additional
+devices. Each manifest records the APK hashes, library and harness versions,
+instrumentation patch, and scenario configurations. Reuse an artifact set for
+comparisons; changing its harness requires a new set.
+
+## Fixtures
+
+Geometry is generated. Basemap tiles and glyphs are a snapshot of
+[VersaTiles][versatiles] data pinned in
+[fixtures/manifest.json](fixtures/manifest.json) and served from the project
+bucket. `benchmark:fixtures:refresh` pins the current data; measurements before
+and after a refresh are not comparable. See [fixtures](fixtures/) for licensing.
+
+[page]: https://maplibre.org/maplibre-compose/benchmarks/
+[versatiles]: https://versatiles.org/
+[artifacts]: https://mlc-data.sargunv.dev/benchmarks/artifacts/index.json

@@ -15,6 +15,8 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.io.files.Path
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.ColorAlphaType
@@ -71,7 +73,7 @@ import org.maplibre.compose.map.MapAdapter
 import org.maplibre.compose.map.MapEvent
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.map.MlnFfiMapSession
-import org.maplibre.compose.map.UnconfinedTestMain
+import org.maplibre.compose.map.UnconfinedMain
 import org.maplibre.compose.map.mapRuntimeForTest
 import org.maplibre.compose.mlnffi.ComposeRenderBackend
 import org.maplibre.compose.mlnffi.MapRenderBackend
@@ -268,7 +270,7 @@ class LinuxOpenGlInteropTest {
       }
 
     // The pump loop on the test thread never drains a queued main dispatcher; run inline instead.
-    private val runtime = mapRuntimeForTest(mainDispatcher = UnconfinedTestMain)
+    private val runtime = mapRuntimeForTest(mainDispatcher = UnconfinedMain)
     private val state = runtime.createMapState(BaseStyle.Demo)
     private val renderer =
       MlnFfiMapSession(
@@ -282,11 +284,14 @@ class LinuxOpenGlInteropTest {
 
     private val hostSession =
       object : MlnFfiMapHostSession {
+        override val isClosed = false
         override val backends = host.backends
 
         override fun requestFrame() {}
 
         override fun <T> withRendererAccess(action: () -> T): T = host.withRendererAccess(action)
+
+        override fun enqueueRenderer(action: () -> Unit): Boolean = host.enqueueRenderer(action)
       }
 
     init {
@@ -345,7 +350,7 @@ class LinuxOpenGlInteropTest {
         assertIs<MlnFfiMapFrameAcquisition.Acquired>(host.acquireFrame(nextFrameId++, extent, null))
           .frame
       try {
-        val result = host.withProducerAccess(frame) { renderer.render(frame) }
+        val result = host.withProducerAccess(frame) { renderer.render(hostSession, frame) }
         if (result is MlnFfiFrameResult.Rendered) {
           host.completeProducerAccess(frame)
           return PumpedFrame(result, frame.target)
@@ -357,8 +362,9 @@ class LinuxOpenGlInteropTest {
     }
 
     override fun close() {
-      state.close()
+      renderer.onSurfaceLost(hostSession)
       runtime.close()
+      runBlocking { withTimeout(TEST_TIMEOUT.inWholeMilliseconds) { runtime.awaitClosed() } }
       cacheDirectory.toFile().deleteRecursively()
     }
 

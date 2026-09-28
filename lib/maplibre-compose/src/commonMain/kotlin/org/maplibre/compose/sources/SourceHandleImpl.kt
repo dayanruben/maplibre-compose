@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.maplibre.compose.expressions.ast.Expression
 import org.maplibre.compose.expressions.value.BooleanValue
+import org.maplibre.compose.style.ImageSnapshot
 import org.maplibre.compose.style.SourceDefinition
 import org.maplibre.compose.style.StyleBinding
 import org.maplibre.compose.style.StyleHandleException
@@ -45,7 +46,7 @@ protected constructor(
       is RasterDemTileSourceHandleImpl -> MutableRasterDemTileSourceHandleImpl(this)
     }
 
-  internal fun remove(): Boolean = operation {
+  internal fun remove() = operation {
     operations.requireSourceWritable(id)
     operations.removeSource(id, resourceIdentity)
   }
@@ -59,7 +60,10 @@ protected constructor(
   }
 
   protected fun writeFeatureState(sourceLayerId: String?, featureId: String, state: JsonObject) {
-    operation { style.setFeatureState(id, sourceLayerId, featureId, state) }
+    operation {
+      val update = style.prepareFeatureStateUpdate(id, sourceLayerId, featureId, state)
+      postMutation(update)
+    }
   }
 
   protected suspend fun readFeatureState(sourceLayerId: String?, featureId: String): JsonObject {
@@ -71,11 +75,11 @@ protected constructor(
     featureId: String,
     stateKey: String?,
   ) {
-    operation { style.removeFeatureState(id, sourceLayerId, featureId, stateKey) }
+    mutationOperation { style.removeFeatureState(id, sourceLayerId, featureId, stateKey) }
   }
 
   protected fun clearFeatureStates(sourceLayerId: String?) {
-    operation { style.resetFeatureStates(id, sourceLayerId) }
+    mutationOperation { style.resetFeatureStates(id, sourceLayerId) }
   }
 
   internal fun <T> operation(action: () -> T): T = operations.run {
@@ -85,10 +89,20 @@ protected constructor(
 
   internal fun definitionOperation(action: () -> Unit): Unit = operation {
     operations.requireSourceWritable(id)
-    action()
+    postMutation(action)
   }
 
-  protected suspend fun <T> suspendingOperation(action: suspend () -> T): T {
+  protected fun mutationOperation(action: () -> Unit): Unit = operation { postMutation(action) }
+
+  private fun postMutation(action: () -> Unit) {
+    try {
+      style.postSourceUpdate(id, resourceIdentity, action)
+    } catch (error: StyleMutationException) {
+      throw StyleHandleException("Could not update source '$id': ${error.message}", error)
+    }
+  }
+
+  internal suspend fun <T> suspendingOperation(action: suspend () -> T): T {
     operation {}
     val result = action()
     operation {}
@@ -118,9 +132,7 @@ internal constructor(
     get() = super.asMutable as? MutableGeoJsonSourceHandle
 
   internal fun setData(data: GeoJsonData) {
-    definitionOperation {
-      mutate("set data") { style.submitGeoJsonData(id, data, options) }
-    }
+    definitionOperation { style.submitGeoJsonData(id, data, options) }
   }
 
   override fun isCluster(feature: Feature<*, JsonObject?>): Boolean =
@@ -159,17 +171,6 @@ internal constructor(
   override fun resetFeatureStates() {
     clearFeatureStates(sourceLayerId = null)
   }
-
-  private inline fun mutate(operation: String, action: () -> Unit) {
-    try {
-      action()
-    } catch (error: StyleMutationException) {
-      throw StyleHandleException(
-        "Could not $operation on GeoJSON source '$id': ${error.message}",
-        error,
-      )
-    }
-  }
 }
 
 internal open class VectorTileSourceHandleImpl
@@ -183,6 +184,9 @@ internal constructor(
 ) :
   SourceHandleImpl(id, attributionHtml, style, expectedKind, currentKind, operations),
   VectorTileSourceHandle {
+  override val asMutable: MutableVectorTileSourceHandle?
+    get() = super.asMutable as? MutableVectorTileSourceHandle
+
   override suspend fun querySourceFeatures(
     sourceLayerIds: Set<String>,
     predicate: Expression<BooleanValue>,
@@ -229,8 +233,11 @@ internal constructor(
     operations = operations,
   ),
   CustomVectorTileSourceHandle {
+  override val asMutable: MutableCustomVectorTileSourceHandle?
+    get() = super.asMutable as? MutableCustomVectorTileSourceHandle
+
   override fun invalidateTile(tile: TileCoordinate) {
-    operation { style.invalidateCustomVectorSourceTile(id, tile) }
+    mutationOperation { style.invalidateCustomVectorSourceTile(id, tile) }
   }
 }
 
@@ -244,12 +251,15 @@ internal constructor(
 ) :
   SourceHandleImpl(id, attributionHtml, style, "custom-geometry", currentKind, operations),
   CustomGeometrySourceHandle {
+  override val asMutable: MutableCustomGeometrySourceHandle?
+    get() = super.asMutable as? MutableCustomGeometrySourceHandle
+
   override fun invalidateBounds(bounds: BoundingBox) {
-    operation { style.invalidateCustomGeometrySourceBounds(id, bounds) }
+    mutationOperation { style.invalidateCustomGeometrySourceBounds(id, bounds) }
   }
 
   override fun invalidateTile(tile: TileCoordinate) {
-    operation { style.invalidateCustomGeometrySourceTile(id, tile) }
+    mutationOperation { style.invalidateCustomGeometrySourceTile(id, tile) }
   }
 }
 
@@ -276,7 +286,10 @@ internal constructor(
   }
 
   internal fun setImage(image: ImageBitmap) {
-    definitionOperation { style.setImageSourceImage(id, image) }
+    operation {
+      val update = style.prepareImageSourceUpdate(id, ImageSnapshot.capture(image))
+      definitionOperation(update)
+    }
   }
 
   internal fun setUri(uri: String) {
@@ -293,7 +306,10 @@ internal constructor(
   operations: StyleHandleOperationGuard,
 ) :
   SourceHandleImpl(id, attributionHtml, style, "raster", currentKind, operations),
-  RasterTileSourceHandle
+  RasterTileSourceHandle {
+  override val asMutable: MutableRasterTileSourceHandle?
+    get() = super.asMutable as? MutableRasterTileSourceHandle
+}
 
 internal class RasterDemTileSourceHandleImpl
 internal constructor(
@@ -304,7 +320,10 @@ internal constructor(
   operations: StyleHandleOperationGuard,
 ) :
   SourceHandleImpl(id, attributionHtml, style, "raster-dem", currentKind, operations),
-  RasterDemTileSourceHandle
+  RasterDemTileSourceHandle {
+  override val asMutable: MutableRasterDemTileSourceHandle?
+    get() = super.asMutable as? MutableRasterDemTileSourceHandle
+}
 
 internal fun StyleBinding.sourceHandle(
   id: String,
@@ -389,7 +408,7 @@ private class MutableGeoJsonSourceHandleImpl(val source: GeoJsonSourceHandleImpl
   MutableGeoJsonSourceHandle, GeoJsonSourceHandle by source {
   override fun setData(data: GeoJsonData) = source.setData(data)
 
-  override fun remove(): Boolean = source.remove()
+  override fun remove() = source.remove()
 }
 
 private class MutableImageSourceHandleImpl(val source: ImageSourceHandleImpl) :
@@ -400,33 +419,33 @@ private class MutableImageSourceHandleImpl(val source: ImageSourceHandleImpl) :
 
   override fun setUri(uri: String) = source.setUri(uri)
 
-  override fun remove(): Boolean = source.remove()
+  override fun remove() = source.remove()
 }
 
 private class MutableVectorTileSourceHandleImpl(val source: VectorTileSourceHandleImpl) :
-  MutableSourceHandle, VectorTileSourceHandle by source {
-  override fun remove(): Boolean = source.remove()
+  MutableVectorTileSourceHandle, VectorTileSourceHandle by source {
+  override fun remove() = source.remove()
 }
 
 private class MutableCustomVectorTileSourceHandleImpl(
   val source: CustomVectorTileSourceHandleImpl
-) : MutableSourceHandle, CustomVectorTileSourceHandle by source {
-  override fun remove(): Boolean = source.remove()
+) : MutableCustomVectorTileSourceHandle, CustomVectorTileSourceHandle by source {
+  override fun remove() = source.remove()
 }
 
 private class MutableCustomGeometrySourceHandleImpl(val source: CustomGeometrySourceHandleImpl) :
-  MutableSourceHandle, CustomGeometrySourceHandle by source {
-  override fun remove(): Boolean = source.remove()
+  MutableCustomGeometrySourceHandle, CustomGeometrySourceHandle by source {
+  override fun remove() = source.remove()
 }
 
 private class MutableRasterTileSourceHandleImpl(val source: RasterTileSourceHandleImpl) :
-  MutableSourceHandle, RasterTileSourceHandle by source {
-  override fun remove(): Boolean = source.remove()
+  MutableRasterTileSourceHandle, RasterTileSourceHandle by source {
+  override fun remove() = source.remove()
 }
 
 private class MutableRasterDemTileSourceHandleImpl(val source: RasterDemTileSourceHandleImpl) :
-  MutableSourceHandle, RasterDemTileSourceHandle by source {
-  override fun remove(): Boolean = source.remove()
+  MutableRasterDemTileSourceHandle, RasterDemTileSourceHandle by source {
+  override fun remove() = source.remove()
 }
 
 internal val SourceHandle.implementation: SourceHandleImpl

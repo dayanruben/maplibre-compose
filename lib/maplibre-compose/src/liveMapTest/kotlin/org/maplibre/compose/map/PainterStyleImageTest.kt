@@ -16,7 +16,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.testing.createMapFixture
 import org.maplibre.compose.testing.runMapTest
@@ -24,25 +24,23 @@ import org.maplibre.compose.util.ImageStretch
 
 class PainterStyleImageTest {
   @Test
-  fun positive_subpixel_sizes_produce_nonempty_images() = runMapTest {
-    createMapFixture().use {
-      val painter =
-        object : Painter() {
-          override val intrinsicSize = Size(0.5f, 0.5f)
+  fun positive_subpixel_sizes_produce_nonempty_images() = runTest {
+    val painter =
+      object : Painter() {
+        override val intrinsicSize = Size(0.5f, 0.5f)
 
-          override fun DrawScope.onDraw() = drawRect(Color.Red)
-        }
-      for (size in listOf(null, DpSize(0.5.dp, 0.5.dp))) {
-        val resolved =
-          ResolvedStyleImage.fromPainter(
-            painter,
-            Density(1f),
-            LayoutDirection.Ltr,
-            size = size,
-          )
-        assertEquals(1, resolved.image.width)
-        assertEquals(1, resolved.image.height)
+        override fun DrawScope.onDraw() = drawRect(Color.Red)
       }
+    for (size in listOf(null, DpSize(0.5.dp, 0.5.dp))) {
+      val resolved =
+        ResolvedStyleImage.fromPainter(
+          painter,
+          Density(1f),
+          LayoutDirection.Ltr,
+          size = size,
+        )
+      assertEquals(1, resolved.width)
+      assertEquals(1, resolved.height)
     }
   }
 
@@ -51,102 +49,61 @@ class PainterStyleImageTest {
     createMapFixture().use { fixture ->
       fixture.loadStyle(BaseStyle.Empty)
       val images = fixture.state.style.images
-      val handle = images.set("marker", ColorPainter(Color.Red), Density(2f), LayoutDirection.Rtl)
-      assertNotNull(images["marker"])
-      val replacement =
-        images.set("marker", ColorPainter(Color.Blue), Density(2f), LayoutDirection.Rtl)
-      assertFailsWith<IllegalStateException> { handle.remove() }
-      assertTrue(replacement.remove())
-      assertNull(images["marker"])
-    }
-  }
-
-  @Test
-  fun standalone_rendering_uses_explicit_environment_and_drawing_options() = runMapTest {
-    createMapFixture().use {
-      val painter =
-        object : Painter() {
-          override val intrinsicSize = Size.Unspecified
-
-          override fun DrawScope.onDraw() {
-            assertEquals(2f, density)
-            assertEquals(LayoutDirection.Rtl, layoutDirection)
-            drawRect(Color.Red)
-          }
-        }
-      val stretch = ImageStretch.capInsets(1.dp, 1.dp, 1.dp, 1.dp)
-      val resolved =
-        ResolvedStyleImage.fromPainter(
-          painter,
-          Density(2f),
-          LayoutDirection.Rtl,
-          size = DpSize(3.dp, 2.dp),
-          stretch = stretch,
-          alpha = 0.5f,
-          colorFilter = ColorFilter.tint(Color.Blue),
-        )
-      assertEquals(6, resolved.image.width)
-      assertEquals(4, resolved.image.height)
-      assertEquals(stretch, resolved.stretch)
-      val pixel = IntArray(1)
-      resolved.image.readPixels(pixel, width = 1, height = 1)
-      assertEquals(0xff, pixel[0] and 0xffffff)
-      assertTrue((pixel[0] ushr 24) in 127..128)
-
-      val sdf =
-        ResolvedStyleImage.fromPainter(
-          ColorPainter(Color.White),
-          Density(2f),
-          LayoutDirection.Ltr,
-          drawAsSdf = true,
-        )
-      assertTrue(sdf.sdf)
-      assertTrue(sdf.image.width > 0 && sdf.image.height > 0)
-    }
-  }
-
-  @Test
-  fun a_style_change_during_rendering_rejects_registration() = runMapTest {
-    createMapFixture().use { fixture ->
-      fixture.loadStyle(BaseStyle.Empty)
-      val painter =
-        object : Painter() {
-          override val intrinsicSize = Size(2f, 2f)
-
-          override fun DrawScope.onDraw() {
-            fixture.state.style.asMutable!!.baseStyle =
-              BaseStyle.Json("""{"version":8,"name":"replacement","sources":{},"layers":[]}""")
-            drawRect(Color.Red)
-          }
-        }
-      assertFailsWith<IllegalStateException> {
-        fixture.state.style.images.set("stale", painter, Density(1f), LayoutDirection.Ltr)
-      }
-      fixture.loadStyle(fixture.state.style.baseStyle)
-      assertNull(fixture.state.style.images["stale"])
-    }
-  }
-
-  @Test
-  fun cancelled_rendering_does_not_register_or_reserve_the_id() = runMapTest {
-    createMapFixture().use { fixture ->
-      fixture.loadStyle(BaseStyle.Empty)
-      val painter =
-        object : Painter() {
-          override val intrinsicSize = Size(2f, 2f)
-
-          override fun DrawScope.onDraw() {
-            throw CancellationException("cancel capture")
-          }
-        }
-      val images = fixture.state.style.images
-      assertFailsWith<CancellationException> {
-        images.set("marker", painter, Density(1f), LayoutDirection.Ltr)
-      }
-      assertNull(images["marker"])
-      assertTrue(
-        images.set("marker", ColorPainter(Color.Red), Density(1f), LayoutDirection.Ltr).remove()
+      images.set(
+        "marker",
+        ResolvedStyleImage.fromPainter(ColorPainter(Color.Red), Density(2f), LayoutDirection.Rtl),
       )
+      val handle = assertNotNull(images["marker"]?.asMutable)
+      images.set(
+        "marker",
+        ResolvedStyleImage.fromPainter(ColorPainter(Color.Blue), Density(2f), LayoutDirection.Rtl),
+      )
+      val replacement = assertNotNull(images["marker"]?.asMutable)
+      assertFailsWith<IllegalStateException> { handle.remove() }
+      replacement.remove()
+      assertNull(images["marker"])
     }
+  }
+
+  @Test
+  fun standalone_rendering_uses_explicit_environment_and_drawing_options() = runTest {
+    val painter =
+      object : Painter() {
+        override val intrinsicSize = Size.Unspecified
+
+        override fun DrawScope.onDraw() {
+          assertEquals(2f, density)
+          assertEquals(LayoutDirection.Rtl, layoutDirection)
+          drawRect(Color.Red)
+        }
+      }
+    val stretch = ImageStretch.capInsets(1.dp, 1.dp, 1.dp, 1.dp)
+    val resolved =
+      ResolvedStyleImage.fromPainter(
+        painter,
+        Density(2f),
+        LayoutDirection.Rtl,
+        size = DpSize(3.dp, 2.dp),
+        stretch = stretch,
+        alpha = 0.5f,
+        colorFilter = ColorFilter.tint(Color.Blue),
+      )
+    assertEquals(6, resolved.width)
+    assertEquals(4, resolved.height)
+    assertEquals(stretch, resolved.stretch)
+    val pixel = IntArray(1)
+    resolved.toImageBitmap().readPixels(pixel, width = 1, height = 1)
+    assertEquals(0xff, pixel[0] and 0xffffff)
+    assertTrue((pixel[0] ushr 24) in 127..128)
+
+    val sdf =
+      ResolvedStyleImage.fromPainter(
+        ColorPainter(Color.White),
+        Density(2f),
+        LayoutDirection.Ltr,
+        drawAsSdf = true,
+      )
+    assertTrue(sdf.sdf)
+    assertTrue(sdf.width > 0 && sdf.height > 0)
   }
 }

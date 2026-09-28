@@ -30,6 +30,58 @@ enum class BenchmarkScenario(
   val implementations: Set<BenchmarkImplementation> = BenchmarkImplementation.entries.toSet(),
 ) {
   @SerialName("idle") Idle("idle", "Idle map", "Measure a settled map without updates."),
+  @SerialName("map-return")
+  MapReturn(
+    "map-return",
+    "Map return",
+    "Recreate a populated map behind a 300 ms transition, as a screen with a map opens.",
+    setOf(
+      BenchmarkImplementation.Declarative,
+      BenchmarkImplementation.ClassicAndroid,
+      BenchmarkImplementation.ClassicIos,
+    ),
+  ),
+  @SerialName("sparse-paint")
+  SparsePaint("sparse-paint", "Sparse paint update", "Recolor one layer of a large style."),
+  @SerialName("image-cycle")
+  ImageCycle(
+    "image-cycle",
+    "Prepared image cycle",
+    "Remove and register a batch of reusable prepared images, then wait for settlement.",
+    setOf(
+      BenchmarkImplementation.Imperative,
+      BenchmarkImplementation.ClassicAndroid,
+      BenchmarkImplementation.ClassicIos,
+    ),
+  ),
+  @SerialName("image-preparation")
+  ImagePreparation(
+    "image-preparation",
+    "Image preparation and update",
+    "Convert a 256 pixel bitmap into owned pixels, register it, and wait for settlement.",
+    setOf(BenchmarkImplementation.Imperative),
+  ),
+  @SerialName("style-overlay")
+  StyleOverlay(
+    "style-overlay",
+    "Style replacement with an overlay",
+    "Load a base style and declare an overlay using its source and a layer predicate.",
+    setOf(BenchmarkImplementation.Declarative),
+  ),
+  @SerialName("overlay-update")
+  OverlayUpdate(
+    "overlay-update",
+    "Base-style overlay update",
+    "Toggle an anchored overlay over a stable base style, reusing its source metadata.",
+    setOf(BenchmarkImplementation.Declarative),
+  ),
+  @SerialName("runtime-startup")
+  RuntimeStartup(
+    "runtime-startup",
+    "Runtime readiness",
+    "Reopen an empty local cache, measuring constructor return, readiness, and cleanup.",
+    setOf(BenchmarkImplementation.Imperative),
+  ),
   @SerialName("camera")
   Camera(
     "camera",
@@ -139,13 +191,15 @@ data class BenchmarkConfig(
   val surface: String = "surface",
   val maximumFps: Int? = null,
   val layers: Int = 1,
+  val imageCount: Int = 64,
   val rateHz: Double = 4.0,
   val durationMs: Long = 12000,
 ) {
   init {
     require(surface in setOf("surface", "texture"))
     require(maximumFps == null || maximumFps in 1..240)
-    require(layers in 1..32)
+    require(layers in 1..1024)
+    require(imageCount in 1..1024)
     require(rateHz in 0.1..120.0)
     require(durationMs in 3000..30000)
     require(implementation in scenario.implementations) {
@@ -155,6 +209,7 @@ data class BenchmarkConfig(
       scenario in
         setOf(
           BenchmarkScenario.Paint,
+          BenchmarkScenario.SparsePaint,
           BenchmarkScenario.Layout,
           BenchmarkScenario.Layers,
           BenchmarkScenario.Source,
@@ -174,11 +229,23 @@ data class BenchmarkConfig(
         "${scenario.id} requires a points or route scene"
       }
     }
-    if (scenario == BenchmarkScenario.Images)
+    if (
+      scenario in
+        setOf(
+          BenchmarkScenario.Images,
+          BenchmarkScenario.ImageCycle,
+          BenchmarkScenario.ImagePreparation,
+          BenchmarkScenario.StyleOverlay,
+          BenchmarkScenario.OverlayUpdate,
+          BenchmarkScenario.MapReturn,
+          BenchmarkScenario.SparsePaint,
+        )
+    )
       require(
         scene in
           setOf(BenchmarkScene.Points100, BenchmarkScene.Points1000, BenchmarkScene.Points10000)
       )
+    if (scenario == BenchmarkScenario.RuntimeStartup) require(scene == BenchmarkScene.Minimal)
     if (scenario == BenchmarkScenario.SourceLatency)
       require(scene != BenchmarkScene.Route) {
         "Source completion requires a point fixture with a center probe"
@@ -192,6 +259,9 @@ data class BenchmarkConfig(
       BenchmarkConfig(
         scenario = scenario,
         implementation = scenario.implementations.first(),
+        scene =
+          if (scenario == BenchmarkScenario.RuntimeStartup) BenchmarkScene.Minimal
+          else BenchmarkScene.Points1000,
       )
 
     fun parse(value: String?): BenchmarkConfig? {

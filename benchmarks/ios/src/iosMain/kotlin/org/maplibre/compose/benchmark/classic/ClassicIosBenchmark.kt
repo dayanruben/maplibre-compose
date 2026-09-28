@@ -55,17 +55,41 @@ private class BenchmarkController : UIViewController(nibName = null, bundle = nu
             },
             uri = { path -> NSURL.fileURLWithPath(root + path).absoluteString!! },
           )
-        val active = IosDriver(fixture, view, clock::nextFrame)
-        driver = active
         var start = 0.0
-        runClassicBenchmark(
-          active,
-          cpu = { measuring ->
-            if (measuring) start = cpuMillis()
-            else println("MAP_BENCHMARK CPU ${cpuMillis() - start}")
-          },
-          collectGarbage = { kotlin.native.runtime.GC.collect() },
-        )
+        val host =
+          BenchmarkHost(
+            cpu = { measuring ->
+              if (measuring) start = cpuMillis()
+              else println("MAP_BENCHMARK CPU ${cpuMillis() - start}")
+            },
+            collectGarbage = { kotlin.native.runtime.GC.collect() },
+          )
+        if (config.scenario == BenchmarkScenario.MapReturn) {
+          val cover = UIView(frame = view.bounds)
+          cover.backgroundColor = UIColor(red = 0.19, green = 0.19, blue = 0.19, alpha = 1.0)
+          cover.autoresizingMask =
+            UIViewAutoresizingFlexibleWidth or UIViewAutoresizingFlexibleHeight
+          view.addSubview(cover)
+          runMapReturnBenchmark(
+            config,
+            clock::nextFrame,
+            mount = { IosDriver(fixture, view, clock::nextFrame).also { driver = it } },
+            unmount = { _ ->
+              driver = null
+              repeat(2) { clock.nextFrame() }
+            },
+            cover = { progress ->
+              view.bounds.useContents {
+                cover.setFrame(CGRectMake(size.width * progress, 0.0, size.width, size.height))
+              }
+            },
+            host = host,
+          )
+        } else {
+          val active = IosDriver(fixture, view, clock::nextFrame)
+          driver = active
+          runBenchmark(active, host)
+        }
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
@@ -84,6 +108,15 @@ private class BenchmarkController : UIViewController(nibName = null, bundle = nu
     clock.close()
     super.viewDidDisappear(animated)
   }
+}
+
+/** A style-spec JSON expression as the Foundation object the SDK's converters take. */
+private fun jsonObject(json: String): Any {
+  val bytes = json.encodeToByteArray()
+  val data = bytes.usePinned {
+    NSData.create(bytes = it.addressOf(0), length = bytes.size.toULong())
+  }
+  return checkNotNull(NSJSONSerialization.JSONObjectWithData(data, 0u, null))
 }
 
 private fun cpuMillis(): Double = memScoped {
@@ -137,10 +170,12 @@ private class IosDriver(
   fixture: PreparedBenchmarkFixture,
   private val container: UIView,
   nextFrame: suspend () -> Long,
-) : ClassicBenchmarkDriver(fixture, nextFrame) {
+) : BenchmarkDriver(fixture, nextFrame) {
   private val map = MLNMapView(frame = container.bounds, styleJSON = fixture.baseStyles[0])
   private var ready = CompletableDeferred<Unit>()
   private var idle: CompletableDeferred<Unit>? = null
+  private var styleReadyMs: Double? = null
+  private val firstFrame = CompletableDeferred<Double>()
   private var recorder: BenchmarkFrameRecorder? = null
   private var closed = false
   private val shapes =
@@ -161,12 +196,18 @@ private class IosDriver(
     )
   }
   private val images =
-    if (config.scenario == BenchmarkScenario.Images)
+    if (fixture.usesImages)
       colors.map { color ->
-        UIGraphicsBeginImageContextWithOptions(CGSizeMake(32.0, 32.0), false, 1.0)
+        UIGraphicsBeginImageContextWithOptions(
+          CGSizeMake(fixture.imageSize.toDouble(), fixture.imageSize.toDouble()),
+          false,
+          1.0,
+        )
         try {
           color.setFill()
-          UIRectFill(CGRectMake(0.0, 0.0, 32.0, 32.0))
+          UIRectFill(
+            CGRectMake(0.0, 0.0, fixture.imageSize.toDouble(), fixture.imageSize.toDouble())
+          )
           checkNotNull(UIGraphicsGetImageFromCurrentImageContext())
         } finally {
           UIGraphicsEndImageContext()
@@ -180,6 +221,7 @@ private class IosDriver(
       }
 
       override fun mapViewDidBecomeIdle(mapView: MLNMapView) {
+        if (styleReadyMs != null) firstFrame.complete(sinceCreation())
         idle?.complete(Unit)
       }
 
@@ -195,6 +237,7 @@ private class IosDriver(
         fullyRendered: Boolean,
         renderingStats: MLNRenderingStats,
       ) {
+        if (fullyRendered && styleReadyMs != null) firstFrame.complete(sinceCreation())
         recorder?.record(
           FrameSample(
             encodingMs = renderingStats.encodingTime * 1000,
@@ -206,7 +249,7 @@ private class IosDriver(
       }
     }
 
-  override suspend fun prepare() {
+  override suspend fun prepare(scope: CoroutineScope): StartupReport {
     map.delegate = delegate
     map.automaticallyAdjustsContentInset = false
     map.showsCompassView = false
@@ -216,14 +259,24 @@ private class IosDriver(
     map.autoresizingMask = UIViewAutoresizingFlexibleWidth or UIViewAutoresizingFlexibleHeight
     map.preferredFramesPerSecond =
       config.maximumFps?.toLong() ?: checkNotNull(container.window).screen.maximumFramesPerSecond
-    container.addSubview(map)
+    // Below the map return panel, which the controller adds above the maps it creates.
+    container.insertSubview(map, atIndex = 0)
     // Inline JSON can finish loading during construction, before the delegate is attached.
     if (map.style != null) ready.complete(Unit)
     withTimeout(15000) { ready.await() }
+    val styleReady = sinceCreation()
+    styleReadyMs = styleReady
     settled {
       camera(benchmarkCamera(-1.0))
-      if (images.isNotEmpty()) image(0)
+      if (config.scenario == BenchmarkScenario.Images) image(0)
+      if (config.scenario == BenchmarkScenario.MapReturn) {
+        checkNotNull(map.style)
+          .addSource(MLNShapeSource(identifier = "data", shape = shapes[0], options = null))
+        layers(true)
+        registerImages()
+      }
     }
+    return StartupReport(styleReady, withTimeout(15000) { firstFrame.await() })
   }
 
   private fun sdkCamera(value: BenchmarkCamera): MLNMapCamera =
@@ -279,6 +332,16 @@ private class IosDriver(
               lineColor = NSExpression.expressionForConstantValue(colors[0])
               lineWidth = NSExpression.expressionForConstantValue(3)
             }
+          else if (fixture.partitioned)
+            MLNCircleStyleLayer(id, source).apply {
+              predicate =
+                NSPredicate.predicateWithMLNJSONObject(
+                  jsonObject(benchmarkLayerFilter(index, config.layers))
+                )
+              circleColor = NSExpression.expressionForConstantValue(colors[0])
+              circleRadius =
+                NSExpression.expressionWithMLNJSONObject(jsonObject(BenchmarkRadiusExpression))
+            }
           else
             MLNCircleStyleLayer(id, source).apply {
               circleColor = NSExpression.expressionForConstantValue(colors[0])
@@ -287,6 +350,24 @@ private class IosDriver(
         style.addLayer(added)
       }
     }
+  }
+
+  override fun sparsePaint(index: Int) {
+    (checkNotNull(map.style?.layerWithIdentifier("workload-0")) as MLNCircleStyleLayer)
+      .circleColor = NSExpression.expressionForConstantValue(colors[index])
+  }
+
+  override fun registerImages() {
+    val style = checkNotNull(map.style)
+    repeat(config.imageCount) { index ->
+      val id = "burst-$index"
+      if (style.imageForName(id) == null) style.setImage(images[index % images.size], forName = id)
+    }
+  }
+
+  override fun removeImages() {
+    val style = checkNotNull(map.style)
+    repeat(config.imageCount) { style.removeImageForName("burst-$it") }
   }
 
   override fun paint(index: Int) {
@@ -320,17 +401,15 @@ private class IosDriver(
     map.setContentInset(UIEdgeInsetsMake(0.0, 0.0, bottom, 0.0), animated = false)
   }
 
-  override fun hasRevision(revision: Int): Boolean {
+  override suspend fun renderedRevisions(): List<Int> {
     val point =
       map.convertCoordinate(
         CLLocationCoordinate2DMake(BenchmarkLatitude, BenchmarkLongitude),
         toPointToView = map,
       )
-    return map
-      .visibleFeaturesAtPoint(point, inStyleLayersWithIdentifiers = setOf("workload-0"))
-      .any {
-        ((it as MLNFeatureProtocol).attributes["revision"] as? NSNumber)?.intValue == revision
-      }
+    return map.visibleFeaturesAtPoint(point).mapNotNull {
+      ((it as MLNFeatureProtocol).attributes["revision"] as? NSNumber)?.intValue
+    }
   }
 
   override suspend fun settled(block: suspend () -> Unit) =
