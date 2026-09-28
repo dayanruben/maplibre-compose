@@ -43,6 +43,8 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
           fetch-tags: true
+      - name: Fetch upstream release tags
+        run: git fetch --force --tags https://github.com/maplibre/maplibre-compose.git
       - uses: ./.github/actions/setup-ci-deps
         with:
           dprint-cache: "true"
