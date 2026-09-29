@@ -37,6 +37,8 @@ jobs:
           dprint-cache: "true"
           pnpm-cache: "true"
           save-toolchains: "true"
+      - name: Fetch upstream release tags
+        run: mise run ci:fetch-upstream-tags
       - run: mise run fix
       - name: Check formatted files
         run: |
