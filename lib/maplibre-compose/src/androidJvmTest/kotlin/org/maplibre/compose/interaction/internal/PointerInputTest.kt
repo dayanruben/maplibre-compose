@@ -183,6 +183,50 @@ class PointerInputTest {
     }
 
   @Test
+  fun a_modifier_pressed_mid_drag_keeps_the_drag() = fixture.runRecognitionTest { target ->
+    target.project = { Position(it.x.value.toDouble(), -it.y.value.toDouble()) }
+    val map = mapNode()
+    map.performMouseInput {
+      moveTo(Offset(20f, 20f))
+      press()
+      moveTo(Offset(60f, 40f))
+    }
+    waitForIdle()
+    val pans = target.moveCalls.size
+    assertTrue(pans > 0, "the unmodified drag did not pan")
+    map.performKeyInput { keyDown(Key.ShiftLeft) }
+    map.performMouseInput {
+      moveTo(Offset(160f, 100f))
+      release()
+    }
+    map.performKeyInput { keyUp(Key.ShiftLeft) }
+    waitForIdle()
+    assertTrue(target.moveCalls.size > pans, "the drag stopped panning")
+    assertTrue(target.fitCalls.isEmpty(), "the drag became a box zoom")
+    assertEquals(1, target.startedCount)
+  }
+
+  @Test
+  fun a_box_zoom_replaced_by_a_button_change_still_fits() = fixture.runRecognitionTest { target ->
+    target.project = { Position(it.x.value.toDouble(), -it.y.value.toDouble()) }
+    val map = mapNode()
+    map.performKeyInput { keyDown(Key.ShiftLeft) }
+    map.performMouseInput {
+      moveTo(Offset(20f, 20f))
+      press()
+      moveTo(Offset(120f, 80f))
+      press(MouseButton.Secondary)
+    }
+    map.performKeyInput { keyUp(Key.ShiftLeft) }
+    map.performMouseInput {
+      release(MouseButton.Secondary)
+      release()
+    }
+    waitForIdle()
+    assertEquals(1, target.fitCalls.size, "the replaced box zoom did not fit")
+  }
+
+  @Test
   fun cancelling_box_zoom_clears_the_preview_without_fitting() {
     var configuration by mutableStateOf(InputConfiguration.Standard)
     fixture.runRecognitionTest(optionsProvider = { configuration }) { target ->

@@ -1916,6 +1916,7 @@ internal class MlnFfiMapSession(
   internal fun <T> readMap(action: (MapHandle) -> T): T? = runOnMap(action)
 
   internal suspend fun <T> withPlatformMap(block: PlatformMapScope.() -> T): T {
+    val changed = "The native platform map changed before access could begin"
     val engine = lifecycle.ensureEngine()
     return suspendCancellableCoroutine { continuation ->
       val invocation = PlatformMapInvocation(continuation)
@@ -1923,36 +1924,18 @@ internal class MlnFfiMapSession(
       val queued =
         postWhenMapExists(
           action = { map ->
-            invocation.execute {
-              var result: Result<T>? = null
-              val engineAccepted =
-                lifecycle.acceptEngineEvent(engine) {
-                  val authorityAccepted =
-                    lifecycleAuthority.acceptEnginePlatformAccess(this) {
-                      // Raw access can change the transform without an event, so the mirror is
-                      // refreshed when this drain ends.
-                      viewportSnapshotStale = true
-                      result = runCatching { PlatformMapScope(map).block() }
-                    }
-                  if (!authorityAccepted) {
-                    throw CancellationException(
-                      "The native platform map changed before access could begin"
-                    )
-                  }
-                }
-              if (!engineAccepted) {
-                throw CancellationException(
-                  "The native platform map changed before access could begin"
-                )
-              }
-              checkNotNull(result).getOrThrow()
+            invocation.executeGated(
+              changed,
+              lifecycleGate = { lifecycle.acceptEngineEvent(engine, it) },
+              authorityGate = { lifecycleAuthority.acceptEnginePlatformAccess(this, it) },
+            ) {
+              // Raw access can change the transform without an event, so the mirror is refreshed
+              // when this drain ends.
+              viewportSnapshotStale = true
+              PlatformMapScope(map).block()
             }
           },
-          abandon = {
-            invocation.fail(
-              CancellationException("The native platform map changed before access could begin")
-            )
-          },
+          abandon = { invocation.fail(CancellationException(changed)) },
         )
       if (!queued) {
         invocation.fail(CancellationException("The map state closed before access could begin"))
@@ -2222,17 +2205,8 @@ internal class MlnFfiMapSession(
     if (gestureToken == null) enqueue() else gestureToken.enqueue(enqueue)
   }
 
-  /** A zero [duration] is a jump, which is what a drag wants; a key press eases instead. */
-  override fun moveBy(
-    deltaX: Double,
-    deltaY: Double,
-    duration: Duration,
-    gestureToken: CameraInputToken?,
-  ) {
-    onMap(gestureToken) { map ->
-      if (duration == Duration.ZERO) map.moveBy(deltaX, deltaY)
-      else map.moveByAnimated(deltaX, deltaY, duration.toAnimationOptions())
-    }
+  override fun moveBy(deltaX: Double, deltaY: Double, gestureToken: CameraInputToken?) {
+    onMap(gestureToken) { map -> map.moveBy(deltaX, deltaY) }
   }
 
   override suspend fun moveByAwaitingTransition(
@@ -2249,17 +2223,8 @@ internal class MlnFfiMapSession(
     }
   }
 
-  override fun scaleBy(
-    scale: Double,
-    anchor: DpOffset?,
-    duration: Duration,
-    gestureToken: CameraInputToken?,
-  ) {
-    onMap(gestureToken) { map ->
-      val point = anchor?.toScreenPoint()
-      if (duration == Duration.ZERO) map.scaleBy(scale, point)
-      else map.scaleByAnimated(scale, point, duration.toAnimationOptions())
-    }
+  override fun scaleBy(scale: Double, anchor: DpOffset?, gestureToken: CameraInputToken?) {
+    onMap(gestureToken) { map -> map.scaleBy(scale, anchor?.toScreenPoint()) }
   }
 
   override suspend fun scaleByAwaitingTransition(
@@ -2286,7 +2251,6 @@ internal class MlnFfiMapSession(
   override fun rotateAndPitchBy(
     bearingDelta: Double,
     pitchDelta: Double,
-    duration: Duration,
     anchor: DpOffset?,
     gestureToken: CameraInputToken?,
     feedback: Boolean,
@@ -2301,9 +2265,8 @@ internal class MlnFfiMapSession(
             ((camera.pitch ?: 0.0) + pitchDelta).coerceIn(MIN_PITCH_DEGREES, MAX_PITCH_DEGREES)
           it.anchor = anchor?.toScreenPoint()
         }
-      if (duration == Duration.ZERO) map.jumpTo(target)
-      else map.easeTo(target, duration.toAnimationOptions())
-      if (feedback && bearingDelta != 0.0 && duration == Duration.ZERO) {
+      map.jumpTo(target)
+      if (feedback && bearingDelta != 0.0) {
         gestureToken?.reportRotation(camera.bearing ?: 0.0, map.camera.bearing ?: 0.0)
       }
     }

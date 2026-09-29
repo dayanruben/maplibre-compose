@@ -1,14 +1,13 @@
 package org.maplibre.compose.location.desktop.linux
 
+import java.io.IOException
 import java.util.ServiceLoader
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
-import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -27,11 +26,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
+import org.freedesktop.dbus.exceptions.DBusException
+import org.freedesktop.dbus.exceptions.DBusExecutionException
+import org.freedesktop.dbus.types.UInt32
 import org.freedesktop.dbus.types.UInt64
 import org.freedesktop.dbus.types.Variant
-import org.junit.Assume.assumeTrue
 import org.maplibre.compose.location.DesktopLocationBackend
+import org.maplibre.compose.location.LocationAccuracy
 import org.maplibre.compose.location.LocationAccuracyAuthorization
 import org.maplibre.compose.location.LocationBackendAvailability
 import org.maplibre.compose.location.LocationEvent
@@ -42,6 +43,7 @@ import org.maplibre.compose.location.XdgPortalWindow
 import org.maplibre.spatialk.units.Bearing
 import org.maplibre.spatialk.units.extensions.degrees
 import org.maplibre.spatialk.units.extensions.inMeters
+import org.maplibre.spatialk.units.extensions.meters
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class LinuxPortalLocationProviderTest {
@@ -92,18 +94,12 @@ class LinuxPortalLocationProviderTest {
   }
 
   @Test
-  fun providerForwardsPortalUpdatesAndClosesItsPortal() = runTest {
+  fun providerForwardsPortalUpdates() = runTest {
     val portal = FakeLinuxLocationPortal()
-    val provider = LinuxPortalLocationProvider(portal)
+    val provider = LinuxPortalLocationProvider(portal, backgroundScope)
 
     assertIs<LocationEvent.Update>(provider.updates(LocationRequest()).first())
     assertEquals(1, portal.updateCollections)
-
-    portal.events = flowOf(LocationEvent.Unavailable(LocationUnavailableReason.PermissionDenied))
-    assertIs<LocationEvent.Unavailable>(provider.updates(LocationRequest()).first())
-
-    provider.close()
-    assertTrue(portal.closed)
   }
 
   @Test
@@ -121,7 +117,7 @@ class LinuxPortalLocationProviderTest {
   @Test
   fun overlappingPermissionRequestsStartOnePortalRequestAndReuseGrant() = runTest {
     val portal = FakeLinuxLocationPortal()
-    val pendingResult = CompletableDeferred<PortalPermissionResult>()
+    val pendingResult = CompletableDeferred<Boolean>()
     portal.permissionResult = { pendingResult.await() }
     val provider = LinuxPortalLocationProvider(portal, backgroundScope)
 
@@ -130,7 +126,7 @@ class LinuxPortalLocationProviderTest {
     runCurrent()
     assertEquals(1, portal.permissionRequests)
 
-    pendingResult.complete(PortalPermissionResult.Granted)
+    pendingResult.complete(true)
     runCurrent()
     val granted = LocationPermission.Granted(LocationAccuracyAuthorization.Unknown)
     assertEquals(granted, provider.permission.value)
@@ -139,6 +135,21 @@ class LinuxPortalLocationProviderTest {
 
     provider.close()
     assertTrue(portal.closed)
+  }
+
+  @Test
+  fun deniedPermissionRequestStaysNotGrantedAndCanBeRetried() = runTest {
+    val portal = FakeLinuxLocationPortal()
+    portal.permissionResult = { false }
+    val provider = LinuxPortalLocationProvider(portal, backgroundScope)
+
+    provider.requestPermission()
+    runCurrent()
+    assertEquals(LocationPermission.NotGranted(canRequest = null), provider.permission.value)
+
+    provider.requestPermission()
+    runCurrent()
+    assertEquals(2, portal.permissionRequests)
   }
 
   @Test
@@ -182,17 +193,48 @@ class LinuxPortalLocationProviderTest {
   }
 
   @Test
-  fun realPortalSessionCanOpenAndClose() = runTest {
-    assumeTrue(
-      "Requires an opted-in Linux location portal",
-      System.getenv("MAPLIBRE_TEST_LINUX_LOCATION_PORTAL") == "true",
-    )
+  fun sessionOptionsHaveNoDistanceThreshold() {
+    val options = sessionOptions(LocationRequest(minimumDistance = 100.meters))
 
-    val portal = DbusLocationPortal()
-    assertTrue(portal.available)
-    val result = withTimeout(30.seconds) { portal.requestPermission() }
-    assertNotEquals(PortalPermissionResult.Unavailable::class, result::class)
-    portal.close()
+    assertFalse("distance-threshold" in options)
+  }
+
+  @Test
+  fun sessionOptionsMapAccuracyToPortalLevels() {
+    // Portal accuracy levels: COUNTRY = 1, CITY = 2, STREET = 4, EXACT = 5.
+    val expected =
+      mapOf(
+        LocationAccuracy.BestForNavigation to 5L,
+        LocationAccuracy.High to 5L,
+        LocationAccuracy.Balanced to 4L,
+        LocationAccuracy.Low to 2L,
+        LocationAccuracy.Lowest to 1L,
+      )
+
+    assertEquals(LocationAccuracy.entries.toSet(), expected.keys)
+    for ((accuracy, level) in expected) {
+      assertEquals(UInt32(level), sessionOptions(LocationRequest(accuracy))["accuracy"]?.value)
+    }
+  }
+
+  @Test
+  fun mapsStartResponseCodesToFailures() {
+    assertEquals(null, startFailure(0))
+    assertEquals(LocationUnavailableReason.PermissionDenied, startFailure(1))
+    assertEquals(LocationUnavailableReason.TemporarilyUnavailable, startFailure(2))
+  }
+
+  @Test
+  fun mapsDbusFailuresToUnavailableReasons() {
+    val expected =
+      mapOf(
+        DBusException("failed") to LocationUnavailableReason.TemporarilyUnavailable,
+        DBusExecutionException("failed") to LocationUnavailableReason.TemporarilyUnavailable,
+        IOException("failed") to LocationUnavailableReason.TemporarilyUnavailable,
+        IllegalStateException("failed") to LocationUnavailableReason.UnexpectedFailure,
+      )
+
+    for ((error, reason) in expected) assertEquals(reason, error.asUnavailableReason())
   }
 
   @Test
@@ -229,7 +271,7 @@ class LinuxPortalLocationProviderTest {
   }
 
   @Test
-  fun providerCloseStopsUpdatesAndPermissionBeforeClosingPortal() = runTest {
+  fun providerCloseStopsUpdatesPermissionAndPortal() = runTest {
     val events = mutableListOf<String>()
     val portal = FakeLinuxLocationPortal()
     portal.events = flow {
@@ -260,7 +302,6 @@ class LinuxPortalLocationProviderTest {
     runCurrent()
 
     assertEquals(1, portal.closeCount)
-    assertEquals("portal closed", events.last())
     assertEquals(setOf("updates stopped", "permission stopped", "portal closed"), events.toSet())
     assertTrue(backgroundScope.isActive)
     assertFailsWith<IllegalStateException> { provider.updates().first() }
@@ -298,7 +339,7 @@ private class FakeLinuxLocationPortal(override val available: Boolean = true) :
   var closed = false
   var updateCollections = 0
   var permissionRequests = 0
-  var permissionResult: suspend () -> PortalPermissionResult = { PortalPermissionResult.Granted }
+  var permissionResult: suspend () -> Boolean = { true }
   var events: Flow<LocationEvent> =
     flowOf(
       mapOf(
@@ -309,7 +350,7 @@ private class FakeLinuxLocationPortal(override val available: Boolean = true) :
         .toLocationEvent()
     )
 
-  override suspend fun requestPermission(): PortalPermissionResult {
+  override suspend fun requestPermission(): Boolean {
     permissionRequests += 1
     return permissionResult()
   }

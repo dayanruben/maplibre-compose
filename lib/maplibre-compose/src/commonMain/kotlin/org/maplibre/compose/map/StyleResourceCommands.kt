@@ -153,7 +153,7 @@ internal class StyleResourceCommands(
     images.keys.forEach(::requireImageWritable)
     // Snapshot the caller's collection; prepared images already own their immutable pixels.
     val definitions = images.mapValues { (id, image) ->
-      StyleImageDefinition(id, image.pixels, image.sdf, image.stretch)
+      StyleImageDefinition(id, image.image, image.sdf, image.stretch)
     }
     val sequence = enqueueImageWrites(definitions)
     submit(
@@ -203,19 +203,20 @@ internal class StyleResourceCommands(
   suspend fun supply(binding: StyleBinding, id: String, image: ResolvedStyleImage) = withCommit {
     if (
       !style.isCurrentLoadedStyle(binding) ||
-        !style.requireOwner().isImageWritable(id) ||
+        !style.owner.isImageWritable(id) ||
         isExplicitImage(id)
     )
       return@withCommit
+    val definition = StyleImageDefinition(id, image.image, image.sdf, image.stretch)
     withContext(NonCancellable) {
-      // A queued miss may arrive after another request supplied the image; an unloaded style has
-      // nothing left to supply.
-      if (binding.awaitOwner { binding.imageExists(id) } != false) return@withContext
-      // The same path as set: the engine converts pixels off the owner, then uploads in one task.
-      binding
-        .setImages(listOf(StyleImageDefinition(id, image.pixels, image.sdf, image.stretch)))
-        .single()
-        .getOrThrow()
+      // A queued miss may arrive after another request supplied the image, so the check and the
+      // write share one owner task. An unloaded style has nothing left to supply.
+      val supplied = binding.awaitOwner {
+        if (binding.imageExists(id) != false) return@awaitOwner false
+        binding.setImage(definition)
+        true
+      }
+      if (supplied != true) return@withContext
       if (style.isCurrentLoadedStyle(binding)) {
         lock.withLock { images[id] = true }
         binding.identity.images.remove(id)
@@ -263,11 +264,10 @@ internal class StyleResourceCommands(
     writes.keys.forEach(::requireImageWritable)
     val definitions = writes.values.filterNotNull()
     val removals = writes.filterValues { it == null }.keys
-    val set = if (definitions.isEmpty()) emptyList() else binding.setImages(definitions)
-    val removed =
-      if (removals.isEmpty()) emptyList()
-      else binding.onOwner { removals.map { runCatching<Unit> { binding.removeImage(it) } } }
-    val results = set + removed
+    val results = binding.onOwner {
+      definitions.map { runCatching { binding.setImage(it) } } +
+        removals.map { runCatching<Unit> { binding.removeImage(it) } }
+    }
     if (!style.isCurrentLoadedStyle(binding)) return
     (definitions.map { it.id } + removals).zip(results).forEach { (id, result) ->
       result.fold(
@@ -350,12 +350,12 @@ internal class StyleResourceCommands(
 
   private fun requireSourceWritable(id: String) {
     require(id.isNotBlank()) { "Source ID must not be blank" }
-    style.requireOwner().requireSourceWritable(id)
+    style.owner.requireSourceWritable(id)
   }
 
   private fun requireImageWritable(id: String) {
     require(id.isNotBlank()) { "Image ID must not be blank" }
-    if (!style.requireOwner().isImageWritable(id))
+    if (!style.owner.isImageWritable(id))
       throw StyleHandleException("Image ID '$id' is declared by the style content")
   }
 

@@ -68,9 +68,11 @@ repository means the MapLibre Native backend used by desktop, Android, and iOS.
 - `.mise/bin/version-args` derives published versions from `vMAJOR.MINOR.PATCH`
   tags and passes them to Gradle, so Gradle configuration does not depend on the
   checkout's Git state. Keep Git access in mise tasks and scripts.
-- CI jobs call mise tasks, so a job's command lives in its task. Third-party
-  action SHAs are declared in `.github/workflows/action-pins.yml` and checked by
-  `mise run ci:check-action-pins`.
+- CI jobs call mise tasks, so a job's command lives in its task. Workflows and
+  composite actions pin each third-party action to a commit SHA with a
+  `# version` comment, the same pin everywhere it is used;
+  `mise run ci:check-action-pins` checks this. Dependabot updates both
+  `.github/workflows` and `.github/actions/*`.
 
 ## Demo app
 
@@ -138,7 +140,8 @@ region for each Kotlin example.
 
 Follow [PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md). Use draft
 status for unfinished work, unresolved decisions, or generated code pending
-human review.
+human review. Prefer Conventional Commits for PR titles, which become the
+squash-merge commit message.
 
 Write the description for a reviewer who has not seen your working session, and
 for someone reading the history later. Aim for the shortest description that
