@@ -144,6 +144,7 @@ class GenericLayerCompositionTest {
       }
       waitForIdle()
       assertEquals(1, recording.sources.size)
+      waitUntil(timeoutMillis = 5_000) { recording.imageIds.size == 1 }
       assertEquals(1, recording.imageIds.size)
       assertEquals(
         JsonPrimitive(0.5f),
