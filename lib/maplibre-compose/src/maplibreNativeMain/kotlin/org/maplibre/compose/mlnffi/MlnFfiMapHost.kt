@@ -17,20 +17,6 @@ internal data class MlnFfiMapDestination(
     get() = top + height
 }
 
-/** Aligns [sourceAnchor] with [destinationAnchor] without scaling [extent]. */
-internal fun presentationDestination(
-  extent: MapExtent,
-  sourceAnchor: MlnFfiMapPresentationAnchor,
-  destinationAnchor: MlnFfiMapPresentationAnchor,
-): MlnFfiMapDestination {
-  return MlnFfiMapDestination(
-    left = destinationAnchor.x - sourceAnchor.x,
-    top = destinationAnchor.y - sourceAnchor.y,
-    width = extent.physicalWidth,
-    height = extent.physicalHeight,
-  )
-}
-
 /**
  * One renderable frame produced by a [MlnFfiMapHost].
  *
@@ -38,20 +24,7 @@ internal fun presentationDestination(
  * After successful completion, the host keeps [target] presentable until a newer completed target
  * is drawn or the host closes, including across resize.
  */
-internal data class MlnFfiMapFrame(
-  /** Monotonically increasing identifier, for logging and frame pacing. */
-  val frameId: Long,
-
-  /** The size this frame's target was allocated at. */
-  val extent: MapExtent,
-  val target: MlnFfiRenderTarget,
-
-  /**
-   * When this frame is expected to be presented, if the host knows. Nanoseconds on a monotonic
-   * clock whose origin is arbitrary, so only differences between frames mean anything.
-   */
-  val presentationTimeNanos: Long?,
-)
+internal data class MlnFfiMapFrame(val target: MlnFfiRenderTarget)
 
 /** The explicit outcome of asking a host for a frame. */
 internal sealed interface MlnFfiMapFrameAcquisition {
@@ -107,11 +80,7 @@ internal interface MlnFfiMapHost : AutoCloseable {
    * Called before Compose overlay placement. The host must obtain exclusive access to the consumer
    * graphics context when needed; it cannot assume a draw callback made it current.
    */
-  fun acquireFrame(
-    frameId: Long,
-    extent: MapExtent,
-    presentationTimeNanos: Long?,
-  ): MlnFfiMapFrameAcquisition
+  fun acquireFrame(extent: MapExtent): MlnFfiMapFrameAcquisition
 
   /** Runs [action] with the producer side able to render into [frame]'s target. */
   fun <T> withProducerAccess(frame: MlnFfiMapFrame, action: () -> T): T = action()
@@ -150,32 +119,4 @@ internal interface MlnFfiMapHost : AutoCloseable {
     target: MlnFfiRenderTarget,
     destination: MlnFfiMapDestination,
   ): Boolean
-}
-
-/** Creates the [MlnFfiMapHost] that backs a map. */
-internal interface MlnFfiMapHostFactory {
-  /** A short description of this factory, used in diagnostics. */
-  val description: String
-
-  /**
-   * The producer/consumer combinations this factory can bridge on the current machine, in
-   * preference order. The bridge the map uses is the first whose producer the packaged FFI runtime
-   * provides; the runtime artifact the application packaged is what chooses between them.
-   */
-  val bridges: List<RenderBackendPair>
-
-  /**
-   * Creates a host for [backends], one of [bridges]. Prefer returning [MlnFfiMapHostResult.Failed]
-   * over throwing, so the failure reaches the user as a diagnostic.
-   */
-  fun create(backends: RenderBackendPair): MlnFfiMapHostResult
-}
-
-/** The outcome of [MlnFfiMapHostFactory.create]. */
-internal sealed interface MlnFfiMapHostResult {
-  /** A usable host. */
-  data class Created(val host: MlnFfiMapHost) : MlnFfiMapHostResult
-
-  /** This factory should have been able to create a host, but failed. */
-  data class Failed(val diagnostic: String, val cause: Throwable? = null) : MlnFfiMapHostResult
 }

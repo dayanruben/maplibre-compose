@@ -45,9 +45,6 @@ internal class FakeMlnFfiMapHost(
   /** Whether each acquired frame should use a fresh allocation and generation. */
   var rotateTargetsOnAcquire: Boolean = false
 
-  /** Every call this host received, in order. */
-  val calls: MutableList<String> = mutableListOf()
-
   /** Every target passed to [draw], in order. */
   val drawnTargets: MutableList<MlnFfiRenderTarget> = mutableListOf()
 
@@ -77,36 +74,30 @@ internal class FakeMlnFfiMapHost(
   var releasedFrames: Int = 0
     private set
 
-  private val liveFrames = mutableSetOf<Long>()
+  private val liveFrames = mutableListOf<MlnFfiMapFrame>()
 
   /** Frames acquired but never released; must be empty after a clean teardown. */
-  val leakedFrames: Set<Long>
+  val leakedFrames: List<MlnFfiMapFrame>
     get() = liveFrames
 
   override fun resize(extent: MapExtent) {
-    calls += "resize(${extent.width}x${extent.height}@${extent.scaleFactor})"
     if (extent != currentExtent) {
       currentExtent = extent
       generation++
     }
   }
 
-  override fun acquireFrame(
-    frameId: Long,
-    extent: MapExtent,
-    presentationTimeNanos: Long?,
-  ): MlnFfiMapFrameAcquisition {
-    calls += "acquireFrame($frameId)"
+  override fun acquireFrame(extent: MapExtent): MlnFfiMapFrameAcquisition {
     acquireCount++
     when (acquireOutcomes.removeFirstOrNull()) {
       AcquireOutcome.NOT_READY -> return MlnFfiMapFrameAcquisition.NotReady
       AcquireOutcome.FAILURE ->
         throw MlnFfiRecoverableFrameException(
-          "fake host lost its device and cannot acquire frame $frameId",
+          "fake host lost its device and cannot acquire frame $acquireCount",
           null,
         )
       AcquireOutcome.UNEXPECTED_FAILURE ->
-        throw IllegalStateException("fake host has a programming error on frame $frameId")
+        throw IllegalStateException("fake host has a programming error on frame $acquireCount")
       AcquireOutcome.ACQUIRED,
       null -> Unit
     }
@@ -117,7 +108,7 @@ internal class FakeMlnFfiMapHost(
     if (failingAcquires > 0) {
       failingAcquires--
       throw MlnFfiRecoverableFrameException(
-        "fake host lost its device and cannot acquire frame $frameId",
+        "fake host lost its device and cannot acquire frame $acquireCount",
         null,
       )
     }
@@ -127,11 +118,8 @@ internal class FakeMlnFfiMapHost(
     }
     if (rotateTargetsOnAcquire) generation++
     acquiredFrames++
-    liveFrames += frameId
-    return MlnFfiMapFrameAcquisition.Acquired(
+    val frame =
       MlnFfiMapFrame(
-        frameId = frameId,
-        extent = extent,
         target =
           VulkanImageTarget(
             context =
@@ -149,34 +137,21 @@ internal class FakeMlnFfiMapHost(
             format = 37,
             initialLayout = 0,
             finalLayout = 1,
-            queueFamilyIndex = 0,
             extent = extent,
             generation = generation,
-          ),
-        presentationTimeNanos = presentationTimeNanos,
+          )
       )
-    )
+    liveFrames += frame
+    return MlnFfiMapFrameAcquisition.Acquired(frame)
   }
 
   override fun completeProducerAccess(frame: MlnFfiMapFrame) {
-    calls += "completeProducerAccess(${frame.frameId})"
     completedFrames++
   }
 
   override fun releaseFrame(frame: MlnFfiMapFrame) {
-    calls += "releaseFrame(${frame.frameId})"
     releasedFrames++
-    liveFrames -= frame.frameId
-  }
-
-  override fun <T> withProducerAccess(frame: MlnFfiMapFrame, action: () -> T): T {
-    calls += "withProducerAccess(${frame.frameId})"
-    return action()
-  }
-
-  override fun <T> withRendererAccess(action: () -> T): T {
-    calls += "withRendererAccess"
-    return action()
+    liveFrames.indexOfFirst { it === frame }.takeIf { it >= 0 }?.let(liveFrames::removeAt)
   }
 
   override fun draw(
@@ -184,7 +159,6 @@ internal class FakeMlnFfiMapHost(
     target: MlnFfiRenderTarget,
     destination: MlnFfiMapDestination,
   ): Boolean {
-    calls += "draw(gen=${target.generation})"
     drawnTargets += target
     drawRecords +=
       DrawRecord(
@@ -200,7 +174,6 @@ internal class FakeMlnFfiMapHost(
   }
 
   override fun close() {
-    calls += "close"
     closed = true
   }
 }

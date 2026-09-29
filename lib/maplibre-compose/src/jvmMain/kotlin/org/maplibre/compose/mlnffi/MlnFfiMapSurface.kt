@@ -10,14 +10,11 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
-import kotlin.time.TimeSource
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.map.ComposeMapSurface
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.map.mapSurface
 import org.maplibre.compose.util.rethrowIfFatal
-
-private val frameClockOrigin = TimeSource.Monotonic.markNow()
 
 /**
  * The node schedules preparation before overlay placement; the controller owns the presentation.
@@ -119,8 +116,7 @@ internal class MlnFfiSurfaceController(
         renderer.onSurfaceChanged(extent)
         configuredExtent = extent
       }
-      val acquired =
-        host.acquireFrame(frameId, extent, frameClockOrigin.elapsedNow().inWholeNanoseconds)
+      val acquired = host.acquireFrame(extent)
       if (acquired == MlnFfiMapFrameAcquisition.NotReady) {
         requestFrame()
         return false
@@ -196,6 +192,8 @@ internal class MlnFfiSurfaceController(
       try {
         drew = host?.draw(scope, completed.target, destination) == true
         if (drew && !completed.presented) {
+          // Hosts throw a recoverable failure once per graphics-device change to rebuild the
+          // session on the new device, so a rebuild that presents an image starts a fresh budget.
           completed.presented = true
           failures = 0
         }
@@ -218,12 +216,12 @@ internal class MlnFfiSurfaceController(
   private fun recover(error: Throwable, frameId: Long) {
     rethrowIfFatal(error)
     clearPresentation()
-    if (error !is MlnFfiRecoverableFrameException || ++failures > MAX_RECOVERY_ATTEMPTS) {
+    if (error !is MlnFfiRecoverableFrameException || ++failures > MAX_RENDER_RECOVERY_ATTEMPTS) {
       fail(error)
       return
     }
     logger?.w(error) {
-      "Map frame $frameId failed; rebuilding the render session (attempt $failures of $MAX_RECOVERY_ATTEMPTS)"
+      "Map frame $frameId failed; rebuilding the render session (attempt $failures of $MAX_RENDER_RECOVERY_ATTEMPTS)"
     }
     try {
       session?.let(renderer::onSurfaceLost)
@@ -265,10 +263,6 @@ internal class MlnFfiSurfaceController(
       projection?.close()
     }
   }
-
-  private companion object {
-    const val MAX_RECOVERY_ATTEMPTS = 3
-  }
 }
 
 private class MlnFfiMapHostSessionImpl(
@@ -289,4 +283,18 @@ private class MlnFfiMapHostSessionImpl(
   override fun <T> withRendererAccess(action: () -> T): T = host.withRendererAccess(action)
 
   override fun enqueueRenderer(action: () -> Unit): Boolean = host.enqueueRenderer(action)
+}
+
+/** Aligns [sourceAnchor] with [destinationAnchor] without scaling [extent]. */
+private fun presentationDestination(
+  extent: MapExtent,
+  sourceAnchor: MlnFfiMapPresentationAnchor,
+  destinationAnchor: MlnFfiMapPresentationAnchor,
+): MlnFfiMapDestination {
+  return MlnFfiMapDestination(
+    left = destinationAnchor.x - sourceAnchor.x,
+    top = destinationAnchor.y - sourceAnchor.y,
+    width = extent.physicalWidth,
+    height = extent.physicalHeight,
+  )
 }

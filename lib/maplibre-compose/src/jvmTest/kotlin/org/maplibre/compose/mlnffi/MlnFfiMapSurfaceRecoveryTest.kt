@@ -68,7 +68,7 @@ class MlnFfiMapSurfaceRecoveryTest {
             captureProjection: Boolean,
           ): MlnFfiFrameResult {
             renderer.render(host, frame, captureProjection)
-            return MlnFfiFrameResult.Rendered(RecordingProjection(frame.extent, 1) {})
+            return MlnFfiFrameResult.Rendered(RecordingProjection(frame.target.extent, 1) {})
           }
 
           override fun presentFrame(
@@ -222,7 +222,7 @@ class MlnFfiMapSurfaceRecoveryTest {
             if (result !is MlnFfiFrameResult.Rendered) return result
             val id = ++created
             return MlnFfiFrameResult.Rendered(
-              RecordingProjection(frame.extent, id) { closed += id }
+              RecordingProjection(frame.target.extent, id) { closed += id }
             )
           }
         }
@@ -275,7 +275,7 @@ class MlnFfiMapSurfaceRecoveryTest {
             if (result !is MlnFfiFrameResult.Rendered) return result
             val id = ++nextProjection
             return MlnFfiFrameResult.Rendered(
-              RecordingProjection(frame.extent, id) { projectionCloses += id }
+              RecordingProjection(frame.target.extent, id) { projectionCloses += id }
             )
           }
 
@@ -554,6 +554,29 @@ class MlnFfiMapSurfaceRecoveryTest {
   }
 
   @Test
+  fun repeated_device_changes_each_recover_after_presenting() = runFfiComposeUiTest {
+    val renderer = RecordingRenderer()
+    val factory = FakeMlnFfiMapHostFactory()
+    setSurfaceContent(renderer, factory)
+    val host = factory.created.single()
+    waitUntil(timeoutMillis = TIMEOUT_MILLIS) { host.drawnTargets.isNotEmpty() }
+
+    // Desktop hosts fail one acquire per graphics-device change; each rebuild presents again.
+    repeat(MAX_RECOVERY_ATTEMPTS * 2) { change ->
+      val before = runOnIdle {
+        host.failingAcquires = 1
+        renderer.requestFrame()
+        host.drawnTargets.last()
+      }
+      waitUntil(timeoutMillis = TIMEOUT_MILLIS) {
+        renderer.surfaceLostCount == change + 1 && host.drawnTargets.last() !== before
+      }
+    }
+
+    assertEquals(0, renderer.closeCount)
+  }
+
+  @Test
   fun a_renderer_that_fails_one_frame_recovers() = runFfiComposeUiTest {
     val renderer = RecordingRenderer(failingRenders = 1)
     val factory = FakeMlnFfiMapHostFactory()
@@ -734,7 +757,7 @@ class MlnFfiMapSurfaceRecoveryTest {
     ): MlnFfiFrameResult {
       if (failingRenders > 0) {
         failingRenders--
-        val error = "renderer lost its device on frame ${frame.frameId}"
+        val error = "renderer lost its device on generation ${frame.target.generation}"
         throw if (unexpectedFailure) IllegalStateException(error)
         else MlnFfiRecoverableFrameException(error, null)
       }
