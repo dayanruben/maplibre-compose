@@ -28,7 +28,10 @@ internal class MlnFfiRuntimeThread(
   private val pumpBudgetMillis: Long,
   private val host: Host,
 ) {
-  /** What the owner of the runtime does at each step. Everything here runs on the owner thread. */
+  /**
+   * What the owner of the runtime does at each step. Everything here runs on the owner thread,
+   * except [stopReason] for a thread stopped before it started.
+   */
   interface Host {
     /** Runs once, before any task. Throwing ends the thread as a failure. */
     fun onStarted(runtime: RuntimeHandle) {}
@@ -42,7 +45,7 @@ internal class MlnFfiRuntimeThread(
      */
     fun onLoopFailure(error: Throwable, runtime: RuntimeHandle?): Throwable
 
-    /** The error queued tasks are rejected with when the thread stops normally. */
+    /** The error queued tasks are rejected with when the thread stops normally or unstarted. */
     fun stopReason(): Throwable
 
     /**
@@ -70,12 +73,17 @@ internal class MlnFfiRuntimeThread(
   private val thread = MlnFfiOwnerThread(name) { completion.complete(runCatching { runBody() }) }
 
   /**
-   * Guards [tasks], [accepting], and [wake] together: nothing may be queued after the final drain,
-   * and nothing may signal a wake source that is closing.
+   * Guards [tasks], [accepting], [started], and [wake] together: nothing may be queued after the
+   * final drain, and nothing may signal a wake source that is closing.
    */
   private val acceptLock = MlnFfiLock()
   private val tasks = ArrayDeque<Task>()
   private var accepting = true
+
+  /**
+   * Set by [start]. Until then [stop] or [rejectQueuedTasksBeforeStart], not the owner, rejects.
+   */
+  private var started = false
 
   /**
    * Releases the owner thread from a parked pump. Acquired on that thread; signalled from any, but
@@ -85,11 +93,20 @@ internal class MlnFfiRuntimeThread(
 
   @Volatile private var stopRequested = false
 
+  /** Owner thread only. Set by [endBatch] to end the batch after the running task. */
+  private var batchEndRequested = false
+
   /**
-   * Starts the thread. When [startThread] throws, queued tasks are rejected with its error, [stop]
-   * and [awaitStopped] have nothing to wait for, and the error is rethrown.
+   * Starts the thread, which runs the tasks queued so far before any queued later. Called at most
+   * once, and not after [stop]. When [startThread] throws, queued tasks are rejected with its
+   * error, [stop] and [awaitStopped] have nothing to wait for, and the error is rethrown.
    */
   fun start(startThread: (MlnFfiOwnerThread) -> Unit = MlnFfiOwnerThread::start) {
+    acceptLock.withLock {
+      check(!started) { "$name was already started" }
+      check(accepting) { "$name was stopped" }
+      started = true
+    }
     try {
       startThread(thread)
     } catch (error: Throwable) {
@@ -100,8 +117,21 @@ internal class MlnFfiRuntimeThread(
     }
   }
 
+  /** Whether [start] has been called, whether or not the thread then started. */
+  val isStarted: Boolean
+    get() = acceptLock.withLock { started }
+
   /** Whether the calling thread is the owner thread. */
   fun isCurrent(): Boolean = thread.isCurrent()
+
+  /**
+   * Owner thread only. Ends the running batch after the running task, as if it had
+   * [Task.endsBatch], so work nested inside that task can let native deliver its events before
+   * later queued work runs.
+   */
+  fun endBatch() {
+    batchEndRequested = true
+  }
 
   /**
    * Queues [task], reporting whether it was accepted. A refused task's [Task.reject] never runs.
@@ -114,13 +144,34 @@ internal class MlnFfiRuntimeThread(
     true
   }
 
-  /** Refuses new work and releases a parked pump. Returns at once; see [awaitStopped]. */
+  /**
+   * Rejects every queued task with [reason] and keeps accepting work, so a host that is not ready
+   * to start yet can still start later. Only before [start]: afterwards the owner owns the queue.
+   */
+  fun rejectQueuedTasksBeforeStart(reason: Throwable) {
+    val rejected = acceptLock.withLock {
+      check(!started) { "The owner of $name owns its queue" }
+      tasks.toList().also { tasks.clear() }
+    }
+    rejected.forEach { runCatching { it.reject(reason) } }
+  }
+
+  /**
+   * Refuses new work and releases a parked pump. Returns at once; see [awaitStopped]. A thread that
+   * never started has no runtime to release: this rejects its queued tasks with [Host.stopReason]
+   * instead, and [awaitStopped] returns at once.
+   */
   fun stop() {
     stopRequested = true
     // A signal, not a queued task: it still works after the accept gate closes; post would not.
-    acceptLock.withLock {
+    val unstarted = acceptLock.withLock {
       accepting = false
       wake?.signal()
+      !started
+    }
+    if (unstarted) {
+      rejectQueuedTasks(host.stopReason(), mutableListOf())
+      completion.complete(Result.success(Unit))
     }
   }
 
@@ -168,6 +219,7 @@ internal class MlnFfiRuntimeThread(
   /** Runs everything queued, up to a task that ends its batch, reporting whether anything ran. */
   private fun runTasks(runtime: RuntimeHandle): Boolean {
     var ran = false
+    batchEndRequested = false
     while (true) {
       // Taken one at a time, and run outside the lock: a task posts, closes, and calls back.
       val task = acceptLock.withLock { tasks.removeFirstOrNull() } ?: break
@@ -180,7 +232,7 @@ internal class MlnFfiRuntimeThread(
         // this.
         runCatching { task.reject(error) }
       }
-      if (task.endsBatch) break
+      if (task.endsBatch || batchEndRequested) break
     }
     return ran
   }
