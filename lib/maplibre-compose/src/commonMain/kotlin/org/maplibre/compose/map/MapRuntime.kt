@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.dp
@@ -84,6 +85,7 @@ import org.maplibre.compose.style.Projection
 import org.maplibre.compose.style.Sky
 import org.maplibre.compose.style.SourceDefinition
 import org.maplibre.compose.style.StyleBinding
+import org.maplibre.compose.style.StyleHandleException
 import org.maplibre.compose.style.StyleHandleOperationGuard
 import org.maplibre.compose.style.TransitionOptions
 import org.maplibre.compose.style.scaledBy
@@ -346,7 +348,7 @@ public class MapStyleState internal constructor(baseStyle: BaseStyle) {
 
   /** Posts a write to the ready loaded style. The engine reports a rejection through the logger. */
   private fun mutateStyle(mutate: (StyleBinding) -> Unit) {
-    val current = checkNotNull(readyLoadedStyle()) { "No ready loaded style" }
+    val current = readyLoadedStyle() ?: throw StyleHandleException("No ready loaded style")
     operationGuard(current).run { mutate(current) }
   }
 
@@ -673,6 +675,13 @@ internal constructor(
     adapter.queryRenderedFeatures(rect, layerIds, predicate.compileOrNull())
   }
 
+  suspend fun queryRenderedFeaturesByLayer(
+    offset: DpOffset,
+    hitPadding: Map<String, Dp>,
+  ): Map<String, List<Feature<Geometry, JsonObject?>>> = afterViewport {
+    adapter.queryRenderedFeaturesByLayer(offset, hitPadding)
+  }
+
   internal fun updateViewport(value: Viewport?) {
     viewportState = value
     owner.viewportPublished(this, value)
@@ -803,7 +812,10 @@ internal constructor(
   content: @Composable @MaplibreComposable () -> Unit,
 ) {
   internal val styleContent: @Composable @MaplibreComposable () -> Unit = {
-    CompositionLocalProvider(LocalMapState provides this, LocalViewport provides viewport) {
+    CompositionLocalProvider(
+      LocalMapState provides this,
+      LocalViewport providesComputed { viewport },
+    ) {
       content()
     }
   }
