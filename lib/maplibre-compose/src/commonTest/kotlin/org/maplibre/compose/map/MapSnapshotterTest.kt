@@ -136,12 +136,16 @@ class MapSnapshotterTest {
       sourceHandle.remove()
       snapshotter.style.awaitCommands()
       assertTrue(snapshotter.style.sources.none())
-      snapshotter.style.sources.add(source)
-      snapshotter.style.setImage("imperative", FakeImageBitmap(1, 1))
+      val currentSource = snapshotter.style.sources.add(source)
+      val currentImage = snapshotter.style.setImage("imperative", FakeImageBitmap(1, 1))
       assertFailsWith<StyleHandleException> { sourceHandle.remove() }
       assertFailsWith<StyleHandleException> { imageHandle.remove() }
       assertTrue(binding.sourceExists("imperative") == true)
       assertEquals(setOf("imperative"), binding.imageIds)
+      snapshotter.style.asMutable!!.baseStyle =
+        BaseStyle.Json("""{"version":8,"sources":{},"layers":[]}""")
+      assertFailsWith<StyleHandleException> { currentSource.remove() }
+      assertFailsWith<StyleHandleException> { currentImage.remove() }
     }
 
     close(snapshotter, runtime)
@@ -173,8 +177,14 @@ class MapSnapshotterTest {
 
     snapshotter.capture(request)
 
+    assertSame(sourceHandle, snapshotter.style.sources["base-source"])
+    assertSame(layerHandle, snapshotter.style.layers["base-layer"])
     assertEquals("", sourceHandle.attributionHtml)
     assertNull(layerHandle.getProperty("background-opacity"))
+    snapshotter.style.asMutable!!.baseStyle =
+      BaseStyle.Json("""{"version":8,"sources":{},"layers":[]}""")
+    assertFailsWith<StyleHandleException> { sourceHandle.asMutable }
+    assertFailsWith<StyleHandleException> { layerHandle.getProperty("background-opacity") }
     close(snapshotter, runtime)
   }
 
@@ -265,7 +275,7 @@ class MapSnapshotterTest {
         },
         cancel = {
           cancellationRequests++
-          SnapshotterEngineDisposition.RETAINED
+          SnapshotterEngineDisposition.Retained
         },
       )
     val runtime = runtimeWith(adapter)
@@ -315,7 +325,7 @@ class MapSnapshotterTest {
           cancel = {
             cleanupStarted.complete(Unit)
             releaseCleanup.await()
-            SnapshotterEngineDisposition.RETAINED
+            SnapshotterEngineDisposition.Retained
           },
         )
       val runtime =
@@ -366,7 +376,7 @@ class MapSnapshotterTest {
           image
         },
         cancel = {
-          SnapshotterEngineDisposition.RETAINED
+          SnapshotterEngineDisposition.Retained
         },
       )
     val runtime =
@@ -413,7 +423,7 @@ class MapSnapshotterTest {
         },
         cancel = {
           allowCaptureReturn.complete(Unit)
-          SnapshotterEngineDisposition.RETAINED
+          SnapshotterEngineDisposition.Retained
         },
       )
     val runtime =
@@ -599,7 +609,7 @@ class MapSnapshotterTest {
           },
           cancel = {
             releaseCleanup.await()
-            SnapshotterEngineDisposition.RETAINED
+            SnapshotterEngineDisposition.Retained
           },
         )
       val runtime = runtimeWith(adapter)

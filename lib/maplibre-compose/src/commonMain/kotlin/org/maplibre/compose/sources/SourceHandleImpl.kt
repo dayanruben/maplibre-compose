@@ -6,11 +6,10 @@ import org.maplibre.compose.expressions.ast.Expression
 import org.maplibre.compose.expressions.value.BooleanValue
 import org.maplibre.compose.style.SourceDefinition
 import org.maplibre.compose.style.StyleBinding
-import org.maplibre.compose.style.StyleHandleException
 import org.maplibre.compose.style.StyleHandleOperationGuard
 import org.maplibre.compose.style.StyleIdentity
-import org.maplibre.compose.style.StyleMutationException
 import org.maplibre.compose.style.checkStyleHandle
+import org.maplibre.compose.style.postWrite
 import org.maplibre.compose.util.PositionQuad
 import org.maplibre.compose.util.PreparedImage
 import org.maplibre.spatialk.geojson.BoundingBox
@@ -67,7 +66,10 @@ protected constructor(
   }
 
   protected suspend fun readFeatureState(sourceLayerId: String?, featureId: String): JsonObject {
-    return suspendingOperation { style.featureState(id, sourceLayerId, featureId) }
+    return suspendingOperation {
+      style.awaitOwner { style.featureState(id, sourceLayerId, featureId) }
+        ?: JsonObject(emptyMap())
+    }
   }
 
   protected fun clearFeatureState(
@@ -95,10 +97,8 @@ protected constructor(
   protected fun mutationOperation(action: () -> Unit): Unit = operation { postMutation(action) }
 
   private fun postMutation(action: () -> Unit) {
-    try {
-      style.postSourceUpdate(id, resourceIdentity, action)
-    } catch (error: StyleMutationException) {
-      throw StyleHandleException("Could not update source '$id': ${error.message}", error)
+    style.postWrite("Source '$id'") {
+      if (identity.sources.isCurrent(id, resourceIdentity)) action()
     }
   }
 
@@ -322,66 +322,37 @@ internal constructor(
     get() = super.asMutable as? MutableRasterDemTileSourceHandle
 }
 
+/** Builds a handle from metadata already captured on the engine owner. */
 internal fun StyleBinding.sourceHandle(
   id: String,
-  definition: SourceDefinition?,
-  currentDefinition: () -> SourceDefinition?,
-  isCurrentResource: () -> Boolean,
+  kind: String,
+  attributionHtml: String,
+  options: GeoJsonOptions,
+  currentKind: () -> String?,
   operations: StyleHandleOperationGuard,
 ): SourceHandle? {
-  requireCurrent()
-  if (sourceExists(id) != true) return null
-  return sourceHandle(
-    id,
-    getSource(id),
-    definition,
-    currentDefinition,
-    isCurrentResource,
-    operations,
-  )
-}
-
-/** Builds the handle for [source], already read from the engine, without further engine reads. */
-internal fun StyleBinding.sourceHandle(
-  id: String,
-  source: Source?,
-  definition: SourceDefinition?,
-  currentDefinition: () -> SourceDefinition?,
-  isCurrentResource: () -> Boolean,
-  operations: StyleHandleOperationGuard,
-): SourceHandle? {
-  val kind = sourceKind(definition, source) ?: return null
-  val attribution = source?.attributionHtml.orEmpty()
-  val composed = definition != null
-  // The identity check covers replacement under the same ID, so the kind check needs no engine
-  // read: a composed source's kind follows its desired definition, and any other source keeps the
-  // kind it was created with.
-  val currentKind = currentKind@{
-    if (!isCurrentResource()) return@currentKind null
-    if (!composed) return@currentKind kind
-    currentDefinition()?.let { sourceKind(it, null) ?: kind }
-  }
   return when (kind) {
     "geojson" ->
       GeoJsonSourceHandleImpl(
         id,
-        attribution,
+        attributionHtml,
         this,
-        (definition as? SourceDefinition.GeoJson)?.options ?: GeoJsonOptions(),
+        options,
         currentKind,
         operations,
       )
     "custom-vector" ->
-      CustomVectorTileSourceHandleImpl(id, attribution, this, currentKind, operations)
+      CustomVectorTileSourceHandleImpl(id, attributionHtml, this, currentKind, operations)
     "custom-geometry" ->
-      CustomGeometrySourceHandleImpl(id, attribution, this, currentKind, operations)
-    "image" -> ImageSourceHandleImpl(id, attribution, this, currentKind, operations)
-    "raster" -> RasterTileSourceHandleImpl(id, attribution, this, currentKind, operations)
-    "raster-dem" -> RasterDemTileSourceHandleImpl(id, attribution, this, currentKind, operations)
+      CustomGeometrySourceHandleImpl(id, attributionHtml, this, currentKind, operations)
+    "image" -> ImageSourceHandleImpl(id, attributionHtml, this, currentKind, operations)
+    "raster" -> RasterTileSourceHandleImpl(id, attributionHtml, this, currentKind, operations)
+    "raster-dem" ->
+      RasterDemTileSourceHandleImpl(id, attributionHtml, this, currentKind, operations)
     "vector" ->
       VectorTileSourceHandleImpl(
         id,
-        attribution,
+        attributionHtml,
         this,
         currentKind = currentKind,
         operations = operations,
@@ -390,7 +361,7 @@ internal fun StyleBinding.sourceHandle(
   }
 }
 
-private fun sourceKind(definition: SourceDefinition?, source: Source?): String? =
+internal fun sourceKind(definition: SourceDefinition?, source: Source?): String? =
   when (definition) {
     is SourceDefinition.CustomGeometry -> "custom-geometry"
     is SourceDefinition.CustomVector -> "custom-vector"

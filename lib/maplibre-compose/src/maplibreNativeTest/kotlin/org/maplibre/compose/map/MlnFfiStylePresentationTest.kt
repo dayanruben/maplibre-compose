@@ -66,7 +66,7 @@ class MlnFfiStylePresentationTest {
         val commit =
           try {
             async(start = CoroutineStart.UNDISPATCHED) {
-                session.reconcileStyleRevision(updated)
+                session.reconcileStyleRevision(updated) {}
               }
               .also {
                 assertFalse(
@@ -81,7 +81,9 @@ class MlnFfiStylePresentationTest {
         assertTrue(ownerReleased.await(), "composition or reconciliation blocked its caller")
         assertEquals(
           JsonPrimitive(0.25),
-          assertNotNull(fixture.style).layerProperty("application", "background-opacity"),
+          assertNotNull(fixture.style).let {
+            it.awaitOwner { it.layerProperty("application", "background-opacity") }
+          },
         )
       } finally {
         release.countDown()
@@ -103,7 +105,7 @@ class MlnFfiStylePresentationTest {
             callbacks.onStyleReady(map)
           }
         }
-      session.reconcileStyleRevision(APPLICATION_REVISION)
+      session.reconcileStyleRevision(APPLICATION_REVISION) {}
       // Readiness publishes on the map's main thread, which the pump drains.
       fixture.pumpUntil("the style readiness to publish") { readyCount == 1 }
       assertEquals(1, readyCount)
@@ -127,7 +129,7 @@ class MlnFfiStylePresentationTest {
           ),
           emptyList(),
         )
-      session.reconcileStyleRevision(updated)
+      session.reconcileStyleRevision(updated) {}
       val extent = BridgeMapFixture.DEFAULT_EXTENT
       fixture.pumpUntil("the updated paint to render") {
         fixture
@@ -154,7 +156,7 @@ class MlnFfiStylePresentationTest {
       try {
         // Readiness is delivered on the map's main thread, so a failing callback surfaces at
         // the delivery, not at the reconcile call site.
-        session.reconcileStyleRevision(APPLICATION_REVISION)
+        session.reconcileStyleRevision(APPLICATION_REVISION) {}
         assertSame(failure, assertFailsWith<IllegalStateException> { fixture.pump() })
       } finally {
         session.callbacks = callbacks
@@ -179,7 +181,7 @@ class MlnFfiStylePresentationTest {
       val centerY = extent.physicalHeight / 2
 
       fixture.loadStyle(INITIAL_STYLE)
-      fixture.session.reconcileStyleRevision(APPLICATION_REVISION)
+      fixture.session.reconcileStyleRevision(APPLICATION_REVISION) {}
       fixture.pumpUntil("the application background to be presented") {
         fixture.tryReadPixel(centerX, centerY)?.isNear(APPLICATION_COLOR) == true
       }
@@ -194,7 +196,7 @@ class MlnFfiStylePresentationTest {
         "the last complete frame must remain presented while application content is absent",
       )
 
-      fixture.session.reconcileStyleRevision(APPLICATION_REVISION)
+      fixture.session.reconcileStyleRevision(APPLICATION_REVISION) {}
       fixture.pumpUntil("the replacement style with application content to be presented") {
         "application" in fixture.session.currentStyleLayerIds() &&
           fixture.tryReadPixel(centerX, centerY)?.isNear(APPLICATION_COLOR) == true

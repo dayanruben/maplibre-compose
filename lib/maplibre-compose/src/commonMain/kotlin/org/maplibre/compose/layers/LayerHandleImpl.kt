@@ -29,15 +29,15 @@ internal constructor(
   private val identity: StyleIdentity = style.identity
 
   override suspend fun getProperty(name: String): JsonElement? {
-    return suspendingOperation { style.layerProperty(id, name) }
+    return suspendingOperation { style.awaitOwner { style.layerProperty(id, name) } }
   }
 
   internal fun setLayoutProperty(name: String, value: JsonElement) {
-    setProperty(name, value, LayerPropertyKind.LAYOUT)
+    setProperty(name, value, LayerPropertyKind.Layout)
   }
 
   internal fun setPaintProperty(name: String, value: JsonElement) {
-    setProperty(name, value, LayerPropertyKind.PAINT)
+    setProperty(name, value, LayerPropertyKind.Paint)
   }
 
   internal fun setPaintTransition(property: String, options: TransitionOptions?) {
@@ -54,17 +54,20 @@ internal constructor(
     if (name in FIXED_ROOT_PROPERTIES) {
       throw StyleHandleException("'$name' is fixed for the generation of $type layer '$id'")
     }
-    setProperty(name, value, LayerPropertyKind.ROOT)
+    setProperty(name, value, LayerPropertyKind.Root)
   }
 
   internal fun clearFilter() {
-    setProperty("filter", JsonNull, LayerPropertyKind.ROOT)
+    setProperty("filter", JsonNull, LayerPropertyKind.Root)
   }
 
   private fun setProperty(name: String, value: JsonElement, kind: LayerPropertyKind) {
     operation {
       operations.requireLayerWritable(id)
-      style.setLayerProperties(listOf(LayerPropertyWrite(id, type, name, value, kind)))
+      val writes = listOf(LayerPropertyWrite(id, type, name, value, kind))
+      style.postOwner {
+        if (isCurrentResource()) style.setLayerProperties(writes)
+      }
     }
   }
 

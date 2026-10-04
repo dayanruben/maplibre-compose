@@ -3,7 +3,6 @@ package org.maplibre.compose.map
 import androidx.compose.ui.unit.LayoutDirection
 import kotlinx.coroutines.withContext
 import org.maplibre.compose.mlnffi.MapRenderBackend
-import org.maplibre.compose.offline.awaitReady
 import org.maplibre.compose.util.DelicateMaplibreComposeApi
 import org.maplibre.nativeffi.map.MapHandle
 
@@ -16,18 +15,14 @@ public actual suspend fun <T> MapState.withPlatformMap(block: PlatformMapScope.(
     withContext(runtime.mainDispatcher) {
       val session =
         lifecycle.retainAdapterForPlatformAccess {
-          val options = runtime.nativeRuntimeOptions
           MlnFfiMapSession(
               lifecycleAuthority = lifecycle,
               callbacks = durableStyleCallbacks(),
               logger = runtime.logger,
               renderBackend =
-                loadRuntimeBackends(runtime.logger).firstOrNull() ?: MapRenderBackend.OPENGL,
+                loadRuntimeBackends(runtime.logger).firstOrNull() ?: MapRenderBackend.OpenGl,
               layoutDirection = LayoutDirection.Ltr,
-              cacheFile = options.cacheFile,
-              resourceProviderFactory = options.resourceProviderFactory,
-              resourceConfig = runtime.resourceConfig,
-              awaitRuntimeReady = runtime.offlineManager::awaitReady,
+              owner = runtime.nativeOwner,
             )
             .also { session ->
               session.setCameraPosition(cameraPosition)

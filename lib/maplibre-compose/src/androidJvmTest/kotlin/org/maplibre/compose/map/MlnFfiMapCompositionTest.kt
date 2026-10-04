@@ -447,7 +447,7 @@ class MlnFfiMapCompositionTest {
             abs(camera.target.latitude) < 1e-8 &&
               abs(camera.target.longitude) < 1e-8 &&
               !state.isCameraMoving &&
-              state.cameraMoveReason == CameraMoveReason.PROGRAMMATIC
+              state.cameraMoveReason == CameraMoveReason.Programmatic
           }
           performTouchInputOnUiThread(map) {
             down(center)
@@ -455,7 +455,7 @@ class MlnFfiMapCompositionTest {
             up()
           }
           waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
-            state.cameraMoveReason == CameraMoveReason.GESTURE && !state.isCameraMoving
+            state.cameraMoveReason == CameraMoveReason.Gesture && !state.isCameraMoving
           }
           val camera = state.cameraPosition
           assertEquals(start.zoom, camera.zoom, 1e-6)
@@ -589,7 +589,7 @@ class MlnFfiMapCompositionTest {
       waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
         first.currentMapAttachment != null &&
           evaluatorIdentities.size == 1 &&
-          first.styleAuthority.desiredStyleRevision.layers.any {
+          first.style.declaredRevision.layers.any {
             it.definition.id == "shared-layer"
           }
       }
@@ -688,7 +688,7 @@ class MlnFfiMapCompositionTest {
         presented = true
         waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
           state.currentMapAttachment != null &&
-            state.styleAuthority.desiredStyleRevision.layers.any {
+            state.style.declaredRevision.layers.any {
               it.definition.id == "latest-background"
             }
         }
@@ -1000,27 +1000,31 @@ class MlnFfiMapCompositionTest {
     // The session, because an event collector misses a frame that renders before it subscribes.
     val session = mapState.currentMapAttachment?.adapter as? MlnFfiMapSession
     assertFalse(
-      session?.hasRenderedAFrame == true,
+      session?.presentation?.hasRenderedAFrame == true,
       "A frame was rendered before the style loaded: $errors",
     )
     assertTrue(errors.any { it.startsWith("mapLoadFailed") }, "The load was not reported: $errors")
 
     val before = mapState.cameraPosition.target
+    val dragStep = Offset(30f * density.density, 0f)
     performTouchInputOnUiThread(onNodeWithTag(MAP_LOAD_PLACEHOLDER_TAG)) { down(center) }
     runOnUiThread { baseStyle = BaseStyle.Empty }
+    // Android creates its surface after revealing the map; style readiness alone is not enough.
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) {
       mapState.style.loadState == StyleLoadState.Ready &&
+        mapState.currentMapAttachment?.viewport != null &&
         onAllNodesWithTag(MAP_LOAD_PLACEHOLDER_TAG).fetchSemanticsNodes().isEmpty()
     }
     performTouchInputOnUiThread(onNodeWithContentDescription("Map")) {
-      moveBy(Offset(60f, 0f))
+      // A handler that wrongly admits the first move could pan on the second one.
+      repeat(2) { moveBy(dragStep) }
       up()
     }
     waitForIdle()
     assertEquals(before, mapState.cameraPosition.target, "a loading contact became a map drag")
     performTouchInputOnUiThread(onNodeWithContentDescription("Map")) {
       down(center)
-      moveBy(Offset(60f, 0f))
+      repeat(2) { moveBy(dragStep) }
       up()
     }
     waitUntil(timeoutMillis = RENDER_TIMEOUT_MILLIS) { mapState.cameraPosition.target != before }

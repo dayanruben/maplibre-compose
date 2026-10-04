@@ -29,7 +29,6 @@ import org.maplibre.compose.mlnffi.MlnFfiMapHostSession
 import org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions
 import org.maplibre.compose.mlnffi.RenderBackendPair
 import org.maplibre.compose.mlnffi.TestLatch
-import org.maplibre.compose.mlnffi.currentMlnFfiThreadName
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.StyleBinding
 import org.maplibre.nativeffi.map.MapHandle
@@ -43,15 +42,15 @@ class PlatformMapAccessTest {
           lifecycleAuthority = state.lifecycle,
           callbacks = state.durableStyleCallbacks(),
           logger = null,
-          renderBackend = MapRenderBackend.OPENGL,
+          renderBackend = MapRenderBackend.OpenGl,
           layoutDirection = LayoutDirection.Ltr,
-          cacheFile = runtime.nativeRuntimeOptions.cacheFile,
+          owner = runtime.nativeOwner,
         )
       val host =
         object : MlnFfiMapHostSession {
           override val isClosed = false
           override val backends =
-            RenderBackendPair(MapRenderBackend.OPENGL, ComposeRenderBackend.OPENGL)
+            RenderBackendPair(MapRenderBackend.OpenGl, ComposeRenderBackend.OpenGl)
 
           override fun requestFrame() = Unit
 
@@ -97,9 +96,9 @@ class PlatformMapAccessTest {
               }
             },
           logger = null,
-          renderBackend = MapRenderBackend.OPENGL,
+          renderBackend = MapRenderBackend.OpenGl,
           layoutDirection = LayoutDirection.Ltr,
-          cacheFile = runtime.nativeRuntimeOptions.cacheFile,
+          owner = runtime.nativeOwner,
         )
       try {
         session.setBaseStyle(BaseStyle.Empty)
@@ -138,20 +137,17 @@ class PlatformMapAccessTest {
 
   @Test
   fun detached_native_access_creates_the_map_and_runs_on_its_owner_context() = runBlocking {
-    withNativeMapState { state, _ ->
-      val callerThread = withContext(Dispatchers.Default) { currentMlnFfiThreadName() }
-
-      val callbackThread =
+    withNativeMapState { state, runtime ->
+      val zoom =
         withContext(Dispatchers.Default) {
           state.withPlatformMap {
+            assertTrue(runtime.nativeOwner.isCurrent())
             val rawMap: MapHandle = map
-            rawMap.hashCode()
-            currentMlnFfiThreadName()
+            rawMap.camera.zoom
           }
         }
 
-      assertEquals("maplibre-compose-map", callbackThread)
-      assertTrue(callbackThread != callerThread)
+      assertEquals(state.cameraPosition.zoom, zoom)
       assertNull(state.currentMapAttachment)
     }
   }
@@ -243,17 +239,15 @@ class PlatformMapAccessTest {
           }
 
         val token = state.reservePresentation()
-        val options = runtime.nativeRuntimeOptions
         val replacement =
           MlnFfiMapSession(
             lifecycleAuthority = state.lifecycle,
             callbacks = state.durableStyleCallbacks(),
             logger = runtime.logger,
-            renderBackend = MapRenderBackend.OPENGL,
+            renderBackend = MapRenderBackend.OpenGl,
             scaleFactor = 2.0,
             layoutDirection = LayoutDirection.Ltr,
-            cacheFile = options.cacheFile,
-            resourceProviderFactory = options.resourceProviderFactory,
+            owner = runtime.nativeOwner,
           )
         state.publishPresentation(token, replacement)
         releaseOwner.open()
@@ -314,7 +308,7 @@ class PlatformMapAccessTest {
         object : MlnFfiMapHostSession {
           override val isClosed = false
           override val backends =
-            RenderBackendPair(MapRenderBackend.OPENGL, ComposeRenderBackend.OPENGL)
+            RenderBackendPair(MapRenderBackend.OpenGl, ComposeRenderBackend.OpenGl)
 
           override fun requestFrame() = Unit
 
@@ -352,7 +346,7 @@ class PlatformMapAccessTest {
         object : MlnFfiMapHostSession {
           @Volatile override var isClosed = false
           override val backends =
-            RenderBackendPair(MapRenderBackend.OPENGL, ComposeRenderBackend.OPENGL)
+            RenderBackendPair(MapRenderBackend.OpenGl, ComposeRenderBackend.OpenGl)
 
           override fun requestFrame() = Unit
 
@@ -409,13 +403,7 @@ class PlatformMapAccessTest {
     TestMain.loop = coroutineContext[ContinuationInterceptor] as CoroutineDispatcher
     val cacheFile = FfiTestPlatform.createCacheFile()
     val runtime =
-      RuntimeImplementation(
-        platformContext = MlnFfiRuntimeOptions(cacheFile),
-        closeResources = {},
-        logger = null,
-        // The test thread is the main thread; posts from other threads drain into runBlocking.
-        mainDispatcher = TestMainDispatcher(),
-      )
+      createNativeMapRuntime(MlnFfiRuntimeOptions(cacheFile, mainDispatcher = TestMainDispatcher()))
     val state = runtime.createMapState(baseStyle = BaseStyle.Empty)
     try {
       block(state, runtime)

@@ -134,8 +134,6 @@ internal class RecordingStyleBinding(
   override fun getSource(id: String): Source? =
     sourceObjects[id] ?: sources[id]?.let { reconstructedSource(id, it) }
 
-  override fun getSources(): List<Source> = sources.keys.mapNotNull(::getSource)
-
   override fun sourceIds(): List<String> = sources.keys.toList()
 
   override fun getLayer(id: String): LayerDefinition? =
@@ -280,9 +278,9 @@ internal class RecordingStyleBinding(
     layerPropertyWrites += layerId to name
     val section =
       when (kind) {
-        LayerPropertyKind.LAYOUT -> "layout"
-        LayerPropertyKind.PAINT -> "paint"
-        LayerPropertyKind.ROOT -> null
+        LayerPropertyKind.Layout -> "layout"
+        LayerPropertyKind.Paint -> "paint"
+        LayerPropertyKind.Root -> null
       }
     layers[layerId] =
       if (section == null) JsonObject(layer + (name to value))
@@ -304,7 +302,7 @@ internal class RecordingStyleBinding(
       else JsonObject(layer + ("filter" to filter))
   }
 
-  override suspend fun layerProperty(layerId: String, name: String): JsonElement? {
+  override fun layerProperty(layerId: String, name: String): JsonElement? {
     val layer = layers[layerId] ?: return null
     return layer[name]
       ?: (layer["layout"] as? JsonObject)?.get(name)
@@ -321,7 +319,7 @@ internal class RecordingStyleBinding(
 
   val lightProperties: MutableMap<String, JsonElement> = mutableMapOf()
 
-  override suspend fun transition(): TransitionOptions? = transition.takeIf { isLoaded }
+  override fun transition(): TransitionOptions? = transition.takeIf { isLoaded }
 
   override fun setTransition(options: TransitionOptions) {
     transition = options
@@ -329,7 +327,7 @@ internal class RecordingStyleBinding(
 
   override val supportsPlacementTransitions: Boolean = true
 
-  override suspend fun placementTransitions(): Boolean? = placementTransitionsEnabled.takeIf {
+  override fun placementTransitions(): Boolean? = placementTransitionsEnabled.takeIf {
     isLoaded
   }
 
@@ -340,7 +338,7 @@ internal class RecordingStyleBinding(
   val globalStateValues = mutableMapOf<String, JsonElement>()
   val globalStateWrites = mutableListOf<Pair<String, JsonElement>>()
 
-  override suspend fun globalState(): JsonObject? =
+  override fun globalState(): JsonObject? =
     JsonObject(globalStateValues.toMap()).takeIf { isLoaded }
 
   override fun setGlobalStateProperty(name: String, value: JsonElement) {
@@ -349,7 +347,7 @@ internal class RecordingStyleBinding(
     globalStateWrites += name to value
   }
 
-  override suspend fun lightProperty(name: String): JsonElement? =
+  override fun lightProperty(name: String): JsonElement? =
     if (isLoaded) lightProperties[name] else null
 
   override fun setLight(light: JsonObject) {
@@ -360,7 +358,7 @@ internal class RecordingStyleBinding(
   var sky: JsonObject? = null
     private set
 
-  override suspend fun skyProperty(name: String): JsonElement? =
+  override fun skyProperty(name: String): JsonElement? =
     if (isLoaded && supportsSky) sky?.get(name) else null
 
   override fun setSky(sky: JsonObject?) {
@@ -370,7 +368,7 @@ internal class RecordingStyleBinding(
   var projection: JsonObject = JsonObject(emptyMap())
     private set
 
-  override suspend fun projectionProperty(name: String): JsonElement? =
+  override fun projectionProperty(name: String): JsonElement? =
     if (isLoaded && supportsProjection) projection[name] else null
 
   override fun setProjection(projection: JsonObject) {
@@ -397,7 +395,7 @@ internal class RecordingStyleBinding(
     }
   }
 
-  override suspend fun featureState(
+  override fun featureState(
     sourceId: String,
     sourceLayerId: String?,
     featureId: String,

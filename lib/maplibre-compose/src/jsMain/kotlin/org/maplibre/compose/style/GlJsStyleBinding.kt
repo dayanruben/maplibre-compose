@@ -148,9 +148,7 @@ internal class GlJsStyleBinding(
       if (map.getSource<GlJsVectorSource>(sourceId) == null || map.isSourceLoaded(sourceId) != true)
         return@subscribe
       pendingCustomGeometryReloads.remove(sourceId)
-      posted("Custom geometry source '$sourceId'", null) {
-        invalidateCustomGeometrySource(sourceId)
-      }
+      postWrite("Custom geometry source '$sourceId'") { invalidateCustomGeometrySource(sourceId) }
     }
 
   // GL JS serializes only JSON layers when recovering a lost context. Retain custom layer
@@ -217,22 +215,17 @@ internal class GlJsStyleBinding(
     geometryAttachments.forEach { it.close() }
   }
 
-  private fun requireLoaded() = requireCurrent()
-
   override val supportsCustomDemEncoding: Boolean = true
 
   /** GL JS rejects a raster-dem source that carries a `scheme`, and reads only XYZ tiles. */
   override val supportsRasterDemScheme: Boolean = false
 
-  override val baseLayers: List<LayerSummary> =
-    map.getLayersOrder().mapNotNull { id ->
-      map.getLayer(id)?.let { LayerSummary(id, it.type, it.source, it.sourceLayer) }
-    }
+  override val baseLayers: List<LayerSummary> = layerSummaries()
   override val baseSources: Map<String, Source?> = sourceIds().associateWith(::getSource)
 
   // GL JS runs the remove and add in one task, so no frame renders between them.
   override fun setImage(definition: StyleImageDefinition) {
-    requireLoaded()
+    requireCurrent()
     val (id, image, sdf, stretch) = definition
     val scale = getScale()
     val pixels = image.pixels.styleImageData()
@@ -275,7 +268,7 @@ internal class GlJsStyleBinding(
   }
 
   override fun removeImage(id: String): Boolean {
-    requireLoaded()
+    requireCurrent()
     indicatorImages.remove(id)
     indicators.values.forEach { it.resourceChanged() }
     if (!map.hasImage(id)) return false
@@ -284,27 +277,32 @@ internal class GlJsStyleBinding(
   }
 
   override fun imageExists(id: String): Boolean {
-    requireLoaded()
+    requireCurrent()
     return map.hasImage(id)
   }
 
   override fun getSource(id: String): Source? {
-    requireLoaded()
+    requireCurrent()
     return reconstructSource(id)
   }
 
-  override fun getSources(): List<Source> {
-    requireLoaded()
-    return map.getStyle().sources.keys().mapNotNull(::reconstructSource)
+  override fun sourceIds(): List<String> {
+    requireCurrent()
+    return map.style.tileManagers.keys().toList()
   }
 
-  override fun sourceIds(): List<String> {
-    requireLoaded()
-    return map.getStyle().sources.keys().toList()
+  override fun layerSummaries(): List<LayerSummary> {
+    requireCurrent()
+    return layerIds().mapNotNull { id ->
+      indicators[id]?.let {
+        return@mapNotNull layerDefinitionFromJson(id, it.definition).summary()
+      }
+      map.getLayer(id)?.let { LayerSummary(id, it.type, it.source, it.sourceLayer) }
+    }
   }
 
   override fun getLayer(id: String): LayerDefinition? {
-    requireLoaded()
+    requireCurrent()
     indicators[id]?.let {
       return layerDefinitionFromJson(id, it.definition)
     }
@@ -332,7 +330,7 @@ internal class GlJsStyleBinding(
     }
 
   override fun layerIds(): List<String> {
-    requireLoaded()
+    requireCurrent()
     return if (restoringContext) layerOrder else map.getLayersOrder().toList()
   }
 
@@ -358,7 +356,7 @@ internal class GlJsStyleBinding(
   }
 
   override fun addSource(sourceId: String, source: JsonObject): Boolean {
-    requireLoaded()
+    requireCurrent()
     mutate("add source '$sourceId'") {
       map.addSource(sourceId, source.toJsValue<SourceSpecification>())
     }
@@ -366,7 +364,7 @@ internal class GlJsStyleBinding(
   }
 
   override fun removeSource(sourceId: String) {
-    requireLoaded()
+    requireCurrent()
     mutate("remove source '$sourceId'") { map.removeSource(sourceId) }
     imageSourceImages.remove(sourceId)
     pendingImageSourceUrls.remove(sourceId)
@@ -380,7 +378,7 @@ internal class GlJsStyleBinding(
     options: CustomGeometrySourceOptions,
     provider: GeometryTileProvider,
   ): Boolean {
-    requireLoaded()
+    requireCurrent()
     val attachment = GlJsCustomGeometryAttachment(sourceId, options, provider)
     val added =
       try {
@@ -410,7 +408,7 @@ internal class GlJsStyleBinding(
   }
 
   private fun invalidateCustomGeometrySource(sourceId: String) {
-    requireLoaded()
+    requireCurrent()
     val attachment = customGeometryAttachments[sourceId] ?: return
     val source = map.getSource<GlJsVectorSource>(sourceId) ?: return
     if (map.isSourceLoaded(sourceId) != true) {
@@ -427,7 +425,7 @@ internal class GlJsStyleBinding(
     options: CustomVectorTileSourceOptions,
     provider: VectorTileProvider,
   ): Boolean {
-    requireLoaded()
+    requireCurrent()
     customVectorAttachments.remove(sourceId)?.close()
     val attachment =
       GlJsProtocolTileAttachment(
@@ -461,7 +459,7 @@ internal class GlJsStyleBinding(
     )
 
   override fun sourceExists(sourceId: String): Boolean? {
-    requireLoaded()
+    requireCurrent()
     return map.getSource<SourceHandle>(sourceId) != null
   }
 
@@ -495,7 +493,7 @@ internal class GlJsStyleBinding(
 
   /** GL JS shows the pixels at once, cancelling a URL that is still loading. */
   override fun setImageSourceImage(sourceId: String, image: PreparedImage) {
-    requireLoaded()
+    requireCurrent()
     pendingImageSourceUrls.remove(sourceId)
     imageSourceImages[sourceId] = image
     updateImageSource(sourceId, image)
@@ -508,7 +506,7 @@ internal class GlJsStyleBinding(
   }
 
   override fun setImageSourceUrl(sourceId: String, url: String) {
-    requireLoaded()
+    requireCurrent()
     val source = map.getSource<GlJsImageSource>(sourceId) ?: return
     // Only prepared pixels need fallback recovery while their replacement URL loads.
     // An empty URL cancels a pending request without replacing the image in GL JS.
@@ -521,14 +519,8 @@ internal class GlJsStyleBinding(
     source.updateImage(options)
   }
 
-  override fun postSourceUpdate(sourceId: String, resourceIdentity: Any, action: () -> Unit) {
-    if (identity.sources.isCurrent(sourceId, resourceIdentity)) {
-      posted("Source '$sourceId'", null, action)
-    }
-  }
-
   override fun setImageSourceCoordinates(sourceId: String, coordinates: List<Position>) {
-    requireLoaded()
+    requireCurrent()
     mutate("set the bounds of image source '$sourceId'") {
       // GL JS stores the coordinates before validating them. Validate before changing the source.
       coordinates.forEach { LngLat(it.longitude, it.latitude) }
@@ -542,7 +534,7 @@ internal class GlJsStyleBinding(
     data: GeoJsonData,
     fallbackOptions: GeoJsonOptions,
   ) {
-    requireLoaded()
+    requireCurrent()
     mutate("set data on source '$sourceId'") {
       val value =
         if (data is GeoJsonData.Uri) data.uri.unsafeCast<GeoJsonSourceData>()
@@ -596,7 +588,7 @@ internal class GlJsStyleBinding(
           }
           return null
         }
-    requireLoaded()
+    requireCurrent()
     val source = map.getSource<GlJsGeoJsonSource>(sourceId) ?: return null
     return ClusterQuery(source, clusterId)
   }
@@ -609,11 +601,9 @@ internal class GlJsStyleBinding(
   ): () -> Unit {
     val js = state.toJsValue<Any>()
     return {
-      requireLoaded()
-      posted("Feature '$featureId' in source '$sourceId'", null) {
-        for (ident in featureIdentifiers(sourceId, sourceLayerId, featureId)) {
-          mutate("set the feature state") { map.setFeatureState(ident, js) }
-        }
+      requireCurrent()
+      for (ident in featureIdentifiers(sourceId, sourceLayerId, featureId)) {
+        mutate("set the feature state") { map.setFeatureState(ident, js) }
       }
     }
   }
@@ -622,12 +612,12 @@ internal class GlJsStyleBinding(
    * Merged across the identifier forms: MapLibre keys state by the feature id's JS type, and a
    * feature the common API names as text may be stored under either.
    */
-  override suspend fun featureState(
+  override fun featureState(
     sourceId: String,
     sourceLayerId: String?,
     featureId: String,
   ): JsonObject {
-    requireLoaded()
+    requireCurrent()
     var merged = JsonObject(emptyMap())
     for (ident in featureIdentifiers(sourceId, sourceLayerId, featureId)) {
       val next = map.getFeatureState(ident).toJsonObjectOrEmpty()
@@ -642,7 +632,7 @@ internal class GlJsStyleBinding(
     featureId: String,
     stateKey: String?,
   ) {
-    requireLoaded()
+    requireCurrent()
     for (ident in featureIdentifiers(sourceId, sourceLayerId, featureId)) {
       if (stateKey == null) map.removeFeatureState(ident)
       else map.removeFeatureState(ident, stateKey)
@@ -650,7 +640,7 @@ internal class GlJsStyleBinding(
   }
 
   override fun resetFeatureStates(sourceId: String, sourceLayerId: String?) {
-    requireLoaded()
+    requireCurrent()
     for (ident in featureIdentifiers(sourceId, sourceLayerId, featureId = null)) {
       map.removeFeatureState(ident)
     }
@@ -663,7 +653,7 @@ internal class GlJsStyleBinding(
     filter: JsonElement?,
   ): List<Feature<Geometry, JsonObject?>> {
     if (sourceLayerIds.isEmpty()) return emptyList()
-    requireLoaded()
+    requireCurrent()
     val js = filter?.toJsValue<FilterSpecification>()
     return sourceLayerIds.flatMap { layer ->
       val options =
@@ -677,12 +667,12 @@ internal class GlJsStyleBinding(
 
   /** Null once the style has unloaded. */
   fun <T> withMap(action: (MaplibreMap) -> T): T? {
-    requireLoaded()
+    requireCurrent()
     return action(map)
   }
 
   override fun addLayer(layer: JsonObject, beforeLayerId: String): Boolean {
-    requireLoaded()
+    requireCurrent()
     mutate("add layer") {
       val id = layer.getValue("id").jsonPrimitive.content
       val renderer =
@@ -719,14 +709,14 @@ internal class GlJsStyleBinding(
   }
 
   override fun removeLayer(layerId: String) {
-    requireLoaded()
+    requireCurrent()
     map.removeLayer(layerId)
     indicators.remove(layerId)?.close()
     layerOrder = map.getLayersOrder().toList()
   }
 
   override fun moveLayer(layerId: String, beforeLayerId: String) {
-    requireLoaded()
+    requireCurrent()
     if (beforeLayerId.isEmpty()) map.moveLayer(layerId) else map.moveLayer(layerId, beforeLayerId)
     layerOrder = map.getLayersOrder().toList()
   }
@@ -737,7 +727,7 @@ internal class GlJsStyleBinding(
     value: JsonElement,
     kind: LayerPropertyKind,
   ) {
-    requireLoaded()
+    requireCurrent()
     indicators[layerId]?.let {
       it.update(name, value, kind)
       return
@@ -745,9 +735,9 @@ internal class GlJsStyleBinding(
     val js = value.toJsValue<Any?>()
     mutate("set '$name' on layer '$layerId'") {
       when (kind) {
-        LayerPropertyKind.LAYOUT -> map.setLayoutProperty(layerId, name, js)
-        LayerPropertyKind.PAINT -> map.setPaintProperty(layerId, name, js)
-        LayerPropertyKind.ROOT -> setRootProperty(layerId, name, value)
+        LayerPropertyKind.Layout -> map.setLayoutProperty(layerId, name, js)
+        LayerPropertyKind.Paint -> map.setPaintProperty(layerId, name, js)
+        LayerPropertyKind.Root -> setRootProperty(layerId, name, value)
       }
     }
   }
@@ -768,7 +758,7 @@ internal class GlJsStyleBinding(
   }
 
   override fun setLayerFilter(layerId: String, filter: JsonElement) {
-    requireLoaded()
+    requireCurrent()
     // The style spec has no null filter; absent means "match every feature".
     val js = if (filter is JsonNull) null else filter.toJsValue<FilterSpecification>()
     mutate("set the filter on layer '$layerId'") { map.setFilter(layerId, js) }
@@ -778,8 +768,8 @@ internal class GlJsStyleBinding(
    * Trying paint before layout is safe: the style spec gives no layer type a name in both. MapLibre
    * throws rather than answering for a name it does not have.
    */
-  override suspend fun layerProperty(layerId: String, name: String): JsonElement? {
-    requireLoaded()
+  override fun layerProperty(layerId: String, name: String): JsonElement? {
+    requireCurrent()
     indicators[layerId]?.let {
       return it.propertyValue(name)
     }
@@ -802,8 +792,8 @@ internal class GlJsStyleBinding(
     return value?.toJsonElement()
   }
 
-  override suspend fun transition(): TransitionOptions? {
-    requireLoaded()
+  override fun transition(): TransitionOptions? {
+    requireCurrent()
     val transition = map.style.getTransition()
     return TransitionOptions(
       duration = transition.duration?.milliseconds ?: 300.milliseconds,
@@ -812,7 +802,7 @@ internal class GlJsStyleBinding(
   }
 
   override fun setTransition(options: TransitionOptions) {
-    requireLoaded()
+    requireCurrent()
     map.style.stylesheet.transition =
       unsafeJso<TransitionSpecification> {
         duration = options.duration.toDouble(DurationUnit.MILLISECONDS)
@@ -822,33 +812,31 @@ internal class GlJsStyleBinding(
 
   override val supportsPlacementTransitions: Boolean = false
 
-  override suspend fun placementTransitions(): Boolean? {
-    requireLoaded()
+  override fun placementTransitions(): Boolean? {
+    requireCurrent()
     return true
   }
 
   override fun setPlacementTransitions(enabled: Boolean) {
-    requireLoaded()
+    requireCurrent()
     if (!enabled) {
       logger?.w { "MapLibre GL JS cannot switch the symbol placement cross-fade at runtime" }
     }
   }
 
-  override suspend fun globalState(): JsonObject {
-    requireLoaded()
+  override fun globalState(): JsonObject {
+    requireCurrent()
     return map.getGlobalState().toJsonElement().jsonObject
   }
 
   override fun setGlobalStateProperty(name: String, value: JsonElement) {
-    requireLoaded()
+    requireCurrent()
     val js = value.toJsValue<Any?>()
-    posted("Global state '$name'", value) {
-      mutate("set global state") { map.setGlobalStateProperty(name, js) }
-    }
+    mutate("set global state") { map.setGlobalStateProperty(name, js) }
   }
 
-  override suspend fun lightProperty(name: String): JsonElement? {
-    requireLoaded()
+  override fun lightProperty(name: String): JsonElement? {
+    requireCurrent()
     return map.getLight().asDynamic()[name].unsafeCast<Any?>()?.toJsonElement()
   }
 
@@ -858,52 +846,46 @@ internal class GlJsStyleBinding(
    * validated the values.
    */
   override fun setLight(light: JsonObject) {
-    requireLoaded()
-    posted("The light", light) {
-      replace<LightSpecification>("set the light", map.getLight(), light) { value, options ->
-        map.setLight(value, options)
-      }
+    requireCurrent()
+    replace<LightSpecification>("set the light", map.getLight(), light) { value, options ->
+      map.setLight(value, options)
     }
   }
 
   override val supportsSky: Boolean = true
 
-  override suspend fun skyProperty(name: String): JsonElement? {
-    requireLoaded()
+  override fun skyProperty(name: String): JsonElement? {
+    requireCurrent()
     val sky = map.getSky() ?: return null
     return sky.asDynamic()[name].unsafeCast<Any?>()?.toJsonElement()
   }
 
   /** Merges like the light. MapLibre treats an absent sky as no sky. */
   override fun setSky(sky: JsonObject?) {
-    requireLoaded()
-    posted("The sky", sky) {
-      if (sky == null) {
-        val options = unsafeJso<StyleSetterOptions> { validate = false }
-        mutate("remove the sky") { map.setSky(null, options) }
-      } else {
-        replace<SkySpecification>("set the sky", map.getSky(), sky) { value, options ->
-          map.setSky(value, options)
-        }
+    requireCurrent()
+    if (sky == null) {
+      val options = unsafeJso<StyleSetterOptions> { validate = false }
+      mutate("remove the sky") { map.setSky(null, options) }
+    } else {
+      replace<SkySpecification>("set the sky", map.getSky(), sky) { value, options ->
+        map.setSky(value, options)
       }
     }
   }
 
   override val supportsProjection: Boolean = true
 
-  override suspend fun projectionProperty(name: String): JsonElement? {
-    requireLoaded()
+  override fun projectionProperty(name: String): JsonElement? {
+    requireCurrent()
     val projection = map.getProjection() ?: return null
     return projection.asDynamic()[name].unsafeCast<Any?>()?.toJsonElement()
   }
 
   /** MapLibre falls back to Mercator for an unknown name with a console warning, not an error. */
   override fun setProjection(projection: JsonObject) {
-    requireLoaded()
-    posted("The projection", projection) {
-      mutate("set the projection") {
-        map.setProjection(projection.toJsValue<ProjectionSpecification>())
-      }
+    requireCurrent()
+    mutate("set the projection") {
+      map.setProjection(projection.toJsValue<ProjectionSpecification>())
     }
   }
 
@@ -927,20 +909,8 @@ internal class GlJsStyleBinding(
   }
 
   override fun layerExists(layerId: String): Boolean? {
-    requireLoaded()
+    requireCurrent()
     return map.getLayer(layerId) != null
-  }
-
-  /**
-   * Runs a write that the common contract posts. MapLibre GL JS applies it inline and reports a
-   * rejection through the logger.
-   */
-  private inline fun posted(target: String, value: JsonElement?, action: () -> Unit) {
-    try {
-      action()
-    } catch (error: StyleMutationException) {
-      reportRejectedWrite(target, value, error)
-    }
   }
 
   private inline fun mutate(what: String, action: () -> Unit) {

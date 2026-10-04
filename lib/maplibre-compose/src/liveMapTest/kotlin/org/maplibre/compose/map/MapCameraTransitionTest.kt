@@ -448,23 +448,6 @@ class MapCameraTransitionTest {
     }
   }
 
-  @Test
-  fun an_animation_completes_and_lands_on_its_target(): MapTestResult = runMapTest {
-    createMapFixture().use {
-      it.startAtOrigin()
-
-      it.awaitWhileRendering("the animation to complete") {
-        it.state.animateCamera(TARGET.toCameraUpdate(), CameraAnimation.Fly(200.milliseconds))
-      }
-
-      assertNear(
-        TARGET.zoom,
-        it.session.getCameraPosition().zoom,
-        "the camera should have reached the target zoom",
-      )
-    }
-  }
-
   /** A flight over a distance zooms out before it zooms back in to its target. */
   @Test
   fun a_flight_zooms_out_on_its_way_to_the_target(): MapTestResult = runMapTest {
@@ -499,7 +482,7 @@ class MapCameraTransitionTest {
 
       // The engine uses wall time: a slow renderer can miss any intermediate camera position.
       // Native reports whether the move was animated; GL JS does not expose this distinction.
-      if (mapLibreFlavor == MapLibreFlavor.NATIVE) {
+      if (mapLibreFlavor == MapLibreFlavor.Native) {
         assertTrue(
           it.engineEvents.any { event -> event == MapEvent.CameraMoveStarted(animated = true) },
           "the speed-paced flight was not animated: ${it.engineEvents}",

@@ -27,7 +27,7 @@ import org.maplibre.compose.style.checkStyleHandle
  *
  * A command reaches the engine in one [StyleBinding.awaitOwner] task, so the caller's thread and
  * the thread running the command never wait on the map owner. [commitSources] runs a source
- * mutation in the same task as the source read that republishes the handles.
+ * mutation in the same task as the metadata read for publication.
  */
 internal class StyleResourceCommands(
   private val style: MapStyleState,
@@ -109,8 +109,8 @@ internal class StyleResourceCommands(
     val completion = CompletableDeferred<Unit>()
     submit(binding, "add source '${source.id}'", completion = completion) {
       requireSourceWritable(source.id)
-      // Recorded on this thread, before the owner task, so the source read inside the task builds
-      // the handle from this definition. A failed addition takes the record back.
+      // Record before the owner task so metadata capture can use this definition. A failed
+      // addition takes the record back.
       lock.withLock {
         checkStyleHandle(currentSource(source.id) == null) {
           "Source ID '${source.id}' already exists"
@@ -206,11 +206,7 @@ internal class StyleResourceCommands(
 
   /** A missing image may be needed before the loaded style can become ready. */
   suspend fun supply(binding: StyleBinding, id: String, image: ResolvedStyleImage) = withCommit {
-    if (
-      !style.isCurrentLoadedStyle(binding) ||
-        !style.owner.isImageWritable(id) ||
-        isExplicitImage(id)
-    )
+    if (!style.isCurrentLoadedStyle(binding) || !style.isImageWritable(id) || isExplicitImage(id))
       return@withCommit
     val definition = StyleImageDefinition(id, image.image, image.sdf, image.stretch)
     withContext(NonCancellable) {
@@ -361,13 +357,12 @@ internal class StyleResourceCommands(
 
   private fun requireSourceWritable(id: String) {
     require(id.isNotBlank()) { "Source ID must not be blank" }
-    style.owner.requireSourceWritable(id)
+    style.requireSourceWritable(id)
   }
 
   private fun requireImageWritable(id: String) {
     require(id.isNotBlank()) { "Image ID must not be blank" }
-    if (!style.owner.isImageWritable(id))
-      throw StyleHandleException("Image ID '$id' is declared by the style content")
+    style.requireImageWritable(id)
   }
 
   private fun validateSource(id: String, binding: StyleBinding, identity: Any) =
