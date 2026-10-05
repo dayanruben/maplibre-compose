@@ -95,8 +95,8 @@ public final class org/maplibre/compose/camera/CameraPosition {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBearing ()D
 	public final fun getPadding ()Lorg/maplibre/compose/util/DpPadding;
+	public final fun getPitch ()D
 	public final fun getTarget ()Lorg/maplibre/spatialk/geojson/Position;
-	public final fun getTilt ()D
 	public final fun getZoom ()D
 	public fun hashCode ()I
 	public final fun toCameraUpdate ()Lorg/maplibre/compose/camera/CameraUpdate;
@@ -135,8 +135,8 @@ public final class org/maplibre/compose/camera/CameraUpdate {
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBearing ()Ljava/lang/Double;
 	public final fun getPadding ()Lorg/maplibre/compose/util/DpPadding;
+	public final fun getPitch ()Ljava/lang/Double;
 	public final fun getTarget ()Lorg/maplibre/spatialk/geojson/Position;
-	public final fun getTilt ()Ljava/lang/Double;
 	public final fun getZoom ()Ljava/lang/Double;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
@@ -256,561 +256,22 @@ public final class org/maplibre/compose/desktop/OpenGlInterop : java/lang/Enum {
 	public static fun values ()[Lorg/maplibre/compose/desktop/OpenGlInterop;
 }
 
-public final class org/maplibre/compose/expressions/ast/BitmapLiteral : org/maplibre/compose/expressions/ast/Literal {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/BitmapLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/StringLiteral;
-	public final fun component1 ()Landroidx/compose/ui/graphics/ImageBitmap;
-	public final fun component2 ()Z
-	public final fun component3 ()Lorg/maplibre/compose/util/ImageStretch;
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getSdf ()Z
-	public final fun getStretch ()Lorg/maplibre/compose/util/ImageStretch;
-	public fun getValue ()Landroidx/compose/ui/graphics/ImageBitmap;
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
+public abstract interface class org/maplibre/compose/expressions/ast/CallArgument {
 }
 
-public final class org/maplibre/compose/expressions/ast/BitmapLiteral$Companion {
-	public final fun of (Landroidx/compose/ui/graphics/ImageBitmap;ZLorg/maplibre/compose/util/ImageStretch;)Lorg/maplibre/compose/expressions/ast/BitmapLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/BooleanLiteral : org/maplibre/compose/expressions/ast/CompiledLiteral {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/BooleanLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1 ()Z
-	public fun equals (Ljava/lang/Object;)Z
-	public fun getValue ()Ljava/lang/Boolean;
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/BooleanLiteral$Companion {
-	public final fun of (Z)Lorg/maplibre/compose/expressions/ast/BooleanLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/ColorLiteral : org/maplibre/compose/expressions/ast/CompiledLiteral {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/ColorLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1-0d7_KjU ()J
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue-0d7_KjU ()J
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/ColorLiteral$Companion {
-	public final fun of-8_81llA (J)Lorg/maplibre/compose/expressions/ast/ColorLiteral;
-}
-
-public abstract interface class org/maplibre/compose/expressions/ast/CompiledExpression : org/maplibre/compose/expressions/ast/Expression {
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-}
-
-public final class org/maplibre/compose/expressions/ast/CompiledExpression$DefaultImpls {
-	public static fun cast (Lorg/maplibre/compose/expressions/ast/CompiledExpression;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public static fun compile (Lorg/maplibre/compose/expressions/ast/CompiledExpression;Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-}
-
-public final class org/maplibre/compose/expressions/ast/CompiledFunctionCall : org/maplibre/compose/expressions/ast/CompiledExpression {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/CompiledFunctionCall$Companion;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public final fun component1 ()Ljava/lang/String;
-	public final fun component2 ()Ljava/util/List;
-	public final fun component3 ()Ljava/util/Set;
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getArgs ()Ljava/util/List;
-	public final fun getLiteralArgs ()Ljava/util/Set;
-	public final fun getName ()Ljava/lang/String;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/CompiledFunctionCall$Companion {
-	public final fun of (Ljava/lang/String;Ljava/util/List;Ljava/util/Set;)Lorg/maplibre/compose/expressions/ast/CompiledFunctionCall;
-	public static synthetic fun of$default (Lorg/maplibre/compose/expressions/ast/CompiledFunctionCall$Companion;Ljava/lang/String;Ljava/util/List;Ljava/util/Set;ILjava/lang/Object;)Lorg/maplibre/compose/expressions/ast/CompiledFunctionCall;
-}
-
-public final class org/maplibre/compose/expressions/ast/CompiledListLiteral : org/maplibre/compose/expressions/ast/CompiledLiteral {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/CompiledListLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1 ()Ljava/util/List;
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue ()Ljava/util/List;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/CompiledListLiteral$Companion {
-}
-
-public abstract interface class org/maplibre/compose/expressions/ast/CompiledLiteral : org/maplibre/compose/expressions/ast/CompiledExpression, org/maplibre/compose/expressions/ast/Literal {
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/CompiledLiteral$DefaultImpls {
-	public static fun cast (Lorg/maplibre/compose/expressions/ast/CompiledLiteral;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public static fun compile (Lorg/maplibre/compose/expressions/ast/CompiledLiteral;Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/CompiledOptions : org/maplibre/compose/expressions/ast/CompiledExpression {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/CompiledOptions$Companion;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public final fun component1 ()Ljava/util/Map;
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getValue ()Ljava/util/Map;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/CompiledOptions$Companion {
-}
-
-public final class org/maplibre/compose/expressions/ast/DpLiteral : org/maplibre/compose/expressions/ast/Literal {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/DpLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1-D9Ej5fM ()F
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue-D9Ej5fM ()F
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/DpLiteral$Companion {
-	public final fun of-0680j_4 (F)Lorg/maplibre/compose/expressions/ast/DpLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/DpOffsetLiteral : org/maplibre/compose/expressions/ast/Literal {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/DpOffsetLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1-RKDOV3M ()J
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue-RKDOV3M ()J
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/DpOffsetLiteral$Companion {
-	public final fun of-jo-Fl9I (J)Lorg/maplibre/compose/expressions/ast/DpOffsetLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/DpPaddingLiteral : org/maplibre/compose/expressions/ast/CompiledLiteral {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/DpPaddingLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1 ()Lorg/maplibre/compose/util/DpPadding;
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue ()Lorg/maplibre/compose/util/DpPadding;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/DpPaddingLiteral$Companion {
-	public final fun of (Lorg/maplibre/compose/util/DpPadding;)Lorg/maplibre/compose/expressions/ast/DpPaddingLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/EnumLiteral : org/maplibre/compose/expressions/ast/Literal {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/EnumLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1 ()Lorg/maplibre/compose/expressions/value/EnumValue;
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue ()Lorg/maplibre/compose/expressions/value/EnumValue;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/EnumLiteral$Companion {
-}
-
-public abstract interface class org/maplibre/compose/expressions/ast/Expression {
+public abstract interface class org/maplibre/compose/expressions/ast/Expression : org/maplibre/compose/expressions/ast/CallArgument {
 	public fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public abstract fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public abstract fun visit (Lkotlin/jvm/functions/Function1;)V
 }
 
 public final class org/maplibre/compose/expressions/ast/Expression$DefaultImpls {
 	public static fun cast (Lorg/maplibre/compose/expressions/ast/Expression;)Lorg/maplibre/compose/expressions/ast/Expression;
 }
 
-public abstract interface class org/maplibre/compose/expressions/ast/ExpressionContext {
-	public fun getDpScale ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public abstract fun getEmScale ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public abstract fun getSpScale ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public abstract fun resolveBitmap (Lorg/maplibre/compose/expressions/ast/BitmapLiteral;)Ljava/lang/String;
-	public abstract fun resolvePainter (Lorg/maplibre/compose/expressions/ast/PainterLiteral;)Ljava/lang/String;
-}
-
-public final class org/maplibre/compose/expressions/ast/ExpressionContext$DefaultImpls {
-	public static fun getDpScale (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/Expression;
-}
-
-public final class org/maplibre/compose/expressions/ast/ExpressionContext$None : org/maplibre/compose/expressions/ast/ExpressionContext {
-	public static final field $stable I
-	public static final field INSTANCE Lorg/maplibre/compose/expressions/ast/ExpressionContext$None;
-	public fun getDpScale ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun getEmScale ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun getSpScale ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun resolveBitmap (Lorg/maplibre/compose/expressions/ast/BitmapLiteral;)Ljava/lang/String;
-	public fun resolvePainter (Lorg/maplibre/compose/expressions/ast/PainterLiteral;)Ljava/lang/String;
-}
-
-public final class org/maplibre/compose/expressions/ast/FloatLiteral : org/maplibre/compose/expressions/ast/CompiledLiteral {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/FloatLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1 ()F
-	public fun equals (Ljava/lang/Object;)Z
-	public fun getValue ()Ljava/lang/Float;
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/FloatLiteral$Companion {
-	public final fun of (F)Lorg/maplibre/compose/expressions/ast/FloatLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/FunctionCall : org/maplibre/compose/expressions/ast/Expression {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/FunctionCall$Companion;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public final fun component1 ()Ljava/lang/String;
-	public final fun component2 ()Ljava/util/List;
-	public final fun component3 ()Ljava/util/Set;
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getArgs ()Ljava/util/List;
-	public final fun getLiteralArgs ()Ljava/util/Set;
-	public final fun getName ()Ljava/lang/String;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/FunctionCall$Companion {
-	public final fun of (Ljava/lang/String;Ljava/util/List;Ljava/util/Set;)Lorg/maplibre/compose/expressions/ast/FunctionCall;
-	public final fun of (Ljava/lang/String;[Lorg/maplibre/compose/expressions/ast/Expression;Ljava/util/Set;)Lorg/maplibre/compose/expressions/ast/FunctionCall;
-	public static synthetic fun of$default (Lorg/maplibre/compose/expressions/ast/FunctionCall$Companion;Ljava/lang/String;Ljava/util/List;Ljava/util/Set;ILjava/lang/Object;)Lorg/maplibre/compose/expressions/ast/FunctionCall;
-	public static synthetic fun of$default (Lorg/maplibre/compose/expressions/ast/FunctionCall$Companion;Ljava/lang/String;[Lorg/maplibre/compose/expressions/ast/Expression;Ljava/util/Set;ILjava/lang/Object;)Lorg/maplibre/compose/expressions/ast/FunctionCall;
-}
-
-public final class org/maplibre/compose/expressions/ast/IntLiteral : org/maplibre/compose/expressions/ast/Literal {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/IntLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1 ()I
-	public fun equals (Ljava/lang/Object;)Z
-	public fun getValue ()Ljava/lang/Integer;
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/IntLiteral$Companion {
-	public final fun of (I)Lorg/maplibre/compose/expressions/ast/IntLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/ListLiteral : org/maplibre/compose/expressions/ast/Literal {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/ListLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledListLiteral;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1 ()Ljava/util/List;
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue ()Ljava/util/List;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/ListLiteral$Companion {
-}
-
-public abstract interface class org/maplibre/compose/expressions/ast/Literal : org/maplibre/compose/expressions/ast/Expression {
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public abstract fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public abstract fun getValue ()Ljava/lang/Object;
-}
-
-public final class org/maplibre/compose/expressions/ast/Literal$DefaultImpls {
-	public static fun cast (Lorg/maplibre/compose/expressions/ast/Literal;)Lorg/maplibre/compose/expressions/ast/Literal;
-}
-
-public final class org/maplibre/compose/expressions/ast/MillisecondsLiteral : org/maplibre/compose/expressions/ast/Literal {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/MillisecondsLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1-UwyO8pc ()J
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue-UwyO8pc ()J
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/MillisecondsLiteral$Companion {
-	public final fun of-LRDsOJo (J)Lorg/maplibre/compose/expressions/ast/MillisecondsLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/NullLiteral : org/maplibre/compose/expressions/ast/CompiledLiteral {
-	public static final field $stable I
-	public static final field INSTANCE Lorg/maplibre/compose/expressions/ast/NullLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue ()Ljava/lang/Void;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/OffsetLiteral : org/maplibre/compose/expressions/ast/CompiledLiteral {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/OffsetLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1-F1C5BW0 ()J
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue-F1C5BW0 ()J
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/OffsetLiteral$Companion {
-	public final fun of-k-4lQ0M (J)Lorg/maplibre/compose/expressions/ast/OffsetLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/Options : org/maplibre/compose/expressions/ast/Expression {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/Options$Companion;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledOptions;
-	public final fun component1 ()Ljava/util/Map;
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getValue ()Ljava/util/Map;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/Options$Companion {
-}
-
-public final class org/maplibre/compose/expressions/ast/PainterLiteral : org/maplibre/compose/expressions/ast/Literal {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/PainterLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/StringLiteral;
-	public final fun component1 ()Landroidx/compose/ui/graphics/painter/Painter;
-	public final fun component2-rqqXlrw ()Landroidx/compose/ui/unit/DpSize;
-	public final fun component3 ()Z
-	public final fun component4 ()Lorg/maplibre/compose/util/ImageStretch;
-	public final fun component5 ()F
-	public final fun component6 ()Landroidx/compose/ui/graphics/ColorFilter;
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getAlpha ()F
-	public final fun getColorFilter ()Landroidx/compose/ui/graphics/ColorFilter;
-	public final fun getSdf ()Z
-	public final fun getSize-rqqXlrw ()Landroidx/compose/ui/unit/DpSize;
-	public final fun getStretch ()Lorg/maplibre/compose/util/ImageStretch;
-	public fun getValue ()Landroidx/compose/ui/graphics/painter/Painter;
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/PainterLiteral$Companion {
-	public final fun of-RTZ-TCY (Landroidx/compose/ui/graphics/painter/Painter;Landroidx/compose/ui/unit/DpSize;ZLorg/maplibre/compose/util/ImageStretch;FLandroidx/compose/ui/graphics/ColorFilter;)Lorg/maplibre/compose/expressions/ast/PainterLiteral;
-	public static synthetic fun of-RTZ-TCY$default (Lorg/maplibre/compose/expressions/ast/PainterLiteral$Companion;Landroidx/compose/ui/graphics/painter/Painter;Landroidx/compose/ui/unit/DpSize;ZLorg/maplibre/compose/util/ImageStretch;FLandroidx/compose/ui/graphics/ColorFilter;ILjava/lang/Object;)Lorg/maplibre/compose/expressions/ast/PainterLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/ProjectionTransitionLiteral : org/maplibre/compose/expressions/ast/CompiledLiteral {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/ProjectionTransitionLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1 ()Lorg/maplibre/compose/style/ProjectionTransition;
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue ()Lorg/maplibre/compose/style/ProjectionTransition;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/ProjectionTransitionLiteral$Companion {
-	public final fun of (Lorg/maplibre/compose/style/ProjectionTransition;)Lorg/maplibre/compose/expressions/ast/ProjectionTransitionLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/StringLiteral : org/maplibre/compose/expressions/ast/CompiledLiteral {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/StringLiteral$Companion;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public synthetic fun cast ()Lorg/maplibre/compose/expressions/ast/Literal;
-	public synthetic fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledLiteral;
-	public final fun component1 ()Ljava/lang/String;
-	public fun equals (Ljava/lang/Object;)Z
-	public synthetic fun getValue ()Ljava/lang/Object;
-	public fun getValue ()Ljava/lang/String;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/StringLiteral$Companion {
-	public final fun of (Ljava/lang/String;)Lorg/maplibre/compose/expressions/ast/StringLiteral;
-}
-
-public final class org/maplibre/compose/expressions/ast/TextUnitCalculation : org/maplibre/compose/expressions/ast/Expression {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/TextUnitCalculation$Companion;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public final fun component1 ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public final fun component2-UIouoOA ()J
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getType-UIouoOA ()J
-	public final fun getValue ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/TextUnitCalculation$Companion {
-	public final fun of--R2X_6o (J)Lorg/maplibre/compose/expressions/ast/TextUnitCalculation;
-	public final fun of-anM5pPY (Lorg/maplibre/compose/expressions/ast/Expression;J)Lorg/maplibre/compose/expressions/ast/TextUnitCalculation;
-}
-
-public final class org/maplibre/compose/expressions/ast/TextUnitOffsetCalculation : org/maplibre/compose/expressions/ast/Expression {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/expressions/ast/TextUnitOffsetCalculation$Companion;
-	public fun cast ()Lorg/maplibre/compose/expressions/ast/Expression;
-	public fun compile (Lorg/maplibre/compose/expressions/ast/ExpressionContext;)Lorg/maplibre/compose/expressions/ast/CompiledExpression;
-	public final fun component1-XSAIIZE ()J
-	public final fun component2-XSAIIZE ()J
-	public fun equals (Ljava/lang/Object;)Z
-	public final fun getX-XSAIIZE ()J
-	public final fun getY-XSAIIZE ()J
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-	public fun visit (Lkotlin/jvm/functions/Function1;)V
-}
-
-public final class org/maplibre/compose/expressions/ast/TextUnitOffsetCalculation$Companion {
-	public final fun of-NB67dxo (JJ)Lorg/maplibre/compose/expressions/ast/TextUnitOffsetCalculation;
+public final class org/maplibre/compose/expressions/dsl/CallKt {
+	public static final fun call (Ljava/lang/String;Ljava/util/List;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun call (Ljava/lang/String;[Lorg/maplibre/compose/expressions/ast/CallArgument;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun options ([Lkotlin/Pair;)Lorg/maplibre/compose/expressions/ast/CallArgument;
+	public static final fun verbatim (Lkotlinx/serialization/json/JsonElement;)Lorg/maplibre/compose/expressions/ast/CallArgument;
 }
 
 public final class org/maplibre/compose/expressions/dsl/Case {
@@ -953,27 +414,33 @@ public final class org/maplibre/compose/expressions/dsl/InputsKt {
 	public static final fun zoom ()Lorg/maplibre/compose/expressions/ast/Expression;
 }
 
+public final class org/maplibre/compose/expressions/dsl/Interpolation {
+	public static final field $stable I
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class org/maplibre/compose/expressions/dsl/LiteralsKt {
-	public static final fun const (F)Lorg/maplibre/compose/expressions/ast/FloatLiteral;
-	public static final fun const (I)Lorg/maplibre/compose/expressions/ast/IntLiteral;
-	public static final fun const (Ljava/lang/String;)Lorg/maplibre/compose/expressions/ast/StringLiteral;
-	public static final fun const (Ljava/util/List;)Lorg/maplibre/compose/expressions/ast/ListLiteral;
-	public static final fun const (Lorg/maplibre/compose/expressions/value/EnumValue;)Lorg/maplibre/compose/expressions/ast/EnumLiteral;
-	public static final fun const (Lorg/maplibre/compose/style/ProjectionTransition;)Lorg/maplibre/compose/expressions/ast/ProjectionTransitionLiteral;
-	public static final fun const (Lorg/maplibre/compose/util/DpPadding;)Lorg/maplibre/compose/expressions/ast/DpPaddingLiteral;
-	public static final fun const (Z)Lorg/maplibre/compose/expressions/ast/BooleanLiteral;
-	public static final fun const--R2X_6o (J)Lorg/maplibre/compose/expressions/ast/TextUnitCalculation;
-	public static final fun const-0680j_4 (F)Lorg/maplibre/compose/expressions/ast/DpLiteral;
-	public static final fun const-8_81llA (J)Lorg/maplibre/compose/expressions/ast/ColorLiteral;
-	public static final fun const-LRDsOJo (J)Lorg/maplibre/compose/expressions/ast/MillisecondsLiteral;
-	public static final fun const-jo-Fl9I (J)Lorg/maplibre/compose/expressions/ast/DpOffsetLiteral;
-	public static final fun const-k-4lQ0M (J)Lorg/maplibre/compose/expressions/ast/OffsetLiteral;
-	public static final fun constEnumList (Ljava/util/List;)Lorg/maplibre/compose/expressions/ast/ListLiteral;
-	public static final fun constNumberList (Ljava/util/List;)Lorg/maplibre/compose/expressions/ast/Literal;
-	public static final fun constStringList (Ljava/util/List;)Lorg/maplibre/compose/expressions/ast/ListLiteral;
-	public static final fun nil ()Lorg/maplibre/compose/expressions/ast/NullLiteral;
-	public static final fun offset (FF)Lorg/maplibre/compose/expressions/ast/OffsetLiteral;
-	public static final fun offset-YgX7TsA (FF)Lorg/maplibre/compose/expressions/ast/DpOffsetLiteral;
+	public static final fun const (F)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const (I)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const (Ljava/lang/String;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const (Lorg/maplibre/compose/expressions/value/EnumValue;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const (Lorg/maplibre/compose/style/ProjectionTransition;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const (Lorg/maplibre/compose/util/DpPadding;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const (Z)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const--R2X_6o (J)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const-0680j_4 (F)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const-8_81llA (J)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const-LRDsOJo (J)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const-jo-Fl9I (J)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun const-k-4lQ0M (J)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun constEnumList (Ljava/util/List;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun constNumberList (Ljava/util/List;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun constStringList (Ljava/util/List;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun nil ()Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun offset (FF)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun offset-YgX7TsA (FF)Lorg/maplibre/compose/expressions/ast/Expression;
 	public static final fun padding-a9UjIt4 (FFFF)Lorg/maplibre/compose/expressions/ast/Expression;
 	public static final fun textOffset-NB67dxo (JJ)Lorg/maplibre/compose/expressions/ast/Expression;
 	public static final fun textOffset-YgX7TsA (FF)Lorg/maplibre/compose/expressions/ast/Expression;
@@ -1015,14 +482,12 @@ public final class org/maplibre/compose/expressions/dsl/MathKt {
 }
 
 public final class org/maplibre/compose/expressions/dsl/RampsKt {
-	public static final fun cubicBezier (FFFF)Lorg/maplibre/compose/expressions/ast/Expression;
-	public static final fun cubicBezier (Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;)Lorg/maplibre/compose/expressions/ast/Expression;
-	public static final fun exponential (F)Lorg/maplibre/compose/expressions/ast/Expression;
-	public static final fun exponential (Lorg/maplibre/compose/expressions/ast/Expression;)Lorg/maplibre/compose/expressions/ast/Expression;
-	public static final fun interpolate (Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;[Lkotlin/Pair;)Lorg/maplibre/compose/expressions/ast/Expression;
-	public static final fun interpolateHcl (Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;[Lkotlin/Pair;)Lorg/maplibre/compose/expressions/ast/Expression;
-	public static final fun interpolateLab (Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;[Lkotlin/Pair;)Lorg/maplibre/compose/expressions/ast/Expression;
-	public static final fun linear ()Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun cubicBezier (FFFF)Lorg/maplibre/compose/expressions/dsl/Interpolation;
+	public static final fun exponential (F)Lorg/maplibre/compose/expressions/dsl/Interpolation;
+	public static final fun interpolate (Lorg/maplibre/compose/expressions/dsl/Interpolation;Lorg/maplibre/compose/expressions/ast/Expression;[Lkotlin/Pair;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun interpolateHcl (Lorg/maplibre/compose/expressions/dsl/Interpolation;Lorg/maplibre/compose/expressions/ast/Expression;[Lkotlin/Pair;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun interpolateLab (Lorg/maplibre/compose/expressions/dsl/Interpolation;Lorg/maplibre/compose/expressions/ast/Expression;[Lkotlin/Pair;)Lorg/maplibre/compose/expressions/ast/Expression;
+	public static final fun linear ()Lorg/maplibre/compose/expressions/dsl/Interpolation;
 	public static final fun step (Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;[Lkotlin/Pair;)Lorg/maplibre/compose/expressions/ast/Expression;
 }
 
@@ -1087,7 +552,6 @@ public final class org/maplibre/compose/expressions/dsl/TypesKt {
 
 public final class org/maplibre/compose/expressions/dsl/Variable {
 	public static final synthetic fun box-impl (Ljava/lang/String;)Lorg/maplibre/compose/expressions/dsl/Variable;
-	public static fun constructor-impl (Ljava/lang/String;)Ljava/lang/String;
 	public fun equals (Ljava/lang/Object;)Z
 	public static fun equals-impl (Ljava/lang/String;Ljava/lang/Object;)Z
 	public static final fun equals-impl0 (Ljava/lang/String;Ljava/lang/String;)Z
@@ -1100,7 +564,6 @@ public final class org/maplibre/compose/expressions/dsl/Variable {
 }
 
 public final class org/maplibre/compose/expressions/dsl/VariablesKt {
-	public static final fun bind-N797sxw (Ljava/lang/String;Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;)Lorg/maplibre/compose/expressions/ast/Expression;
 	public static final fun use-uxjxMFg (Ljava/lang/String;)Lorg/maplibre/compose/expressions/ast/Expression;
 	public static final fun withVariable (Ljava/lang/String;Lorg/maplibre/compose/expressions/ast/Expression;Lkotlin/jvm/functions/Function1;)Lorg/maplibre/compose/expressions/ast/Expression;
 }
@@ -1118,7 +581,6 @@ public final class org/maplibre/compose/expressions/value/CirclePitchAlignment :
 	public static final field Map Lorg/maplibre/compose/expressions/value/CirclePitchAlignment;
 	public static final field Viewport Lorg/maplibre/compose/expressions/value/CirclePitchAlignment;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/CirclePitchAlignment;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/CirclePitchAlignment;
 }
@@ -1127,7 +589,6 @@ public final class org/maplibre/compose/expressions/value/CirclePitchScale : jav
 	public static final field Map Lorg/maplibre/compose/expressions/value/CirclePitchScale;
 	public static final field Viewport Lorg/maplibre/compose/expressions/value/CirclePitchScale;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/CirclePitchScale;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/CirclePitchScale;
 }
@@ -1145,7 +606,6 @@ public abstract interface class org/maplibre/compose/expressions/value/DpPadding
 }
 
 public abstract interface class org/maplibre/compose/expressions/value/EnumValue : org/maplibre/compose/expressions/value/StringValue {
-	public abstract fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 }
 
 public abstract interface class org/maplibre/compose/expressions/value/EquatableValue : org/maplibre/compose/expressions/value/ExpressionValue {
@@ -1159,7 +619,6 @@ public final class org/maplibre/compose/expressions/value/ExpressionType : java/
 	public static final field Object Lorg/maplibre/compose/expressions/value/ExpressionType;
 	public static final field String Lorg/maplibre/compose/expressions/value/ExpressionType;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/ExpressionType;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/ExpressionType;
 }
@@ -1187,7 +646,6 @@ public final class org/maplibre/compose/expressions/value/GeometryType : java/la
 	public static final field Point Lorg/maplibre/compose/expressions/value/GeometryType;
 	public static final field Polygon Lorg/maplibre/compose/expressions/value/GeometryType;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/GeometryType;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/GeometryType;
 }
@@ -1199,7 +657,6 @@ public final class org/maplibre/compose/expressions/value/HillshadeMethod : java
 	public static final field Multidirectional Lorg/maplibre/compose/expressions/value/HillshadeMethod;
 	public static final field Standard Lorg/maplibre/compose/expressions/value/HillshadeMethod;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/HillshadeMethod;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/HillshadeMethod;
 }
@@ -1209,7 +666,6 @@ public final class org/maplibre/compose/expressions/value/IconPitchAlignment : j
 	public static final field Map Lorg/maplibre/compose/expressions/value/IconPitchAlignment;
 	public static final field Viewport Lorg/maplibre/compose/expressions/value/IconPitchAlignment;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/IconPitchAlignment;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/IconPitchAlignment;
 }
@@ -1219,7 +675,6 @@ public final class org/maplibre/compose/expressions/value/IconRotationAlignment 
 	public static final field Map Lorg/maplibre/compose/expressions/value/IconRotationAlignment;
 	public static final field Viewport Lorg/maplibre/compose/expressions/value/IconRotationAlignment;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/IconRotationAlignment;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/IconRotationAlignment;
 }
@@ -1230,7 +685,6 @@ public final class org/maplibre/compose/expressions/value/IconTextFit : java/lan
 	public static final field None Lorg/maplibre/compose/expressions/value/IconTextFit;
 	public static final field Width Lorg/maplibre/compose/expressions/value/IconTextFit;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/IconTextFit;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/IconTextFit;
 }
@@ -1239,7 +693,6 @@ public final class org/maplibre/compose/expressions/value/IlluminationAnchor : j
 	public static final field Map Lorg/maplibre/compose/expressions/value/IlluminationAnchor;
 	public static final field Viewport Lorg/maplibre/compose/expressions/value/IlluminationAnchor;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/IlluminationAnchor;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/IlluminationAnchor;
 }
@@ -1253,15 +706,11 @@ public abstract interface class org/maplibre/compose/expressions/value/IntValue 
 public abstract interface class org/maplibre/compose/expressions/value/InterpolatableValue : org/maplibre/compose/expressions/value/ExpressionValue {
 }
 
-public abstract interface class org/maplibre/compose/expressions/value/InterpolationValue : org/maplibre/compose/expressions/value/ExpressionValue {
-}
-
 public final class org/maplibre/compose/expressions/value/LineCap : java/lang/Enum, org/maplibre/compose/expressions/value/EnumValue {
 	public static final field Butt Lorg/maplibre/compose/expressions/value/LineCap;
 	public static final field Round Lorg/maplibre/compose/expressions/value/LineCap;
 	public static final field Square Lorg/maplibre/compose/expressions/value/LineCap;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/LineCap;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/LineCap;
 }
@@ -1271,7 +720,6 @@ public final class org/maplibre/compose/expressions/value/LineJoin : java/lang/E
 	public static final field Miter Lorg/maplibre/compose/expressions/value/LineJoin;
 	public static final field Round Lorg/maplibre/compose/expressions/value/LineJoin;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/LineJoin;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/LineJoin;
 }
@@ -1299,7 +747,6 @@ public final class org/maplibre/compose/expressions/value/ProjectionType : java/
 	public static final field Mercator Lorg/maplibre/compose/expressions/value/ProjectionType;
 	public static final field VerticalPerspective Lorg/maplibre/compose/expressions/value/ProjectionType;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/ProjectionType;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/ProjectionType;
 }
@@ -1311,7 +758,6 @@ public final class org/maplibre/compose/expressions/value/RasterResampling : jav
 	public static final field Linear Lorg/maplibre/compose/expressions/value/RasterResampling;
 	public static final field Nearest Lorg/maplibre/compose/expressions/value/RasterResampling;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/RasterResampling;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/RasterResampling;
 }
@@ -1330,7 +776,6 @@ public final class org/maplibre/compose/expressions/value/SymbolAnchor : java/la
 	public static final field TopLeft Lorg/maplibre/compose/expressions/value/SymbolAnchor;
 	public static final field TopRight Lorg/maplibre/compose/expressions/value/SymbolAnchor;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/SymbolAnchor;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/SymbolAnchor;
 }
@@ -1339,7 +784,6 @@ public final class org/maplibre/compose/expressions/value/SymbolHeightAnchor : j
 	public static final field Absolute Lorg/maplibre/compose/expressions/value/SymbolHeightAnchor;
 	public static final field Ground Lorg/maplibre/compose/expressions/value/SymbolHeightAnchor;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/SymbolHeightAnchor;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/SymbolHeightAnchor;
 }
@@ -1349,7 +793,6 @@ public final class org/maplibre/compose/expressions/value/SymbolOverlap : java/l
 	public static final field Cooperative Lorg/maplibre/compose/expressions/value/SymbolOverlap;
 	public static final field Never Lorg/maplibre/compose/expressions/value/SymbolOverlap;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/SymbolOverlap;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/SymbolOverlap;
 }
@@ -1359,7 +802,6 @@ public final class org/maplibre/compose/expressions/value/SymbolPlacement : java
 	public static final field LineCenter Lorg/maplibre/compose/expressions/value/SymbolPlacement;
 	public static final field Point Lorg/maplibre/compose/expressions/value/SymbolPlacement;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/SymbolPlacement;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/SymbolPlacement;
 }
@@ -1369,7 +811,6 @@ public final class org/maplibre/compose/expressions/value/SymbolZOrder : java/la
 	public static final field Source Lorg/maplibre/compose/expressions/value/SymbolZOrder;
 	public static final field ViewportY Lorg/maplibre/compose/expressions/value/SymbolZOrder;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/SymbolZOrder;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/SymbolZOrder;
 }
@@ -1380,7 +821,6 @@ public final class org/maplibre/compose/expressions/value/TextJustify : java/lan
 	public static final field Left Lorg/maplibre/compose/expressions/value/TextJustify;
 	public static final field Right Lorg/maplibre/compose/expressions/value/TextJustify;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/TextJustify;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/TextJustify;
 }
@@ -1390,7 +830,6 @@ public final class org/maplibre/compose/expressions/value/TextPitchAlignment : j
 	public static final field Map Lorg/maplibre/compose/expressions/value/TextPitchAlignment;
 	public static final field Viewport Lorg/maplibre/compose/expressions/value/TextPitchAlignment;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/TextPitchAlignment;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/TextPitchAlignment;
 }
@@ -1401,7 +840,6 @@ public final class org/maplibre/compose/expressions/value/TextRotationAlignment 
 	public static final field Viewport Lorg/maplibre/compose/expressions/value/TextRotationAlignment;
 	public static final field ViewportGlyph Lorg/maplibre/compose/expressions/value/TextRotationAlignment;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/TextRotationAlignment;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/TextRotationAlignment;
 }
@@ -1411,7 +849,6 @@ public final class org/maplibre/compose/expressions/value/TextTransform : java/l
 	public static final field None Lorg/maplibre/compose/expressions/value/TextTransform;
 	public static final field Uppercase Lorg/maplibre/compose/expressions/value/TextTransform;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/TextTransform;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/TextTransform;
 }
@@ -1420,7 +857,6 @@ public final class org/maplibre/compose/expressions/value/TextWritingMode : java
 	public static final field Horizontal Lorg/maplibre/compose/expressions/value/TextWritingMode;
 	public static final field Vertical Lorg/maplibre/compose/expressions/value/TextWritingMode;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/TextWritingMode;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/TextWritingMode;
 }
@@ -1429,7 +865,6 @@ public final class org/maplibre/compose/expressions/value/TranslateAnchor : java
 	public static final field Map Lorg/maplibre/compose/expressions/value/TranslateAnchor;
 	public static final field Viewport Lorg/maplibre/compose/expressions/value/TranslateAnchor;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
-	public fun getLiteral ()Lorg/maplibre/compose/expressions/ast/StringLiteral;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/expressions/value/TranslateAnchor;
 	public static fun values ()[Lorg/maplibre/compose/expressions/value/TranslateAnchor;
 }
@@ -1469,8 +904,8 @@ public final class org/maplibre/compose/interaction/BearingTargets$Companion {
 public final class org/maplibre/compose/interaction/CameraBuilder {
 	public static final field $stable I
 	public final fun pan (Lkotlin/jvm/functions/Function1;)V
+	public final fun pitch (Lkotlin/jvm/functions/Function1;)V
 	public final fun rotate (Lkotlin/jvm/functions/Function1;)V
-	public final fun tilt (Lkotlin/jvm/functions/Function1;)V
 	public final fun zoom (Lkotlin/jvm/functions/Function1;)V
 }
 
@@ -1510,7 +945,7 @@ public final class org/maplibre/compose/interaction/DragBindingBuilder {
 	public final fun getPointerTypes ()Ljava/util/Set;
 	public final fun mappings (Lkotlin/jvm/functions/Function1;)V
 	public final fun pan (Lkotlin/jvm/functions/Function1;)V
-	public final fun rotateTilt (Lkotlin/jvm/functions/Function1;)V
+	public final fun rotatePitch (Lkotlin/jvm/functions/Function1;)V
 	public final fun setEnabled (Z)V
 	public final fun setPointerTypes (Ljava/util/Set;)V
 }
@@ -1542,13 +977,13 @@ public final class org/maplibre/compose/interaction/DragResponse : java/lang/Enu
 	public static final field FitBounds Lorg/maplibre/compose/interaction/DragResponse;
 	public static final field None Lorg/maplibre/compose/interaction/DragResponse;
 	public static final field Pan Lorg/maplibre/compose/interaction/DragResponse;
-	public static final field RotateTilt Lorg/maplibre/compose/interaction/DragResponse;
+	public static final field RotatePitch Lorg/maplibre/compose/interaction/DragResponse;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Lorg/maplibre/compose/interaction/DragResponse;
 	public static fun values ()[Lorg/maplibre/compose/interaction/DragResponse;
 }
 
-public final class org/maplibre/compose/interaction/DragRotateTiltBuilder {
+public final class org/maplibre/compose/interaction/DragRotatePitchBuilder {
 	public static final field $stable I
 	public final fun getAnchor ()Lorg/maplibre/compose/interaction/GestureAnchor;
 	public final fun getBearingDegreesPerDp ()D
@@ -1642,10 +1077,10 @@ public final class org/maplibre/compose/interaction/KeyResponse : java/lang/Enum
 	public static final field PanLeft Lorg/maplibre/compose/interaction/KeyResponse;
 	public static final field PanRight Lorg/maplibre/compose/interaction/KeyResponse;
 	public static final field PanUp Lorg/maplibre/compose/interaction/KeyResponse;
+	public static final field PitchDown Lorg/maplibre/compose/interaction/KeyResponse;
+	public static final field PitchUp Lorg/maplibre/compose/interaction/KeyResponse;
 	public static final field RotateLeft Lorg/maplibre/compose/interaction/KeyResponse;
 	public static final field RotateRight Lorg/maplibre/compose/interaction/KeyResponse;
-	public static final field TiltDown Lorg/maplibre/compose/interaction/KeyResponse;
-	public static final field TiltUp Lorg/maplibre/compose/interaction/KeyResponse;
 	public static final field ZoomIn Lorg/maplibre/compose/interaction/KeyResponse;
 	public static final field ZoomOut Lorg/maplibre/compose/interaction/KeyResponse;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
@@ -1720,6 +1155,24 @@ public final class org/maplibre/compose/interaction/PanMomentumBuilder {
 	public final fun getMinimumSpeed ()D
 	public final fun setBaseTime-LRDsOJo (J)V
 	public final fun setDurationScale (D)V
+	public final fun setEnabled (Z)V
+	public final fun setMinimumSpeed (D)V
+}
+
+public final class org/maplibre/compose/interaction/PitchCameraBuilder {
+	public static final field $stable I
+	public final fun getEnabled ()Z
+	public final fun momentum (Lkotlin/jvm/functions/Function1;)V
+	public final fun onStart (Lkotlin/jvm/functions/Function0;)V
+	public final fun setEnabled (Z)V
+}
+
+public final class org/maplibre/compose/interaction/PitchMomentumBuilder {
+	public static final field $stable I
+	public final fun getDuration-UwyO8pc ()J
+	public final fun getEnabled ()Z
+	public final fun getMinimumSpeed ()D
+	public final fun setDuration-LRDsOJo (J)V
 	public final fun setEnabled (Z)V
 	public final fun setMinimumSpeed (D)V
 }
@@ -1842,29 +1295,11 @@ public final class org/maplibre/compose/interaction/TapResponse : java/lang/Enum
 	public static fun values ()[Lorg/maplibre/compose/interaction/TapResponse;
 }
 
-public final class org/maplibre/compose/interaction/TiltCameraBuilder {
-	public static final field $stable I
-	public final fun getEnabled ()Z
-	public final fun momentum (Lkotlin/jvm/functions/Function1;)V
-	public final fun onStart (Lkotlin/jvm/functions/Function0;)V
-	public final fun setEnabled (Z)V
-}
-
-public final class org/maplibre/compose/interaction/TiltMomentumBuilder {
-	public static final field $stable I
-	public final fun getDuration-UwyO8pc ()J
-	public final fun getEnabled ()Z
-	public final fun getMinimumSpeed ()D
-	public final fun setDuration-LRDsOJo (J)V
-	public final fun setEnabled (Z)V
-	public final fun setMinimumSpeed (D)V
-}
-
 public final class org/maplibre/compose/interaction/TransformBuilder {
 	public static final field $stable I
 	public final fun pan (Lkotlin/jvm/functions/Function1;)V
+	public final fun pitch (Lkotlin/jvm/functions/Function1;)V
 	public final fun rotate (Lkotlin/jvm/functions/Function1;)V
-	public final fun tilt (Lkotlin/jvm/functions/Function1;)V
 	public final fun zoom (Lkotlin/jvm/functions/Function1;)V
 }
 
@@ -1876,6 +1311,20 @@ public final class org/maplibre/compose/interaction/TransformPanBuilder {
 	public final fun getStartSlop-D9Ej5fM ()F
 	public final fun setEnabled (Z)V
 	public final fun setModifiers (Lorg/maplibre/compose/interaction/ModifierMatch;)V
+	public final fun setPointerTypes (Ljava/util/Set;)V
+	public final fun setStartSlop-0680j_4 (F)V
+}
+
+public final class org/maplibre/compose/interaction/TransformPitchBuilder {
+	public static final field $stable I
+	public final fun getEnabled ()Z
+	public final fun getModifiers ()Lorg/maplibre/compose/interaction/ModifierMatch;
+	public final fun getPitchDegreesPerDp ()D
+	public final fun getPointerTypes ()Ljava/util/Set;
+	public final fun getStartSlop-D9Ej5fM ()F
+	public final fun setEnabled (Z)V
+	public final fun setModifiers (Lorg/maplibre/compose/interaction/ModifierMatch;)V
+	public final fun setPitchDegreesPerDp (D)V
 	public final fun setPointerTypes (Ljava/util/Set;)V
 	public final fun setStartSlop-0680j_4 (F)V
 }
@@ -1896,20 +1345,6 @@ public final class org/maplibre/compose/interaction/TransformRotateBuilder {
 	public final fun setPointerTypes (Ljava/util/Set;)V
 	public final fun setRotationScale (D)V
 	public final fun setStartAngle (D)V
-}
-
-public final class org/maplibre/compose/interaction/TransformTiltBuilder {
-	public static final field $stable I
-	public final fun getEnabled ()Z
-	public final fun getModifiers ()Lorg/maplibre/compose/interaction/ModifierMatch;
-	public final fun getPitchDegreesPerDp ()D
-	public final fun getPointerTypes ()Ljava/util/Set;
-	public final fun getStartSlop-D9Ej5fM ()F
-	public final fun setEnabled (Z)V
-	public final fun setModifiers (Lorg/maplibre/compose/interaction/ModifierMatch;)V
-	public final fun setPitchDegreesPerDp (D)V
-	public final fun setPointerTypes (Ljava/util/Set;)V
-	public final fun setStartSlop-0680j_4 (F)V
 }
 
 public final class org/maplibre/compose/interaction/TransformZoomBuilder {
@@ -2078,13 +1513,10 @@ public final class org/maplibre/compose/layers/LayerProperties {
 
 public final class org/maplibre/compose/layers/LayerSummary {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/lang/String;
-	public final fun copy (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lorg/maplibre/compose/layers/LayerSummary;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/layers/LayerSummary;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Lorg/maplibre/compose/layers/LayerSummary;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getId ()Ljava/lang/String;
 	public final fun getSource ()Ljava/lang/String;
@@ -2107,8 +1539,8 @@ public final class org/maplibre/compose/layers/LocationIndicatorDefaults {
 }
 
 public final class org/maplibre/compose/layers/LocationIndicatorLayerComposableKt {
-	public static final fun LocationIndicatorLayer-Ni5awnM (Ljava/lang/String;Lorg/maplibre/compose/location/LocationState;FFZLorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;JJLorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;FFFFFLorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;FLandroidx/compose/runtime/Composer;IIII)V
-	public static final fun LocationIndicatorLayer-Y1F1E78 (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Position;Lorg/maplibre/spatialk/units/Bearing;Lorg/maplibre/spatialk/units/Length;Lorg/maplibre/spatialk/units/Rotation;FFZLorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;JJLorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;FFFFFLorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;Lkotlin/jvm/functions/Function0;FLandroidx/compose/runtime/Composer;IIII)V
+	public static final fun LocationIndicatorLayer-Ni5awnM (Ljava/lang/String;Lorg/maplibre/compose/location/LocationState;FFZLorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;JJLorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;FFFFFLorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;FLandroidx/compose/runtime/Composer;IIII)V
+	public static final fun LocationIndicatorLayer-Y1F1E78 (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Position;Lorg/maplibre/spatialk/units/Bearing;Lorg/maplibre/spatialk/units/Length;Lorg/maplibre/spatialk/units/Rotation;FFZLorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;JJLorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;Lorg/maplibre/compose/expressions/ast/Expression;FFFFFLorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lorg/maplibre/compose/style/TransitionOptions;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;Lkotlin/jvm/functions/Function1;FLandroidx/compose/runtime/Composer;IIII)V
 }
 
 public abstract interface class org/maplibre/compose/layers/MutableLayerHandle : org/maplibre/compose/layers/LayerHandle {
@@ -2389,10 +1821,7 @@ public abstract interface class org/maplibre/compose/map/MapEvent {
 
 public final class org/maplibre/compose/map/MapEvent$CameraMoveEnded : org/maplibre/compose/map/MapEvent {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/Boolean;)V
 	public final fun component1 ()Ljava/lang/Boolean;
-	public final fun copy (Ljava/lang/Boolean;)Lorg/maplibre/compose/map/MapEvent$CameraMoveEnded;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/map/MapEvent$CameraMoveEnded;Ljava/lang/Boolean;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapEvent$CameraMoveEnded;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAnimated ()Ljava/lang/Boolean;
 	public fun hashCode ()I
@@ -2401,10 +1830,7 @@ public final class org/maplibre/compose/map/MapEvent$CameraMoveEnded : org/mapli
 
 public final class org/maplibre/compose/map/MapEvent$CameraMoveStarted : org/maplibre/compose/map/MapEvent {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/Boolean;)V
 	public final fun component1 ()Ljava/lang/Boolean;
-	public final fun copy (Ljava/lang/Boolean;)Lorg/maplibre/compose/map/MapEvent$CameraMoveStarted;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/map/MapEvent$CameraMoveStarted;Ljava/lang/Boolean;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapEvent$CameraMoveStarted;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getAnimated ()Ljava/lang/Boolean;
 	public fun hashCode ()I
@@ -2421,10 +1847,7 @@ public final class org/maplibre/compose/map/MapEvent$CameraMoved : org/maplibre/
 
 public final class org/maplibre/compose/map/MapEvent$FrameRendered : org/maplibre/compose/map/MapEvent {
 	public static final field $stable I
-	public fun <init> (Lorg/maplibre/compose/map/RenderStats;)V
 	public final fun component1 ()Lorg/maplibre/compose/map/RenderStats;
-	public final fun copy (Lorg/maplibre/compose/map/RenderStats;)Lorg/maplibre/compose/map/MapEvent$FrameRendered;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/map/MapEvent$FrameRendered;Lorg/maplibre/compose/map/RenderStats;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapEvent$FrameRendered;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getStats ()Lorg/maplibre/compose/map/RenderStats;
 	public fun hashCode ()I
@@ -2441,11 +1864,8 @@ public final class org/maplibre/compose/map/MapEvent$Idle : org/maplibre/compose
 
 public final class org/maplibre/compose/map/MapEvent$SourceDataFailed : org/maplibre/compose/map/MapEvent {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Ljava/lang/Throwable;
-	public final fun copy (Ljava/lang/String;Ljava/lang/Throwable;)Lorg/maplibre/compose/map/MapEvent$SourceDataFailed;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/map/MapEvent$SourceDataFailed;Ljava/lang/String;Ljava/lang/Throwable;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapEvent$SourceDataFailed;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCause ()Ljava/lang/Throwable;
 	public final fun getSourceId ()Ljava/lang/String;
@@ -2455,10 +1875,7 @@ public final class org/maplibre/compose/map/MapEvent$SourceDataFailed : org/mapl
 
 public final class org/maplibre/compose/map/MapEvent$StyleLoadFailed : org/maplibre/compose/map/MapEvent {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/String;)V
 	public final fun component1 ()Ljava/lang/String;
-	public final fun copy (Ljava/lang/String;)Lorg/maplibre/compose/map/MapEvent$StyleLoadFailed;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/map/MapEvent$StyleLoadFailed;Ljava/lang/String;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapEvent$StyleLoadFailed;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getReason ()Ljava/lang/String;
 	public fun hashCode ()I
@@ -2481,20 +1898,16 @@ public final class org/maplibre/compose/map/MapLocalsKt {
 public abstract interface annotation class org/maplibre/compose/map/MapOptionsDsl : java/lang/annotation/Annotation {
 }
 
-public abstract interface class org/maplibre/compose/map/MapRuntime {
-	public abstract fun awaitClosed (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun close ()V
-	public abstract fun createMapState (Lorg/maplibre/compose/style/BaseStyle;Lorg/maplibre/compose/camera/CameraPosition;Lkotlin/jvm/functions/Function2;)Lorg/maplibre/compose/map/MapState;
+public final class org/maplibre/compose/map/MapRuntime {
+	public static final field $stable I
+	public final fun awaitClosed (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public final fun close ()V
+	public final fun createMapState (Lorg/maplibre/compose/style/BaseStyle;Lorg/maplibre/compose/camera/CameraPosition;Lkotlin/jvm/functions/Function2;)Lorg/maplibre/compose/map/MapState;
 	public static synthetic fun createMapState$default (Lorg/maplibre/compose/map/MapRuntime;Lorg/maplibre/compose/style/BaseStyle;Lorg/maplibre/compose/camera/CameraPosition;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapState;
-	public abstract fun createSnapshotter (Lorg/maplibre/compose/style/BaseStyle;Lkotlin/jvm/functions/Function2;)Lorg/maplibre/compose/map/MapSnapshotter;
+	public final fun createSnapshotter (Lorg/maplibre/compose/style/BaseStyle;Lkotlin/jvm/functions/Function2;)Lorg/maplibre/compose/map/MapSnapshotter;
 	public static synthetic fun createSnapshotter$default (Lorg/maplibre/compose/map/MapRuntime;Lorg/maplibre/compose/style/BaseStyle;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapSnapshotter;
-	public abstract fun getOfflineManager ()Lorg/maplibre/compose/offline/OfflineManager;
-	public abstract fun isClosed ()Z
-}
-
-public final class org/maplibre/compose/map/MapRuntime$DefaultImpls {
-	public static synthetic fun createMapState$default (Lorg/maplibre/compose/map/MapRuntime;Lorg/maplibre/compose/style/BaseStyle;Lorg/maplibre/compose/camera/CameraPosition;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapState;
-	public static synthetic fun createSnapshotter$default (Lorg/maplibre/compose/map/MapRuntime;Lorg/maplibre/compose/style/BaseStyle;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapSnapshotter;
+	public final fun getOfflineManager ()Lorg/maplibre/compose/offline/OfflineManager;
+	public final fun isClosed ()Z
 }
 
 public final class org/maplibre/compose/map/MapRuntimeKt {
@@ -2533,21 +1946,19 @@ public final class org/maplibre/compose/map/MapSnapshotException : java/lang/Run
 
 public final class org/maplibre/compose/map/MapSnapshotRequest {
 	public static final field $stable I
-	public fun <init> (IILorg/maplibre/compose/camera/CameraPosition;FFLandroidx/compose/ui/unit/LayoutDirection;Z)V
-	public synthetic fun <init> (IILorg/maplibre/compose/camera/CameraPosition;FFLandroidx/compose/ui/unit/LayoutDirection;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (IILorg/maplibre/compose/camera/CameraPosition;Landroidx/compose/ui/unit/Density;Landroidx/compose/ui/unit/LayoutDirection;Z)V
+	public synthetic fun <init> (IILorg/maplibre/compose/camera/CameraPosition;Landroidx/compose/ui/unit/Density;Landroidx/compose/ui/unit/LayoutDirection;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()I
 	public final fun component2 ()I
 	public final fun component3 ()Lorg/maplibre/compose/camera/CameraPosition;
-	public final fun component4 ()F
-	public final fun component5 ()F
-	public final fun component6 ()Landroidx/compose/ui/unit/LayoutDirection;
-	public final fun component7 ()Z
-	public final fun copy (IILorg/maplibre/compose/camera/CameraPosition;FFLandroidx/compose/ui/unit/LayoutDirection;Z)Lorg/maplibre/compose/map/MapSnapshotRequest;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/map/MapSnapshotRequest;IILorg/maplibre/compose/camera/CameraPosition;FFLandroidx/compose/ui/unit/LayoutDirection;ZILjava/lang/Object;)Lorg/maplibre/compose/map/MapSnapshotRequest;
+	public final fun component4 ()Landroidx/compose/ui/unit/Density;
+	public final fun component5 ()Landroidx/compose/ui/unit/LayoutDirection;
+	public final fun component6 ()Z
+	public final fun copy (IILorg/maplibre/compose/camera/CameraPosition;Landroidx/compose/ui/unit/Density;Landroidx/compose/ui/unit/LayoutDirection;Z)Lorg/maplibre/compose/map/MapSnapshotRequest;
+	public static synthetic fun copy$default (Lorg/maplibre/compose/map/MapSnapshotRequest;IILorg/maplibre/compose/camera/CameraPosition;Landroidx/compose/ui/unit/Density;Landroidx/compose/ui/unit/LayoutDirection;ZILjava/lang/Object;)Lorg/maplibre/compose/map/MapSnapshotRequest;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getCameraPosition ()Lorg/maplibre/compose/camera/CameraPosition;
-	public final fun getDensity ()F
-	public final fun getFontScale ()F
+	public final fun getDensity ()Landroidx/compose/ui/unit/Density;
 	public final fun getHeight ()I
 	public final fun getLayoutDirection ()Landroidx/compose/ui/unit/LayoutDirection;
 	public final fun getTransparent ()Z
@@ -2651,6 +2062,12 @@ public final class org/maplibre/compose/map/MaplibreMapKt {
 	public static final fun MaplibreMap (Landroidx/compose/ui/Modifier;Lorg/maplibre/compose/map/MapState;Landroidx/compose/foundation/layout/PaddingValues;Lorg/maplibre/compose/map/CameraConstraints;Lorg/maplibre/compose/map/RenderOptions;Lorg/maplibre/compose/interaction/MapInteractions;Lorg/maplibre/compose/map/MapUiOptions;Lkotlin/jvm/functions/Function3;Landroidx/compose/runtime/Composer;II)V
 }
 
+public final class org/maplibre/compose/map/MissingImageRequest {
+	public static final field $stable I
+	public final fun getId ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class org/maplibre/compose/map/MutableMapStyleState {
 	public static final field $stable I
 	public final fun getBaseStyle ()Lorg/maplibre/compose/style/BaseStyle;
@@ -2728,7 +2145,6 @@ public final class org/maplibre/compose/map/RenderOptions$Companion {
 
 public final class org/maplibre/compose/map/RenderStats {
 	public static final field $stable I
-	public synthetic fun <init> (Lorg/maplibre/compose/map/RenderStats$Mode;ZZJJJJJLkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Lorg/maplibre/compose/map/RenderStats$Mode;
 	public final fun component2 ()Z
 	public final fun component3 ()Z
@@ -2737,8 +2153,6 @@ public final class org/maplibre/compose/map/RenderStats {
 	public final fun component6 ()J
 	public final fun component7 ()J
 	public final fun component8 ()J
-	public final fun copy-NxwtSZ4 (Lorg/maplibre/compose/map/RenderStats$Mode;ZZJJJJJ)Lorg/maplibre/compose/map/RenderStats;
-	public static synthetic fun copy-NxwtSZ4$default (Lorg/maplibre/compose/map/RenderStats;Lorg/maplibre/compose/map/RenderStats$Mode;ZZJJJJJILjava/lang/Object;)Lorg/maplibre/compose/map/RenderStats;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getDrawCallCount ()J
 	public final fun getEncodingTime-UwyO8pc ()J
@@ -3084,26 +2498,26 @@ public final class org/maplibre/compose/offline/OfflinePack {
 }
 
 public abstract interface class org/maplibre/compose/offline/OfflinePackDefinition {
-	public abstract fun getMaxZoom ()Ljava/lang/Integer;
-	public abstract fun getMinZoom ()I
+	public abstract fun getMaxZoom ()Ljava/lang/Double;
+	public abstract fun getMinZoom ()D
 	public abstract fun getPixelRatio ()F
 	public abstract fun getStyleUrl ()Ljava/lang/String;
 }
 
 public final class org/maplibre/compose/offline/OfflinePackDefinition$Shape : org/maplibre/compose/offline/OfflinePackDefinition {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Geometry;FILjava/lang/Integer;)V
-	public synthetic fun <init> (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Geometry;FILjava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Geometry;FDLjava/lang/Double;)V
+	public synthetic fun <init> (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Geometry;FDLjava/lang/Double;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Lorg/maplibre/spatialk/geojson/Geometry;
 	public final fun component3 ()F
-	public final fun component4 ()I
-	public final fun component5 ()Ljava/lang/Integer;
-	public final fun copy (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Geometry;FILjava/lang/Integer;)Lorg/maplibre/compose/offline/OfflinePackDefinition$Shape;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/offline/OfflinePackDefinition$Shape;Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Geometry;FILjava/lang/Integer;ILjava/lang/Object;)Lorg/maplibre/compose/offline/OfflinePackDefinition$Shape;
+	public final fun component4 ()D
+	public final fun component5 ()Ljava/lang/Double;
+	public final fun copy (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Geometry;FDLjava/lang/Double;)Lorg/maplibre/compose/offline/OfflinePackDefinition$Shape;
+	public static synthetic fun copy$default (Lorg/maplibre/compose/offline/OfflinePackDefinition$Shape;Ljava/lang/String;Lorg/maplibre/spatialk/geojson/Geometry;FDLjava/lang/Double;ILjava/lang/Object;)Lorg/maplibre/compose/offline/OfflinePackDefinition$Shape;
 	public fun equals (Ljava/lang/Object;)Z
-	public fun getMaxZoom ()Ljava/lang/Integer;
-	public fun getMinZoom ()I
+	public fun getMaxZoom ()Ljava/lang/Double;
+	public fun getMinZoom ()D
 	public fun getPixelRatio ()F
 	public final fun getShape ()Lorg/maplibre/spatialk/geojson/Geometry;
 	public fun getStyleUrl ()Ljava/lang/String;
@@ -3113,19 +2527,19 @@ public final class org/maplibre/compose/offline/OfflinePackDefinition$Shape : or
 
 public final class org/maplibre/compose/offline/OfflinePackDefinition$TilePyramid : org/maplibre/compose/offline/OfflinePackDefinition {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/BoundingBox;FILjava/lang/Integer;)V
-	public synthetic fun <init> (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/BoundingBox;FILjava/lang/Integer;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/BoundingBox;FDLjava/lang/Double;)V
+	public synthetic fun <init> (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/BoundingBox;FDLjava/lang/Double;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Lorg/maplibre/spatialk/geojson/BoundingBox;
 	public final fun component3 ()F
-	public final fun component4 ()I
-	public final fun component5 ()Ljava/lang/Integer;
-	public final fun copy (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/BoundingBox;FILjava/lang/Integer;)Lorg/maplibre/compose/offline/OfflinePackDefinition$TilePyramid;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/offline/OfflinePackDefinition$TilePyramid;Ljava/lang/String;Lorg/maplibre/spatialk/geojson/BoundingBox;FILjava/lang/Integer;ILjava/lang/Object;)Lorg/maplibre/compose/offline/OfflinePackDefinition$TilePyramid;
+	public final fun component4 ()D
+	public final fun component5 ()Ljava/lang/Double;
+	public final fun copy (Ljava/lang/String;Lorg/maplibre/spatialk/geojson/BoundingBox;FDLjava/lang/Double;)Lorg/maplibre/compose/offline/OfflinePackDefinition$TilePyramid;
+	public static synthetic fun copy$default (Lorg/maplibre/compose/offline/OfflinePackDefinition$TilePyramid;Ljava/lang/String;Lorg/maplibre/spatialk/geojson/BoundingBox;FDLjava/lang/Double;ILjava/lang/Object;)Lorg/maplibre/compose/offline/OfflinePackDefinition$TilePyramid;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getBounds ()Lorg/maplibre/spatialk/geojson/BoundingBox;
-	public fun getMaxZoom ()Ljava/lang/Integer;
-	public fun getMinZoom ()I
+	public fun getMaxZoom ()Ljava/lang/Double;
+	public fun getMinZoom ()D
 	public fun getPixelRatio ()F
 	public fun getStyleUrl ()Ljava/lang/String;
 	public fun hashCode ()I
@@ -3499,8 +2913,6 @@ public final class org/maplibre/compose/resource/MapResourceLoad$NotModified : o
 
 public final class org/maplibre/compose/resource/MapResourceLoadRequest {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/String;Lorg/maplibre/compose/resource/MapResourceKind;Ljava/lang/String;Lorg/maplibre/compose/resource/MapResourceLoadRequest$LoadingMethod;Lorg/maplibre/compose/resource/MapResourceLoadRequest$Priority;Lorg/maplibre/compose/resource/MapResourceLoadRequest$Usage;Lorg/maplibre/compose/resource/MapResourceLoadRequest$StoragePolicy;Lkotlin/ranges/LongRange;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;[B)V
-	public synthetic fun <init> (Ljava/lang/String;Lorg/maplibre/compose/resource/MapResourceKind;Ljava/lang/String;Lorg/maplibre/compose/resource/MapResourceLoadRequest$LoadingMethod;Lorg/maplibre/compose/resource/MapResourceLoadRequest$Priority;Lorg/maplibre/compose/resource/MapResourceLoadRequest$Usage;Lorg/maplibre/compose/resource/MapResourceLoadRequest$StoragePolicy;Lkotlin/ranges/LongRange;Ljava/lang/String;Lkotlin/time/Instant;Lkotlin/time/Instant;[BILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getKind ()Lorg/maplibre/compose/resource/MapResourceKind;
 	public final fun getLoadingMethod ()Lorg/maplibre/compose/resource/MapResourceLoadRequest$LoadingMethod;
 	public final fun getPriorData ()[B
@@ -3556,11 +2968,8 @@ public abstract interface class org/maplibre/compose/resource/MapResourceProvide
 
 public final class org/maplibre/compose/resource/MapResourceRequest {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/String;Lorg/maplibre/compose/resource/MapResourceKind;)V
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Lorg/maplibre/compose/resource/MapResourceKind;
-	public final fun copy (Ljava/lang/String;Lorg/maplibre/compose/resource/MapResourceKind;)Lorg/maplibre/compose/resource/MapResourceRequest;
-	public static synthetic fun copy$default (Lorg/maplibre/compose/resource/MapResourceRequest;Ljava/lang/String;Lorg/maplibre/compose/resource/MapResourceKind;ILjava/lang/Object;)Lorg/maplibre/compose/resource/MapResourceRequest;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getKind ()Lorg/maplibre/compose/resource/MapResourceKind;
 	public final fun getUrl ()Ljava/lang/String;
@@ -3904,14 +3313,6 @@ public abstract class org/maplibre/compose/sources/Source {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class org/maplibre/compose/sources/SourceDefaults {
-	public static final field $stable I
-	public static final field INSTANCE Lorg/maplibre/compose/sources/SourceDefaults;
-	public static final field MAX_ZOOM I
-	public static final field MIN_ZOOM I
-	public static final field RASTER_TILE_SIZE I
-}
-
 public abstract interface class org/maplibre/compose/sources/SourceHandle {
 	public abstract fun getAsMutable ()Lorg/maplibre/compose/sources/MutableSourceHandle;
 	public abstract fun getAttributionHtml ()Ljava/lang/String;
@@ -4167,12 +3568,16 @@ public final class org/maplibre/compose/style/TransitionOptions {
 public abstract interface annotation class org/maplibre/compose/util/DelicateMaplibreComposeApi : java/lang/annotation/Annotation {
 }
 
-public final class org/maplibre/compose/util/DpPadding {
+public final class org/maplibre/compose/util/DpPadding : androidx/compose/foundation/layout/PaddingValues {
 	public static final field $stable I
 	public static final field Companion Lorg/maplibre/compose/util/DpPadding$Companion;
 	public fun <init> ()V
 	public synthetic fun <init> (FFFFILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public synthetic fun <init> (FFFFLkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun calculateBottomPadding-D9Ej5fM ()F
+	public fun calculateLeftPadding-u2uoSUM (Landroidx/compose/ui/unit/LayoutDirection;)F
+	public fun calculateRightPadding-u2uoSUM (Landroidx/compose/ui/unit/LayoutDirection;)F
+	public fun calculateTopPadding-D9Ej5fM ()F
 	public final fun component1-D9Ej5fM ()F
 	public final fun component2-D9Ej5fM ()F
 	public final fun component3-D9Ej5fM ()F
@@ -4193,13 +3598,17 @@ public final class org/maplibre/compose/util/DpPadding$Companion {
 	public final fun serializer ()Lkotlinx/serialization/KSerializer;
 }
 
+public final class org/maplibre/compose/util/DpPaddingKt {
+	public static final fun toDpPadding (Landroidx/compose/foundation/layout/PaddingValues;Landroidx/compose/ui/unit/LayoutDirection;)Lorg/maplibre/compose/util/DpPadding;
+}
+
 public abstract class org/maplibre/compose/util/ImageStretch {
 	public static final field $stable I
 	public static final field Companion Lorg/maplibre/compose/util/ImageStretch$Companion;
 }
 
 public final class org/maplibre/compose/util/ImageStretch$Companion {
-	public final fun capInsets (Landroidx/compose/foundation/layout/PaddingValues$Absolute;Landroidx/compose/foundation/layout/PaddingValues$Absolute;)Lorg/maplibre/compose/util/ImageStretch;
+	public final fun capInsets (Lorg/maplibre/compose/util/DpPadding;Lorg/maplibre/compose/util/DpPadding;)Lorg/maplibre/compose/util/ImageStretch;
 	public final fun capInsets-a9UjIt4 (FFFF)Lorg/maplibre/compose/util/ImageStretch;
 	public final fun invoke (Ljava/util/List;Ljava/util/List;Landroidx/compose/ui/unit/DpRect;)Lorg/maplibre/compose/util/ImageStretch;
 	public static synthetic fun invoke$default (Lorg/maplibre/compose/util/ImageStretch$Companion;Ljava/util/List;Ljava/util/List;Landroidx/compose/ui/unit/DpRect;ILjava/lang/Object;)Lorg/maplibre/compose/util/ImageStretch;

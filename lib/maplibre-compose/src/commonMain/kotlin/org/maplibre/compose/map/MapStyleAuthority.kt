@@ -24,7 +24,7 @@ import org.maplibre.compose.style.checkStyleHandle
  */
 internal class MapStyleAuthority(
   private val lifecycle: MapLifecycleAuthority,
-  private val runtime: RuntimeImplementation,
+  private val runtime: MapRuntime,
   baseStyle: BaseStyle,
 ) : MapStyleStateOwner {
   val style: MapStyleState = MapStyleState(baseStyle).also { it.attach(this) }
@@ -219,7 +219,7 @@ internal class MapStyleAuthority(
       if (binding.awaitOwner { binding.imageExists(imageId) } == true) return
       val resolved =
         try {
-          resolver(imageId)
+          resolver(MissingImageRequest(imageId))
         } catch (error: CancellationException) {
           throw error
         } catch (error: Throwable) {

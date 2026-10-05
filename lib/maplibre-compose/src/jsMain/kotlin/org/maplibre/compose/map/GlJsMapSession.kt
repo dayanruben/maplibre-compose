@@ -774,12 +774,12 @@ internal class GlJsMapSession(
   override suspend fun cameraForBounds(
     boundingBox: BoundingBox,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
   ): CameraPosition =
     checkNotNull(
-      map?.cameraPositionForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)
+      map?.cameraPositionForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)
     ) {
       "The map could not calculate a camera for the bounds"
     }
@@ -787,18 +787,24 @@ internal class GlJsMapSession(
   override suspend fun cameraForGeometry(
     geometry: Geometry,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
   ): CameraPosition =
     withMap(null as CameraPosition?) { map ->
-      map.cameraPositionForPositions(geometry.positions(), bearing, tilt, cameraPadding, fitPadding)
+      map.cameraPositionForPositions(
+        geometry.positions(),
+        bearing,
+        pitch,
+        cameraPadding,
+        fitPadding,
+      )
     } ?: throw IllegalStateException("The map could not calculate a camera for the geometry")
 
   override suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
     guard: CameraCommandGuard?,
@@ -807,7 +813,7 @@ internal class GlJsMapSession(
     cameraTransitions.releasePending()
     onMap { map ->
       if (guard?.isValid() == false) return@onMap
-      map.cameraPositionForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)?.let {
+      map.cameraPositionForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)?.let {
         map.jumpTo(it.toJumpToOptions())
       }
     }
@@ -825,7 +831,7 @@ internal class GlJsMapSession(
     anchor: CameraAnchor,
     zoom: Double?,
     bearing: Double?,
-    tilt: Double?,
+    pitch: Double?,
     animation: CameraAnimation.Ease,
     guard: CameraCommandGuard?,
   ) {
@@ -850,7 +856,7 @@ internal class GlJsMapSession(
           around = map.unprojectAt(point.x.value.toDouble(), point.y.value.toDouble()).toLngLat()
           zoom?.let { this.zoom = it }
           bearing?.let { this.bearing = it }
-          tilt?.let { pitch = it }
+          pitch?.let { this.pitch = it }
           duration = animation.duration.inWholeMilliseconds.toDouble()
           easing = animation.easing.toEasingFunction()
         }
@@ -861,14 +867,14 @@ internal class GlJsMapSession(
   override suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
     animation: CameraAnimation,
     guard: CameraCommandGuard?,
   ) {
     awaitCameraRelease(guard = guard) { map ->
-      map.cameraPositionForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)?.let {
+      map.cameraPositionForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)?.let {
         map.animateTo(it.toCameraUpdate(), animation)
       }
     }
@@ -906,35 +912,55 @@ internal class GlJsMapSession(
   private fun MaplibreMap.cameraPositionForBounds(
     boundingBox: BoundingBox,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
   ): CameraPosition? {
     val current = readCameraPosition(viewportInsets)
     val destination = current.copy(padding = cameraPadding ?: current.padding)
+    val persistentPadding = destination.effectivePadding()
+    val transientPadding = fitPadding.toPaddingOptions()
+    val combinedPadding =
+      unsafeJso<PaddingOptions> {
+        top = persistentPadding.top + transientPadding.top
+        right = persistentPadding.right + transientPadding.right
+        bottom = persistentPadding.bottom + transientPadding.bottom
+        left = persistentPadding.left + transientPadding.left
+      }
     val camera =
       cameraForBounds(
         boundingBox.toLngLatBounds(),
         unsafeJso<CameraForBoundsOptions> {
           this.bearing = bearing
-          pitch = tilt
-          mapPadding = destination.effectivePadding()
-          padding = fitPadding.toPaddingOptions()
+          this.pitch = pitch
+          absolutePadding = true
+          padding = combinedPadding
           maxZoom = getMaxZoom()
         },
       ) ?: return null
+    // GL JS returns a camera whose persistent padding includes the space around the bounds.
+    // Keep that screen placement while restoring only the destination's persistent padding.
+    val fitted = _camera.transform.clone()
+    fitted.setPadding(combinedPadding)
+    fitted.setBearing(camera.bearing)
+    fitted.setPitch(camera.pitch)
+    fitted.setZoom(camera.zoom)
+    fitted.setCenter(camera.center)
+    val boundsCenterPoint = fitted.centerPoint
+    fitted.setPadding(persistentPadding)
+    fitted.setLocationAtPoint(camera.center, boundsCenterPoint)
     return destination.copy(
-      target = camera.center.toPosition(),
+      target = fitted.center.toPosition(),
       zoom = camera.zoom.coerceIn(getMinZoom(), getMaxZoom()),
       bearing = camera.bearing,
-      tilt = camera.pitch,
+      pitch = camera.pitch,
     )
   }
 
   private fun MaplibreMap.cameraPositionForPositions(
     positions: Sequence<Position>,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
   ): CameraPosition? {
@@ -960,12 +986,12 @@ internal class GlJsMapSession(
         maxZoom = maxZoom,
       ) ?: return null
     val fit =
-      refineFitForTilt(
+      refineFitForPitch(
         transform = _camera.transform,
         fit = flat,
         positions = positions,
         bearing = bearing,
-        tilt = tilt,
+        pitch = pitch,
         width = width,
         height = height,
         edgePadding = edgePadding,
@@ -973,7 +999,7 @@ internal class GlJsMapSession(
         minZoom = minZoom,
         maxZoom = maxZoom,
       )
-    return destination.copy(bearing = bearing, target = fit.target, tilt = tilt, zoom = fit.zoom)
+    return destination.copy(bearing = bearing, target = fit.target, pitch = pitch, zoom = fit.zoom)
   }
 
   override fun setCameraConstraints(value: CameraConstraints) {
@@ -1324,7 +1350,7 @@ internal class GlJsMapSession(
     gestureToken: CameraInputToken,
   ) {
     awaitCameraRelease(gestureToken = gestureToken) { map ->
-      map.cameraPositionForBounds(fit.bounds, fit.bearing, fit.tilt, null, DpPadding.Zero)?.let {
+      map.cameraPositionForBounds(fit.bounds, fit.bearing, fit.pitch, null, DpPadding.Zero)?.let {
         map.easeTo(it.toEaseToOptions(duration))
       }
     }
@@ -1432,7 +1458,7 @@ internal class GlJsMapSession(
     center = position.target.toLngLat()
     zoom = position.zoom
     bearing = position.bearing
-    pitch = position.tilt
+    pitch = position.pitch
     padding = position.effectivePadding()
   }
 
@@ -1440,7 +1466,7 @@ internal class GlJsMapSession(
     update.target?.let { center = it.toLngLat() }
     update.zoom?.let { zoom = it }
     update.bearing?.let { bearing = it }
-    update.tilt?.let { pitch = it }
+    update.pitch?.let { pitch = it }
     update.padding?.let { padding = CameraPosition(padding = it).effectivePadding() }
   }
 

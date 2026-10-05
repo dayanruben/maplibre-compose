@@ -63,6 +63,7 @@ import org.maplibre.compose.camera.internal.CameraInputAuthority
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.ast.Expression
 import org.maplibre.compose.expressions.ast.ExpressionContext
+import org.maplibre.compose.expressions.ast.compile
 import org.maplibre.compose.expressions.dsl.const
 import org.maplibre.compose.expressions.value.BooleanValue
 import org.maplibre.compose.interaction.internal.RecognizedMapInput
@@ -148,9 +149,37 @@ internal fun platformMainDispatcher(): CoroutineDispatcher =
  * runtime failure closes all its maps and snapshotters. Use separate runtimes when their work must
  * run independently.
  */
-public interface MapRuntime {
+@Stable
+public class MapRuntime
+internal constructor(
+  internal val platformContext: Any?,
+  private val closeResources: suspend () -> Unit,
+  internal val logger: MapLog?,
+  private val offlineManagerBackend: OfflineManagerBackend = UnsupportedOfflineManager,
+  internal val physicalScope: CoroutineScope =
+    CoroutineScope(SupervisorJob() + Dispatchers.Default),
+  /** The one thread that uses map states. Engine callbacks are posted to it. */
+  internal val mainDispatcher: CoroutineDispatcher = platformMainDispatcher(),
+  /** Runs map-state work that resumes after an engine read. */
+  internal val mainScope: CoroutineScope = CoroutineScope(SupervisorJob() + mainDispatcher),
+  /** Pins map state to the main dispatcher's thread. */
+  internal val mainThread: MainThreadGuard = MainThreadGuard(mainDispatcher),
+  internal val createSnapshotterAdapter: () -> SnapshotterAdapter = ::unsupportedSnapshots,
+  internal val styleEvaluator: StyleCompositionEvaluator = DefaultStyleCompositionEvaluator,
+  internal val resourceConfig: MapResourceConfig = MapResourceConfig(),
+) {
   /** The offline packs and ambient cache managed by this runtime. */
-  public val offlineManager: OfflineManager
+  public val offlineManager: OfflineManager =
+    RuntimeBoundOfflineManager(
+      delegate = offlineManagerBackend,
+      requireRuntimeOpen = ::requireOpen,
+    )
+  private val lock = reentrantLock()
+  private val children = linkedSetOf<MapState>()
+  private val snapshotters = linkedSetOf<MapSnapshotterImplementation>()
+  private val closure = CompletableDeferred<Result<Unit>>()
+  private var closed = false
+  private var closedState: Boolean by mutableStateOf(false)
 
   /**
    * Creates a logical map with [baseStyle] and the sources, layers, and images that [content]
@@ -163,7 +192,10 @@ public interface MapRuntime {
     baseStyle: BaseStyle,
     cameraPosition: CameraPosition = CameraPosition(),
     content: @Composable @MaplibreComposable () -> Unit = {},
-  ): MapState
+  ): MapState = lock.withLock {
+    requireOpenLocked()
+    MapState(this, cameraPosition, baseStyle, content).also(children::add)
+  }
 
   /**
    * Creates an independent non-UI map with [baseStyle] and the sources, layers, and images that
@@ -175,20 +207,66 @@ public interface MapRuntime {
   public fun createSnapshotter(
     baseStyle: BaseStyle,
     content: @Composable @MaplibreComposable () -> Unit = {},
-  ): MapSnapshotter
+  ): MapSnapshotter = lock.withLock {
+    requireOpenLocked()
+    MapSnapshotterImplementation(this, baseStyle, content).also(snapshotters::add)
+  }
+
+  private fun requireOpen() {
+    lock.withLock { requireOpenLocked() }
+  }
+
+  private fun requireOpenLocked() {
+    check(!closed) { "The map runtime is closed" }
+  }
+
+  /** Marks this runtime as closed and starts child and shared-resource cleanup. */
+  public fun close() {
+    val closingChildren = lock.withLock {
+      if (closed) return
+      closed = true
+      Snapshot.withMutableSnapshot { closedState = true }
+      children.toList() to snapshotters.toList()
+    }
+    val (closingStates, closingSnapshotters) = closingChildren
+    val offlineCloseFailure = runCatching { offlineManagerBackend.close() }.exceptionOrNull()
+    closingStates.forEach(MapState::close)
+    closingSnapshotters.forEach(MapSnapshotterImplementation::close)
+    physicalScope.launch(start = CoroutineStart.UNDISPATCHED) {
+      val failures = mutableListOf<Throwable>()
+      offlineCloseFailure?.let(failures::addCleanupFailure)
+      closingStates.forEach { child ->
+        runCatching { child.awaitClosed() }.exceptionOrNull()?.let(failures::addCleanupFailure)
+      }
+      closingSnapshotters.forEach { child ->
+        runCatching { child.awaitClosed() }.exceptionOrNull()?.let(failures::addCleanupFailure)
+      }
+      runCatching { closeResources() }.exceptionOrNull()?.let(failures::addCleanupFailure)
+      mainScope.cancel()
+      closure.complete(failures.cleanupResult("Map runtime"))
+    }
+  }
 
   /** Returns true after [close] marks this runtime as closed. */
   public val isClosed: Boolean
-
-  /** Marks this runtime as closed and starts child and shared-resource cleanup. */
-  public fun close()
+    get() = closedState
 
   /**
    * Waits until every child and shared resource has finished cleanup.
    *
    * @throws MapCleanupException if cleanup fails.
    */
-  public suspend fun awaitClosed()
+  public suspend fun awaitClosed() {
+    closure.await().getOrThrow()
+  }
+
+  internal fun childClosed(child: MapState) {
+    lock.withLock { children.remove(child) }
+  }
+
+  internal fun childClosed(child: MapSnapshotterImplementation) {
+    lock.withLock { snapshotters.remove(child) }
+  }
 }
 
 /** Reports the load state for the desired base style of one logical map. */
@@ -606,33 +684,33 @@ internal constructor(
   suspend fun cameraForBounds(
     boundingBox: BoundingBox,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
   ): CameraPosition = afterViewport {
-    adapter.cameraForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)
+    adapter.cameraForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)
   }
 
   suspend fun cameraForGeometry(
     geometry: Geometry,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
   ): CameraPosition = afterViewport {
-    adapter.cameraForGeometry(geometry, bearing, tilt, cameraPadding, fitPadding)
+    adapter.cameraForGeometry(geometry, bearing, pitch, cameraPadding, fitPadding)
   }
 
   suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
     guard: CameraCommandGuard?,
   ): Unit =
     afterCameraTurn(guard) { boundGuard ->
-      adapter.fitCameraToBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding, boundGuard)
+      adapter.fitCameraToBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding, boundGuard)
     }
 
   suspend fun animateCamera(
@@ -648,18 +726,18 @@ internal constructor(
     anchor: CameraAnchor,
     zoom: Double?,
     bearing: Double?,
-    tilt: Double?,
+    pitch: Double?,
     animation: CameraAnimation.Ease,
     guard: CameraCommandGuard? = null,
   ): Unit =
     afterCameraTurn(guard) { boundGuard ->
-      adapter.animateCameraAround(anchor, zoom, bearing, tilt, animation, boundGuard)
+      adapter.animateCameraAround(anchor, zoom, bearing, pitch, animation, boundGuard)
     }
 
   suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double,
-    tilt: Double,
+    pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
     animation: CameraAnimation,
@@ -669,7 +747,7 @@ internal constructor(
       adapter.animateCameraToBounds(
         boundingBox,
         bearing,
-        tilt,
+        pitch,
         cameraPadding,
         fitPadding,
         animation,
@@ -844,7 +922,7 @@ internal class MapAttachmentChangedException :
 @Stable
 public class MapState
 internal constructor(
-  internal val runtime: RuntimeImplementation,
+  internal val runtime: MapRuntime,
   cameraPosition: CameraPosition,
   baseStyle: BaseStyle,
   content: @Composable @MaplibreComposable () -> Unit,
@@ -900,7 +978,7 @@ internal constructor(
     get() = currentMapAttachment?.cameraMoveReason ?: CameraMoveReason.None
 
   /**
-   * Returns true while the focused map consumes the keys that pan, zoom, rotate, and tilt. Enter,
+   * Returns true while the focused map consumes the keys that pan, zoom, rotate, and pitch. Enter,
    * numpad Enter, D-pad center, and a recognized map pointer gesture engage the map. Escape
    * disengages it, and Back disengages it when a key engaged it. Focus loss disengages it. A
    * focused map that is not engaged passes direction keys to focus traversal. The value is false
@@ -924,9 +1002,9 @@ internal constructor(
   /**
    * Supplies missing style images on demand. Null (the default) disables resolution.
    *
-   * Return a [ResolvedStyleImage] for the requested ID, suspending if it needs to be loaded. Be
-   * prepared to supply the same ID again after the map discards unused images. On native maps,
-   * resolved images may appear only after the affected tiles are laid out again.
+   * Return a [ResolvedStyleImage] for the [MissingImageRequest.id], suspending if it needs to be
+   * loaded. Be prepared to supply the same ID again after the map discards unused images. On native
+   * maps, resolved images may appear only after the affected tiles are laid out again.
    *
    * Return null for IDs you cannot supply. Null results and exceptions are not retried until the
    * base style reloads or the resolver is replaced.
@@ -997,13 +1075,13 @@ internal constructor(
   public suspend fun cameraForBounds(
     boundingBox: BoundingBox,
     bearing: Double = 0.0,
-    tilt: Double = 0.0,
+    pitch: Double = 0.0,
     cameraPadding: DpPadding? = null,
     fitPadding: DpPadding = DpPadding.Zero,
   ): CameraPosition =
     attachmentAuthority
       .awaitAttachment()
-      .cameraForBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding)
+      .cameraForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)
 
   /**
    * Waits for a viewport, then calculates a camera that fits every position of [geometry] without
@@ -1012,7 +1090,7 @@ internal constructor(
    *
    * Unlike [cameraForBounds], the fit follows the positions themselves rather than their bounding
    * box, so a rotated camera leaves no extra space around a diagonal route. With a bearing of zero
-   * and a tilt of zero, both queries produce the same camera.
+   * and a pitch of zero, both queries produce the same camera.
    *
    * Positions are used as given. Express a route that crosses the antimeridian with continuous
    * longitudes, such as 179 followed by 181; the query does not unwrap longitudes itself.
@@ -1025,14 +1103,14 @@ internal constructor(
   public suspend fun cameraForGeometry(
     geometry: Geometry,
     bearing: Double = 0.0,
-    tilt: Double = 0.0,
+    pitch: Double = 0.0,
     cameraPadding: DpPadding? = null,
     fitPadding: DpPadding = DpPadding.Zero,
   ): CameraPosition {
     require(geometry.positions().any()) { "The geometry contains no positions" }
     return attachmentAuthority
       .awaitAttachment()
-      .cameraForGeometry(geometry, bearing, tilt, cameraPadding, fitPadding)
+      .cameraForGeometry(geometry, bearing, pitch, cameraPadding, fitPadding)
   }
 
   /**
@@ -1045,7 +1123,7 @@ internal constructor(
   public suspend fun cameraForCoordinates(
     coordinates: Collection<Position>,
     bearing: Double = 0.0,
-    tilt: Double = 0.0,
+    pitch: Double = 0.0,
     cameraPadding: DpPadding? = null,
     fitPadding: DpPadding = DpPadding.Zero,
   ): CameraPosition {
@@ -1053,7 +1131,7 @@ internal constructor(
     return cameraForGeometry(
       MultiPoint(coordinates.toList()),
       bearing,
-      tilt,
+      pitch,
       cameraPadding,
       fitPadding,
     )
@@ -1067,14 +1145,14 @@ internal constructor(
   public suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double = 0.0,
-    tilt: Double = 0.0,
+    pitch: Double = 0.0,
     cameraPadding: DpPadding? = null,
     fitPadding: DpPadding = DpPadding.Zero,
   ): Unit = coroutineScope {
     val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
     attachmentAuthority
       .awaitAttachment()
-      .fitCameraToBounds(boundingBox, bearing, tilt, cameraPadding, fitPadding, guard)
+      .fitCameraToBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding, guard)
   }
 
   /**
@@ -1104,7 +1182,7 @@ internal constructor(
   }
 
   /**
-   * Changes zoom, bearing, or tilt while keeping [anchor] at its screen location at animation
+   * Changes zoom, bearing, or pitch while keeping [anchor] at its screen location at animation
    * start. Null camera components are omitted and can animate independently on native platforms.
    * The camera target moves to preserve the anchor; this operation does not accept a destination
    * target or a flight animation.
@@ -1119,21 +1197,21 @@ internal constructor(
    * Coroutine cancellation stops waiting; use [stopCameraMovement] to stop motion. Until selective
    * cancellation is available, anchor geometry changes stop all camera animations.
    *
-   * Anchor preservation applies to flat Mercator maps, including tilted cameras. Camera constraints
-   * take precedence and can move the anchor. Globe and terrain do not have this guarantee. On
-   * Android, the system animator duration scale multiplies the duration. Zero duration applies the
-   * anchored endpoint immediately.
+   * Anchor preservation applies to flat Mercator maps, including pitched cameras. Camera
+   * constraints take precedence and can move the anchor. Globe and terrain do not have this
+   * guarantee. On Android, the system animator duration scale multiplies the duration. Zero
+   * duration applies the anchored endpoint immediately.
    */
   public suspend fun animateCameraAround(
     anchor: CameraAnchor,
     zoom: Double? = null,
     bearing: Double? = null,
-    tilt: Double? = null,
+    pitch: Double? = null,
     animation: CameraAnimation.Ease = CameraAnimation.Ease(),
   ): Unit = coroutineScope {
     require(zoom == null || zoom.isFinite()) { "Zoom must be finite" }
     require(bearing == null || bearing.isFinite()) { "Bearing must be finite" }
-    require(tilt == null || tilt.isFinite()) { "Tilt must be finite" }
+    require(pitch == null || pitch.isFinite()) { "Pitch must be finite" }
     require(animation.duration.isFinite() && animation.duration >= Duration.ZERO) {
       "Duration must be finite and nonnegative"
     }
@@ -1145,7 +1223,7 @@ internal constructor(
         anchor,
         zoom,
         bearing,
-        tilt,
+        pitch,
         animation.copy(duration = animation.duration.scaledBy(systemAnimatorDurationScale())),
         guard,
       )
@@ -1163,7 +1241,7 @@ internal constructor(
   public suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
     bearing: Double = 0.0,
-    tilt: Double = 0.0,
+    pitch: Double = 0.0,
     cameraPadding: DpPadding? = null,
     fitPadding: DpPadding = DpPadding.Zero,
     animation: CameraAnimation = CameraAnimation.Fly(),
@@ -1174,7 +1252,7 @@ internal constructor(
       .animateCameraToBounds(
         boundingBox,
         bearing,
-        tilt,
+        pitch,
         cameraPadding,
         fitPadding,
         animation.scaledBy(systemAnimatorDurationScale()),
@@ -1361,7 +1439,7 @@ public fun rememberMapState(
 private fun defaultMapRuntime(): MapRuntime {
   if (!LocalInspectionMode.current) return DefaultMapRuntime.instance
   val runtime = remember {
-    RuntimeImplementation(
+    MapRuntime(
       platformContext = null,
       closeResources = {},
       logger = null,
@@ -1384,7 +1462,7 @@ private fun mapStateSaver(
           bearing,
           target.longitude,
           target.latitude,
-          tilt,
+          pitch,
           zoom,
           padding.left.value.toDouble(),
           padding.top.value.toDouble(),
@@ -1402,7 +1480,7 @@ private fun mapStateSaver(
             CameraPosition(
               bearing = values[0],
               target = Position(longitude = values[1], latitude = values[2]),
-              tilt = values[3],
+              pitch = values[3],
               zoom = values[4],
               padding =
                 DpPadding(
@@ -1417,99 +1495,3 @@ private fun mapStateSaver(
         .also { it.style.baseStyleDeclared = true }
     },
   )
-
-internal class RuntimeImplementation(
-  internal val platformContext: Any?,
-  private val closeResources: suspend () -> Unit,
-  internal val logger: MapLog?,
-  private val offlineManagerBackend: OfflineManagerBackend = UnsupportedOfflineManager,
-  internal val physicalScope: CoroutineScope =
-    CoroutineScope(SupervisorJob() + Dispatchers.Default),
-  /** The one thread that uses map states. Engine callbacks are posted to it. */
-  internal val mainDispatcher: CoroutineDispatcher = platformMainDispatcher(),
-  /** Runs map-state work that resumes after an engine read. */
-  internal val mainScope: CoroutineScope = CoroutineScope(SupervisorJob() + mainDispatcher),
-  /** Pins map state to the main dispatcher's thread. */
-  internal val mainThread: MainThreadGuard = MainThreadGuard(mainDispatcher),
-  internal val createSnapshotterAdapter: () -> SnapshotterAdapter = ::unsupportedSnapshots,
-  internal val styleEvaluator: StyleCompositionEvaluator = DefaultStyleCompositionEvaluator,
-  internal val resourceConfig: MapResourceConfig = MapResourceConfig(),
-) : MapRuntime {
-  override val offlineManager: OfflineManager =
-    RuntimeBoundOfflineManager(
-      delegate = offlineManagerBackend,
-      requireRuntimeOpen = ::requireOpen,
-    )
-  private val lock = reentrantLock()
-  private val children = linkedSetOf<MapState>()
-  private val snapshotters = linkedSetOf<MapSnapshotterImplementation>()
-  private val closure = CompletableDeferred<Result<Unit>>()
-  private var closed = false
-  private var closedState: Boolean by mutableStateOf(false)
-
-  final override fun createMapState(
-    baseStyle: BaseStyle,
-    cameraPosition: CameraPosition,
-    content: @Composable @MaplibreComposable () -> Unit,
-  ): MapState = lock.withLock {
-    requireOpenLocked()
-    MapState(this, cameraPosition, baseStyle, content).also(children::add)
-  }
-
-  final override fun createSnapshotter(
-    baseStyle: BaseStyle,
-    content: @Composable @MaplibreComposable () -> Unit,
-  ): MapSnapshotter = lock.withLock {
-    requireOpenLocked()
-    MapSnapshotterImplementation(this, baseStyle, content).also(snapshotters::add)
-  }
-
-  private fun requireOpen() {
-    lock.withLock { requireOpenLocked() }
-  }
-
-  private fun requireOpenLocked() {
-    check(!closed) { "The map runtime is closed" }
-  }
-
-  override fun close() {
-    val closingChildren = lock.withLock {
-      if (closed) return
-      closed = true
-      Snapshot.withMutableSnapshot { closedState = true }
-      children.toList() to snapshotters.toList()
-    }
-    val (closingStates, closingSnapshotters) = closingChildren
-    val offlineCloseFailure = runCatching { offlineManagerBackend.close() }.exceptionOrNull()
-    closingStates.forEach(MapState::close)
-    closingSnapshotters.forEach(MapSnapshotterImplementation::close)
-    physicalScope.launch(start = CoroutineStart.UNDISPATCHED) {
-      val failures = mutableListOf<Throwable>()
-      offlineCloseFailure?.let(failures::addCleanupFailure)
-      closingStates.forEach { child ->
-        runCatching { child.awaitClosed() }.exceptionOrNull()?.let(failures::addCleanupFailure)
-      }
-      closingSnapshotters.forEach { child ->
-        runCatching { child.awaitClosed() }.exceptionOrNull()?.let(failures::addCleanupFailure)
-      }
-      runCatching { closeResources() }.exceptionOrNull()?.let(failures::addCleanupFailure)
-      mainScope.cancel()
-      closure.complete(failures.cleanupResult("Map runtime"))
-    }
-  }
-
-  override val isClosed: Boolean
-    get() = closedState
-
-  override suspend fun awaitClosed() {
-    closure.await().getOrThrow()
-  }
-
-  internal fun childClosed(child: MapState) {
-    lock.withLock { children.remove(child) }
-  }
-
-  internal fun childClosed(child: MapSnapshotterImplementation) {
-    lock.withLock { snapshotters.remove(child) }
-  }
-}
