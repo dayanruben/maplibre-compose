@@ -78,10 +78,10 @@ a matching provisioning profile, and `CODE_SIGN_ENTITLEMENTS` set to
 ## Documentation and versions
 
 Build the site with `mise run build:docs` or serve it with `mise run //docs:dev`
-rather than calling Astro or Gradle directly. The tasks derive versions from
-Git tags when available, which the site quotes as dependency coordinates;
-tagless compatibility checkouts use the `0.0.0` placeholders from
-`gradle.properties`, as direct Gradle builds do.
+rather than calling Astro or Gradle directly. The tasks derive versions from Git
+tags when available, which the site quotes as dependency coordinates; tagless
+compatibility checkouts use the `0.0.0` placeholders from `gradle.properties`,
+as direct Gradle builds do.
 
 Releases are tagged `vMAJOR.MINOR.PATCH`. Any other commit builds as a snapshot
 of the next patch; `mise run version` prints what this checkout builds as.
