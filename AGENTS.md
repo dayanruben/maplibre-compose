@@ -69,9 +69,10 @@ repository means the MapLibre Native backend used by desktop, Android, and iOS.
 - Dependency, plugin, Android SDK, and JVM versions belong in
   `gradle/libs.versions.toml`. `gradle.properties` holds build switches and
   placeholder release versions.
-- `.mise/bin/version-args` derives published versions from `vMAJOR.MINOR.PATCH`
-  tags and passes them to Gradle, so Gradle configuration does not depend on the
-  checkout's Git state. Keep Git access in mise tasks and scripts.
+- `.mise/bin/version-args` derives version flags from `vMAJOR.MINOR.PATCH` tags
+  when available and uses the committed placeholders in tagless compatibility
+  checkouts. Release mode still requires an exact tag. Keep Git access in mise
+  tasks and scripts.
 - CI jobs call mise tasks, so a job's command lives in its task. Workflows and
   composite actions pin each third-party action to a commit SHA with a
   `# version` comment, the same pin everywhere it is used;

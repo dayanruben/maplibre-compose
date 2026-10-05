@@ -1,6 +1,7 @@
 // Writes the versions the pages quote into src/generated/versions.json.
 //
-// Release and snapshot come from the Git tags, via `version-args` on stdin.
+// Release and snapshot normally come from Git tags via `version-args` on stdin;
+// tagless compatibility checkouts use the committed placeholder versions.
 // Dependency versions come from the Gradle version catalog.
 
 import fs from "node:fs";
