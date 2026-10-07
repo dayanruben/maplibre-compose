@@ -13,7 +13,7 @@ import org.maplibre.spatialk.geojson.Feature
 import org.maplibre.spatialk.geojson.GeoJsonObject
 
 /** Names the style-spec property that identifies a cluster feature. */
-internal const val CLUSTER_ID_PROPERTY = "cluster_id"
+internal const val ClusterIdProperty = "cluster_id"
 
 /**
  * Defines a map data source that contains GeoJSON data.
@@ -69,16 +69,19 @@ public class GeoJsonSource : VectorSource {
   private class FromStyle(val json: JsonObject) : Content
 
   public fun isCluster(feature: Feature<*, JsonObject?>): Boolean =
-    CLUSTER_ID_PROPERTY in feature.properties.orEmpty()
+    ClusterIdProperty in feature.properties.orEmpty()
 }
 
 /**
  * Supplies a URL, JSON document, or immutable GeoJSON object to a source.
  *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ *
  * [Features] retains the supplied object without copying it. Treat the object and every nested
  * collection and property as immutable after submission. Create a new value for each update. Native
  * engines serialize and prepare inline data on a background thread.
  */
+@Immutable
 public sealed interface GeoJsonData {
   public data class Uri(val uri: String) : GeoJsonData
 

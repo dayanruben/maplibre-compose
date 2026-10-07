@@ -1,15 +1,23 @@
 package org.maplibre.compose.offline
 
+import androidx.compose.runtime.Immutable
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Geometry
 
-/** Defines a region that an [OfflinePack] stores. */
+/**
+ * Defines a region that an [OfflinePack] stores.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 public sealed interface OfflinePackDefinition {
   public val styleUrl: String
 
   /**
-   * The scale used to resolve `{ratio}` in tile URL templates. MapLibre selects the 2x tile variant
-   * for values greater than 1.
+   * The ratio of physical pixels to density-independent pixels that the pack's resources are
+   * downloaded for, usually the screen's `Density.density`. MapLibre uses it to resolve `{ratio}`
+   * in tile URL templates, selecting the 2x tile variant for values greater than 1. Packs always
+   * include both the 1x and 2x sprites.
    */
   public val pixelRatio: Float
 
@@ -42,3 +50,9 @@ public sealed interface OfflinePackDefinition {
     override val maxZoom: Double? = null,
   ) : OfflinePackDefinition
 }
+
+/**
+ * Keeps [OfflinePackDefinition] open: callers' `when` needs an `else` branch. It has no instances.
+ */
+internal abstract class UnspecifiedOfflinePackDefinition private constructor() :
+  OfflinePackDefinition

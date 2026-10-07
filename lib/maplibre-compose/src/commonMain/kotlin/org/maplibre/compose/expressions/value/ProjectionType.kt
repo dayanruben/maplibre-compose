@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** A named map projection. See [Projection][org.maplibre.compose.style.Projection]. */
+/**
+ * A named map projection. See [Projection][org.maplibre.compose.style.Projection].
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class ProjectionType private constructor(override val value: String) :
   EnumValue, ProjectionValue {

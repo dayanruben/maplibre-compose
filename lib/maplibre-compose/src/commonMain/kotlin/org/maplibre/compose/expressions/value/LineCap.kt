@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** Display of line endings */
+/**
+ * Display of line endings
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class LineCap private constructor(override val value: String) : EnumValue {
   public companion object : EnumType<LineCap> {

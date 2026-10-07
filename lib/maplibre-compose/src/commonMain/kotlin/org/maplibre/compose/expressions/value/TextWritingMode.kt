@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** How the text will be laid out. */
+/**
+ * How the text will be laid out.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class TextWritingMode private constructor(override val value: String) : EnumValue {
   public companion object : EnumType<TextWritingMode> {

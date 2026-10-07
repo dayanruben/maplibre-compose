@@ -1,6 +1,7 @@
 package org.maplibre.compose.location
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
@@ -32,7 +33,7 @@ import org.maplibre.spatialk.units.extensions.degrees
 public class LocationState
 internal constructor(
   initialAvailability: LocationBackendAvailability = LocationBackendAvailability.Available,
-  initialPermission: LocationPermission = LocationPermission.Unknown,
+  initialPermission: LocationPermission = LocationPermission.NotDetermined,
 ) {
   /** The user's last known location measurement. */
   public var lastLocation: LocationMeasurement? by mutableStateOf(null)
@@ -89,7 +90,12 @@ internal constructor(
   }
 }
 
-/** Current state of device-heading collection managed by [rememberLocationState]. */
+/**
+ * Current state of device-heading collection managed by [rememberLocationState].
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 public sealed interface HeadingTrackingStatus {
   /** No platform heading request is active. */
   public data object Stopped : HeadingTrackingStatus
@@ -100,11 +106,26 @@ public sealed interface HeadingTrackingStatus {
   /** The active heading request has delivered a measurement. */
   public data object Tracking : HeadingTrackingStatus
 
-  /** The heading provider failed unexpectedly. */
-  public data class Unavailable(val cause: Throwable) : HeadingTrackingStatus
+  /**
+   * The heading provider failed unexpectedly.
+   *
+   * @property cause The exception that ended heading collection.
+   */
+  public data class Unavailable internal constructor(val cause: Throwable) : HeadingTrackingStatus
 }
 
-/** Current state of the foreground location updates managed by [rememberLocationState]. */
+/**
+ * Keeps [HeadingTrackingStatus] open: callers' `when` needs an `else` branch. The library never
+ * reports it.
+ */
+internal data object UnspecifiedHeadingTrackingStatus : HeadingTrackingStatus
+
+/**
+ * Current state of the foreground location updates managed by [rememberLocationState].
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 public sealed interface LocationTrackingStatus {
   /** No platform location request is active. */
   public data object Stopped : LocationTrackingStatus
@@ -115,12 +136,25 @@ public sealed interface LocationTrackingStatus {
   /** The active location request has delivered at least one measurement. */
   public data object Tracking : LocationTrackingStatus
 
-  /** An expected or unexpected condition prevents the active request from delivering a location. */
-  public data class Unavailable(
-    val reason: LocationUnavailableReason,
+  /**
+   * An expected or unexpected condition prevents the active request from delivering a location.
+   *
+   * @property reason Portable classification of the condition, or `null` when the provider has no
+   *   classification for it, such as an unexpected failure. [cause] then describes the failure.
+   * @property cause Underlying platform or provider exception, when one is available.
+   */
+  public data class Unavailable
+  internal constructor(
+    val reason: LocationUnavailableReason?,
     val cause: Throwable? = null,
   ) : LocationTrackingStatus
 }
+
+/**
+ * Keeps [LocationTrackingStatus] open: callers' `when` needs an `else` branch. The library never
+ * reports it.
+ */
+internal data object UnspecifiedLocationTrackingStatus : LocationTrackingStatus
 
 /**
  * Remembers foreground location and heading state.
@@ -132,8 +166,8 @@ public sealed interface LocationTrackingStatus {
  * provider setup, [LocationState.permission] reports foreground authorization, and
  * [LocationState.status] reports only the tracking session.
  *
- * Unknown permission allows collection to retry a non-prompting permission check. A known denial
- * stops location collection. Heading collection requires granted permission.
+ * Permission that is not determined allows collection to retry a non-prompting permission check. A
+ * known denial stops location collection. Heading collection requires granted permission.
  *
  * @param provider The [LocationProvider] to use for obtaining location updates and for observing
  *   and requesting foreground location permission. A custom provider whose
@@ -169,9 +203,10 @@ public fun rememberLocationState(
   val permission by provider.permission.collectAsState()
   val canCollectLocation =
     when (permission) {
-      LocationPermission.Unknown,
+      LocationPermission.NotDetermined,
       is LocationPermission.Granted -> true
       is LocationPermission.NotGranted -> false
+      else -> false
     }
   SideEffect {
     state.permission = permission
@@ -203,18 +238,14 @@ public fun rememberLocationState(
           .updates(request)
           .catch { error ->
             if (error is CancellationException) throw error
-            emit(
-              LocationEvent.Unavailable(
-                LocationUnavailableReason.UnexpectedFailure,
-                error,
-              )
-            )
+            emit(LocationEvent.Unavailable(reason = null, cause = error))
           }
           .collect { event ->
             when (event) {
               is LocationEvent.Update -> state.accept(event)
               is LocationEvent.Unavailable ->
                 state.status = LocationTrackingStatus.Unavailable(event.reason, event.cause)
+              else -> Unit
             }
           }
         if (

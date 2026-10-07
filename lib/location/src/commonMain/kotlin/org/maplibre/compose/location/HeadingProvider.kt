@@ -1,13 +1,17 @@
 package org.maplibre.compose.location
 
+import androidx.compose.runtime.Immutable
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.Flow
 
 /** Preferences for device-heading updates. */
+@Immutable
 public data class HeadingRequest(val minimumInterval: Duration = 1.seconds) {
   init {
-    require(!minimumInterval.isNegative()) { "minimumInterval must not be negative" }
+    require(!minimumInterval.isNegative()) {
+      "minimumInterval must not be negative, was $minimumInterval"
+    }
   }
 }
 

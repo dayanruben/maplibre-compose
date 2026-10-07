@@ -5,6 +5,7 @@ package org.maplibre.compose.map
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -72,10 +73,10 @@ import org.maplibre.compose.layers.LayerHandle
 import org.maplibre.compose.layers.LayerSummary
 import org.maplibre.compose.layers.layerHandle
 import org.maplibre.compose.logging.MapLog
-import org.maplibre.compose.offline.OfflineManager
-import org.maplibre.compose.offline.OfflineManagerBackend
-import org.maplibre.compose.offline.RuntimeBoundOfflineManager
-import org.maplibre.compose.offline.UnsupportedOfflineManager
+import org.maplibre.compose.offline.OfflineStorage
+import org.maplibre.compose.offline.OfflineStorageBackend
+import org.maplibre.compose.offline.RuntimeBoundOfflineStorage
+import org.maplibre.compose.offline.UnsupportedOfflineStorage
 import org.maplibre.compose.resource.MapResourceConfig
 import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.SourceHandle
@@ -101,6 +102,7 @@ import org.maplibre.compose.util.DpPadding
 import org.maplibre.compose.util.MaplibreComposable
 import org.maplibre.compose.util.VisibleBounds
 import org.maplibre.compose.util.VisibleRegion
+import org.maplibre.compose.util.formatToString
 import org.maplibre.compose.util.positions
 import org.maplibre.spatialk.geojson.BoundingBox
 import org.maplibre.spatialk.geojson.Feature
@@ -155,7 +157,7 @@ internal constructor(
   internal val platformContext: Any?,
   private val closeResources: suspend () -> Unit,
   internal val logger: MapLog?,
-  private val offlineManagerBackend: OfflineManagerBackend = UnsupportedOfflineManager,
+  private val offlineStorageBackend: OfflineStorageBackend = UnsupportedOfflineStorage,
   internal val physicalScope: CoroutineScope =
     CoroutineScope(SupervisorJob() + Dispatchers.Default),
   /** The one thread that uses map states. Engine callbacks are posted to it. */
@@ -169,9 +171,9 @@ internal constructor(
   internal val resourceConfig: MapResourceConfig = MapResourceConfig(),
 ) {
   /** The offline packs and ambient cache managed by this runtime. */
-  public val offlineManager: OfflineManager =
-    RuntimeBoundOfflineManager(
-      delegate = offlineManagerBackend,
+  public val offlineStorage: OfflineStorage =
+    RuntimeBoundOfflineStorage(
+      delegate = offlineStorageBackend,
       requireRuntimeOpen = ::requireOpen,
     )
   private val lock = reentrantLock()
@@ -229,7 +231,7 @@ internal constructor(
       children.toList() to snapshotters.toList()
     }
     val (closingStates, closingSnapshotters) = closingChildren
-    val offlineCloseFailure = runCatching { offlineManagerBackend.close() }.exceptionOrNull()
+    val offlineCloseFailure = runCatching { offlineStorageBackend.close() }.exceptionOrNull()
     closingStates.forEach(MapState::close)
     closingSnapshotters.forEach(MapSnapshotterImplementation::close)
     physicalScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -267,9 +269,23 @@ internal constructor(
   internal fun childClosed(child: MapSnapshotterImplementation) {
     lock.withLock { snapshotters.remove(child) }
   }
+
+  override fun toString(): String = lock.withLock {
+    formatToString(
+      "MapRuntime",
+      "closed" to closed,
+      "maps" to children.size,
+      "snapshotters" to snapshotters.size,
+    )
+  }
 }
 
-/** Reports the load state for the desired base style of one logical map. */
+/**
+ * Reports the load state for the desired base style of one logical map.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 public sealed interface StyleLoadState {
   /** No map surface can currently load the desired style. */
   public data object Pending : StyleLoadState
@@ -283,9 +299,19 @@ public sealed interface StyleLoadState {
    */
   public data object Ready : StyleLoadState
 
-  /** Loading the style or applying its composed content failed. A later revision may recover. */
-  public data class Failed(public val reason: String?) : StyleLoadState
+  /**
+   * Loading the style or applying its composed content failed. A later revision may recover.
+   *
+   * @property reason The failure message, or `null` when the failure has none.
+   */
+  public data class Failed internal constructor(public val reason: String?) : StyleLoadState
 }
+
+/**
+ * Keeps [StyleLoadState] open: callers' `when` needs an `else` branch. The library never reports
+ * it.
+ */
+internal data object UnspecifiedStyleLoadState : StyleLoadState
 
 internal interface MapStyleStateOwner {
   fun setBaseStyle(value: BaseStyle)
@@ -374,6 +400,9 @@ public class MapStyleState internal constructor(baseStyle: BaseStyle) {
       loadStateState.value = value
       loadStates.value = value
     }
+
+  // The base style is left out: a style URL or JSON can contain an access token.
+  override fun toString(): String = formatToString("MapStyleState", "loadState" to loadState)
 
   /** Suspends while a style is loading. Source and layer handles are published when it ends. */
   internal suspend fun awaitLoaded() {
@@ -574,7 +603,6 @@ public class MapStyleState internal constructor(baseStyle: BaseStyle) {
                 },
                 operations = operationGuard(current),
               )
-              ?: return@mapNotNull null
           id to handle
         }
         .toMap()
@@ -1000,17 +1028,8 @@ internal constructor(
   public val events: Flow<MapEvent> = attachmentAuthority.events
 
   /**
-   * Supplies missing style images on demand. Null (the default) disables resolution.
-   *
-   * Return a [ResolvedStyleImage] for the [MissingImageRequest.id], suspending if it needs to be
-   * loaded. Be prepared to supply the same ID again after the map discards unused images. On native
-   * maps, resolved images may appear only after the affected tiles are laid out again.
-   *
-   * Return null for IDs you cannot supply. Null results and exceptions are not retried until the
-   * base style reloads or the resolver is replaced.
-   *
-   * The resolver is called on the main thread. Replacing or clearing this property does not cancel
-   * calls already running.
+   * Supplies images that the loaded style uses but does not contain. Null (the default) disables
+   * resolution. See [MissingImageResolver] for when the map calls it.
    */
   public var missingImageResolver: MissingImageResolver?
     get() = styleAuthority.missingImageResolver
@@ -1024,6 +1043,14 @@ internal constructor(
 
   /** Marks this state as closed and starts cleanup of the current map surface. */
   public fun close(): Unit = lifecycle.close()
+
+  override fun toString(): String =
+    formatToString(
+      "MapState",
+      "closed" to isClosed,
+      "cameraPosition" to cameraPosition,
+      "style" to style,
+    )
 
   /**
    * Waits until map-surface cleanup has completed.
@@ -1209,11 +1236,11 @@ internal constructor(
     pitch: Double? = null,
     animation: CameraAnimation.Ease = CameraAnimation.Ease(),
   ): Unit = coroutineScope {
-    require(zoom == null || zoom.isFinite()) { "Zoom must be finite" }
-    require(bearing == null || bearing.isFinite()) { "Bearing must be finite" }
-    require(pitch == null || pitch.isFinite()) { "Pitch must be finite" }
+    require(zoom == null || zoom.isFinite()) { "Zoom must be finite, was $zoom" }
+    require(bearing == null || bearing.isFinite()) { "Bearing must be finite, was $bearing" }
+    require(pitch == null || pitch.isFinite()) { "Pitch must be finite, was $pitch" }
     require(animation.duration.isFinite() && animation.duration >= Duration.ZERO) {
-      "Duration must be finite and nonnegative"
+      "Duration must be finite and nonnegative, was ${animation.duration}"
     }
     val guard =
       gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job], concurrent = true)

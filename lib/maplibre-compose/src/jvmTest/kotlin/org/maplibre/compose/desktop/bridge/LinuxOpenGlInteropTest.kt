@@ -66,9 +66,8 @@ import org.lwjgl.system.MemoryUtil.memGetAddress
 import org.lwjgl.system.MemoryUtil.memPutAddress
 import org.lwjgl.system.Pointer.POINTER_SIZE
 import org.lwjgl.system.libffi.LibFFI.ffi_type_pointer
-import org.maplibre.compose.desktop.ComposeGpuContext
-import org.maplibre.compose.desktop.ComposeMapPresentationHost
 import org.maplibre.compose.desktop.OpenGlComposeGpuContext
+import org.maplibre.compose.desktop.OpenGlPresentationHost
 import org.maplibre.compose.map.MapAdapter
 import org.maplibre.compose.map.MapEvent
 import org.maplibre.compose.map.MapExtent
@@ -76,7 +75,6 @@ import org.maplibre.compose.map.MlnFfiMapSession
 import org.maplibre.compose.map.UnconfinedMain
 import org.maplibre.compose.map.createNativeMapRuntime
 import org.maplibre.compose.map.nativeOwner
-import org.maplibre.compose.mlnffi.ComposeRenderBackend
 import org.maplibre.compose.mlnffi.MapRenderBackend
 import org.maplibre.compose.mlnffi.MlnFfiFrameResult
 import org.maplibre.compose.mlnffi.MlnFfiMapDestination
@@ -96,14 +94,14 @@ class LinuxOpenGlInteropTest {
   fun `an inherited GL error does not poison the first memory import`() =
     onLinux("importing a Vulkan memory fd into OpenGL is a Linux-only path") {
       EglTestContext.create().use { egl ->
-        val host = LinuxOpenGlMapHost(EglPresentationHost(egl), packagedProducer())
+        val host = LinuxOpenGlMapHost(EglPresentationHost(egl).host, packagedProducer())
         try {
           egl.withCurrent {
             clearGlErrors()
             // OpenGL errors are sticky; leave one behind for the bridge to trip over.
             glEnable(Int.MIN_VALUE)
             val frame =
-              assertIs<MlnFfiMapFrameAcquisition.Acquired>(host.acquireFrame(FIRST_EXTENT)).frame
+              assertIs<MlnFfiMapFrameAcquisition.Acquired>(host.acquireFrame(FirstExtent)).frame
             host.releaseFrame(frame)
           }
         } finally {
@@ -116,20 +114,20 @@ class LinuxOpenGlInteropTest {
   fun `a resize can still present the last completed generation`() =
     onLinux("the Linux OpenGL bridge this resizes exists only on Linux") {
       EglTestContext.create().use { egl ->
-        val host = LinuxOpenGlMapHost(EglPresentationHost(egl), packagedProducer())
+        val host = LinuxOpenGlMapHost(EglPresentationHost(egl).host, packagedProducer())
         try {
           val first =
             InteropMap(host).use { map ->
-              egl.withCurrent { map.renderStyle(FIRST_STYLE, FIRST_EXTENT) }
+              egl.withCurrent { map.renderStyle(FirstStyle, FirstExtent) }
             }
           InteropMap(host).use { map ->
-            val second = egl.withCurrent { map.renderStyle(SECOND_STYLE, SECOND_EXTENT) }
+            val second = egl.withCurrent { map.renderStyle(SecondStyle, SecondExtent) }
 
             val oldPixel = egl.withCurrent { egl.drawAndRead(host, first) }
-            assertNear(FIRST_PIXEL, oldPixel, "retired generation after resize")
+            assertNear(FirstPixel, oldPixel, "retired generation after resize")
 
             val newPixel = egl.withCurrent { egl.drawAndRead(host, second) }
-            assertNear(SECOND_PIXEL, newPixel, "current generation after resize")
+            assertNear(SecondPixel, newPixel, "current generation after resize")
           }
         } finally {
           host.close()
@@ -143,25 +141,25 @@ class LinuxOpenGlInteropTest {
       EglTestContext.create().use { firstEgl ->
         EglTestContext.create().use { secondEgl ->
           val presentationHost = EglPresentationHost(firstEgl)
-          val host = LinuxOpenGlMapHost(presentationHost, packagedProducer())
+          val host = LinuxOpenGlMapHost(presentationHost.host, packagedProducer())
           try {
             InteropMap(host).use { map ->
-              val first = firstEgl.withCurrent { map.renderStyle(FIRST_STYLE, FIRST_EXTENT) }
+              val first = firstEgl.withCurrent { map.renderStyle(FirstStyle, FirstExtent) }
               assertNear(
-                FIRST_PIXEL,
+                FirstPixel,
                 firstEgl.withCurrent { firstEgl.drawAndRead(host, first) },
                 "first context before replacement",
               )
 
               presentationHost.replaceContext(secondEgl)
-              val second = secondEgl.withCurrent { map.pumpUntilRendered(FIRST_EXTENT) }
+              val second = secondEgl.withCurrent { map.pumpUntilRendered(FirstExtent) }
               assertTrue(
                 second.generation != first.generation,
                 "replacement context must allocate a new shared target, " +
                   "got generation ${second.generation} after ${first.generation}",
               )
               assertNear(
-                FIRST_PIXEL,
+                FirstPixel,
                 secondEgl.withCurrent { secondEgl.drawAndRead(host, second) },
                 "replacement context after a new shared target",
               )
@@ -177,15 +175,15 @@ class LinuxOpenGlInteropTest {
   fun `reusing the shared target presents the new pixels`() =
     onLinux("the Linux OpenGL bridge this reuses exists only on Linux") {
       EglTestContext.create().use { egl ->
-        val host = LinuxOpenGlMapHost(EglPresentationHost(egl), packagedProducer())
+        val host = LinuxOpenGlMapHost(EglPresentationHost(egl).host, packagedProducer())
         try {
           InteropMap(host).use { map ->
             egl.withCurrent {
-              val first = map.renderStyle(FIRST_STYLE, FIRST_EXTENT)
-              assertNear(FIRST_PIXEL, egl.drawAndRead(host, first), "live first frame")
-              val second = map.renderStyle(SECOND_STYLE, FIRST_EXTENT)
+              val first = map.renderStyle(FirstStyle, FirstExtent)
+              assertNear(FirstPixel, egl.drawAndRead(host, first), "live first frame")
+              val second = map.renderStyle(SecondStyle, FirstExtent)
               assertNear(
-                SECOND_PIXEL,
+                SecondPixel,
                 egl.drawAndRead(host, second),
                 "live second frame after reuse",
               )
@@ -212,24 +210,21 @@ class LinuxOpenGlInteropTest {
   private fun assertNear(expected: RgbaPixel, actual: RgbaPixel, label: String) {
     assertTrue(
       near(expected, actual),
-      "$label: expected $expected within $CHANNEL_TOLERANCE per channel, got $actual",
+      "$label: expected $expected within $ChannelTolerance per channel, got $actual",
     )
   }
 
-  private class EglPresentationHost(egl: EglTestContext) : ComposeMapPresentationHost {
+  private class EglPresentationHost(egl: EglTestContext) {
     private val ownerThread = Thread.currentThread()
     private var context = egl.asComposeContext()
 
-    override val description: String = "the test EGL OpenGL context"
-    override val backend: ComposeRenderBackend = ComposeRenderBackend.OpenGl
-
-    override fun gpuContext(): ComposeGpuContext = context
+    val host = OpenGlPresentationHost("the test EGL OpenGL context", { context }, ::runOnGpuThread)
 
     fun replaceContext(egl: EglTestContext) {
       context = egl.asComposeContext()
     }
 
-    override fun runOnGpuThread(action: Runnable) {
+    private fun runOnGpuThread(action: Runnable) {
       check(Thread.currentThread() === ownerThread) {
         "EGL test context used from the wrong thread"
       }
@@ -237,7 +232,9 @@ class LinuxOpenGlInteropTest {
     }
 
     private fun EglTestContext.asComposeContext() =
-      OpenGlComposeGpuContext(directContext) { action -> withCurrent { action.run() } }
+      OpenGlComposeGpuContext(directContext) { action ->
+        withCurrent { action.run() }
+      }
   }
 
   private class InteropMap(private val host: LinuxOpenGlMapHost) : AutoCloseable {
@@ -308,7 +305,7 @@ class LinuxOpenGlInteropTest {
     fun renderStyle(style: BaseStyle, extent: MapExtent): MlnFfiRenderTarget {
       val expectedStyleLoads = styleLoads + 1
       renderer.setBaseStyle(style)
-      val deadline = TimeSource.Monotonic.markNow() + TEST_TIMEOUT
+      val deadline = TimeSource.Monotonic.markNow() + TestTimeout
       var rendered: MlnFfiRenderTarget? = null
       var renderedFrames = 0
       var lastResult: MlnFfiFrameResult? = null
@@ -322,7 +319,7 @@ class LinuxOpenGlInteropTest {
         }
         failure?.let { error(it) }
         if (styleLoads < expectedStyleLoads) {
-          Thread.sleep(POLL_INTERVAL_MILLIS)
+          Thread.sleep(PollIntervalMillis)
           continue
         }
         val pumped = pumpFrame(extent)
@@ -331,13 +328,13 @@ class LinuxOpenGlInteropTest {
           renderedFrames++
           rendered = pumped.target
         }
-        Thread.sleep(POLL_INTERVAL_MILLIS)
+        Thread.sleep(PollIntervalMillis)
       }
       return checkNotNull(rendered)
     }
 
     fun pumpUntilRendered(extent: MapExtent): MlnFfiRenderTarget {
-      val deadline = TimeSource.Monotonic.markNow() + TEST_TIMEOUT
+      val deadline = TimeSource.Monotonic.markNow() + TestTimeout
       var lastResult: MlnFfiFrameResult? = null
       while (true) {
         check(deadline.hasNotPassedNow()) {
@@ -347,7 +344,7 @@ class LinuxOpenGlInteropTest {
         val pumped = pumpFrame(extent)
         lastResult = pumped.result
         if (pumped.rendered) return checkNotNull(pumped.target)
-        Thread.sleep(POLL_INTERVAL_MILLIS)
+        Thread.sleep(PollIntervalMillis)
       }
     }
 
@@ -368,7 +365,7 @@ class LinuxOpenGlInteropTest {
     override fun close() {
       renderer.onSurfaceLost(hostSession)
       runtime.close()
-      runBlocking { withTimeout(TEST_TIMEOUT.inWholeMilliseconds) { runtime.awaitClosed() } }
+      runBlocking { withTimeout(TestTimeout.inWholeMilliseconds) { runtime.awaitClosed() } }
       cacheDirectory.toFile().deleteRecursively()
     }
 
@@ -408,7 +405,7 @@ class LinuxOpenGlInteropTest {
             Surface.makeRenderTarget(
               directContext,
               false,
-              ImageInfo(DRAW_WIDTH, DRAW_HEIGHT, ColorType.RGBA_8888, ColorAlphaType.PREMUL),
+              ImageInfo(DrawWidth, DrawHeight, ColorType.RGBA_8888, ColorAlphaType.PREMUL),
             )
           ) {
             "Skia could not create the EGL test render target"
@@ -432,7 +429,7 @@ class LinuxOpenGlInteropTest {
         Density(1f),
         LayoutDirection.Ltr,
         destination.canvas.asComposeCanvas(),
-        Size(DRAW_WIDTH.toFloat(), DRAW_HEIGHT.toFloat()),
+        Size(DrawWidth.toFloat(), DrawHeight.toFloat()),
       ) {
         drew =
           host.draw(
@@ -449,9 +446,9 @@ class LinuxOpenGlInteropTest {
       destination.flushAndSubmit()
 
       Bitmap().use { bitmap ->
-        assertTrue(bitmap.allocN32Pixels(DRAW_WIDTH, DRAW_HEIGHT), "Could not allocate readback")
+        assertTrue(bitmap.allocN32Pixels(DrawWidth, DrawHeight), "Could not allocate readback")
         assertTrue(destination.readPixels(bitmap, 0, 0), "Skia could not read the presented map")
-        val color = bitmap.getColor(DRAW_WIDTH / 2, DRAW_HEIGHT / 2)
+        val color = bitmap.getColor(DrawWidth / 2, DrawHeight / 2)
         return RgbaPixel(
           red = color ushr 16 and 0xff,
           green = color ushr 8 and 0xff,
@@ -502,7 +499,7 @@ class LinuxOpenGlInteropTest {
           eglCreatePbufferSurface(
             display,
             config,
-            stack.ints(EGL_WIDTH, DRAW_WIDTH, EGL_HEIGHT, DRAW_HEIGHT, EGL_NONE),
+            stack.ints(EGL_WIDTH, DrawWidth, EGL_HEIGHT, DrawHeight, EGL_NONE),
           )
         check(surface != EGL_NO_SURFACE) { eglFailure("eglCreatePbufferSurface") }
         context = eglCreateContext(display, config, EGL_NO_CONTEXT, stack.ints(EGL_NONE))
@@ -548,7 +545,7 @@ class LinuxOpenGlInteropTest {
   private fun interface GlProcAddressCallbackI : CallbackI {
     fun invoke(context: Long, name: Long): Long
 
-    override fun getDescriptor(): Callback.Descriptor = DESCRIPTOR
+    override fun getDescriptor(): Callback.Descriptor = Descriptor
 
     override fun callback(ret: Long, args: Long) {
       val context = memGetAddress(args)
@@ -557,7 +554,7 @@ class LinuxOpenGlInteropTest {
     }
 
     companion object {
-      val DESCRIPTOR =
+      val Descriptor =
         Callback.Descriptor(
           GlProcAddressCallbackI::class.java,
           MethodHandles.lookup(),
@@ -567,7 +564,7 @@ class LinuxOpenGlInteropTest {
   }
 
   private abstract class GlProcAddressCallback :
-    Callback(GlProcAddressCallbackI.DESCRIPTOR), GlProcAddressCallbackI {
+    Callback(GlProcAddressCallbackI.Descriptor), GlProcAddressCallbackI {
     override fun address(): Long = super<Callback>.address()
 
     override fun getDescriptor(): Callback.Descriptor =
@@ -581,27 +578,27 @@ class LinuxOpenGlInteropTest {
   }
 
   private companion object {
-    const val DRAW_WIDTH = 320
-    const val DRAW_HEIGHT = 240
-    const val POLL_INTERVAL_MILLIS = 8L
-    const val CHANNEL_TOLERANCE = 2
+    const val DrawWidth = 320
+    const val DrawHeight = 240
+    const val PollIntervalMillis = 8L
+    const val ChannelTolerance = 2
 
     fun near(expected: RgbaPixel, actual: RgbaPixel): Boolean =
-      abs(expected.red - actual.red) <= CHANNEL_TOLERANCE &&
-        abs(expected.green - actual.green) <= CHANNEL_TOLERANCE &&
-        abs(expected.blue - actual.blue) <= CHANNEL_TOLERANCE &&
-        abs(expected.alpha - actual.alpha) <= CHANNEL_TOLERANCE
+      abs(expected.red - actual.red) <= ChannelTolerance &&
+        abs(expected.green - actual.green) <= ChannelTolerance &&
+        abs(expected.blue - actual.blue) <= ChannelTolerance &&
+        abs(expected.alpha - actual.alpha) <= ChannelTolerance
 
-    val TEST_TIMEOUT = 30.seconds
+    val TestTimeout = 30.seconds
 
-    val FIRST_EXTENT = MapExtent.fromLogical(256, 192, 1.0)
-    val SECOND_EXTENT = MapExtent.fromLogical(320, 240, 1.0)
+    val FirstExtent = MapExtent.fromLogical(256, 192, 1.0)
+    val SecondExtent = MapExtent.fromLogical(320, 240, 1.0)
 
-    val FIRST_PIXEL = RgbaPixel(red = 0x33, green = 0x66, blue = 0x99, alpha = 0xff)
-    val SECOND_PIXEL = RgbaPixel(red = 0x99, green = 0x33, blue = 0x66, alpha = 0xff)
+    val FirstPixel = RgbaPixel(red = 0x33, green = 0x66, blue = 0x99, alpha = 0xff)
+    val SecondPixel = RgbaPixel(red = 0x99, green = 0x33, blue = 0x66, alpha = 0xff)
 
-    val FIRST_STYLE = solidStyle("#336699")
-    val SECOND_STYLE = solidStyle("#993366")
+    val FirstStyle = solidStyle("#336699")
+    val SecondStyle = solidStyle("#993366")
 
     fun solidStyle(color: String) =
       BaseStyle.Json(

@@ -20,7 +20,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.maplibre.compose.location.DesktopLocationBackend
 import org.maplibre.compose.location.LocationAccuracy
-import org.maplibre.compose.location.LocationAccuracyAuthorization
 import org.maplibre.compose.location.LocationBackendAvailability
 import org.maplibre.compose.location.LocationEvent
 import org.maplibre.compose.location.LocationPermission
@@ -50,7 +49,8 @@ internal suspend fun <T> XdgPortalWindow?.withPortalParentWindow(action: suspend
     is XdgPortalWindow.X11 -> action("x11:${window.windowId.toString(16)}")
     is XdgPortalWindow.Wayland ->
       window.withXdgForeignHandle { handle -> action(handle?.let { "wayland:$it" }.orEmpty()) }
-    null -> action("")
+    // No window, or a kind this runtime can't name to the portal: the dialog has no parent.
+    else -> action("")
   }
 
 /**
@@ -79,7 +79,7 @@ internal suspend fun <T> XdgPortalWindow?.withPortalParentWindow(action: suspend
  * maps to [LocationUnavailableReason.PermissionDenied]. A closed session, a stopped portal service,
  * another non-success response, or a D-Bus transport failure maps to
  * [LocationUnavailableReason.TemporarilyUnavailable]. Malformed location data and other unexpected
- * failures map to [LocationUnavailableReason.UnexpectedFailure].
+ * failures report a `null` reason with the failure as the cause.
  */
 public class LinuxPortalLocationProvider
 internal constructor(
@@ -148,9 +148,9 @@ internal constructor(
  * The portal has no permission-status query. Permission therefore remains
  * [LocationPermission.NotGranted] with `canRequest = null` until a successful
  * [`Location.Start`](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Location.html#org-freedesktop-portal-location-start)
- * response maps it to [LocationPermission.Granted] with [LocationAccuracyAuthorization.Unknown].
- * Denied and unavailable responses remain `NotGranted` with `canRequest = null`. A missing portal
- * maps [backendAvailability] to [LocationBackendAvailability.Unsupported].
+ * response maps it to [LocationPermission.Granted] with a `null` accuracy authorization. Denied and
+ * unavailable responses remain `NotGranted` with `canRequest = null`. A missing portal maps
+ * [backendAvailability] to [LocationBackendAvailability.Unsupported].
  */
 public class LinuxPortalLocationPermissionRequester
 internal constructor(
@@ -199,7 +199,7 @@ internal constructor(
       try {
         mutableStatus.value =
           if (portal.requestPermission()) {
-            LocationPermission.Granted(LocationAccuracyAuthorization.Unknown)
+            LocationPermission.Granted(accuracy = null)
           } else {
             LocationPermission.NotGranted(canRequest = null)
           }

@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** In combination with [SymbolPlacement], determines the rotation behavior of icons. */
+/**
+ * In combination with [SymbolPlacement], determines the rotation behavior of icons.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class IconRotationAlignment private constructor(override val value: String) :
   EnumValue {

@@ -2,6 +2,7 @@ package org.maplibre.compose.interaction
 
 import androidx.compose.runtime.Immutable
 import kotlin.math.abs
+import org.maplibre.compose.util.formatToString
 
 /** An immutable set of bearings in degrees clockwise from north. */
 @Immutable
@@ -10,6 +11,8 @@ public class BearingTargets private constructor(internal val bearings: List<Doub
 
   override fun hashCode(): Int = bearings.hashCode()
 
+  override fun toString(): String = formatToString("BearingTargets", "bearings" to bearings)
+
   internal fun nearestDelta(bearing: Double): Double =
     bearings.map { bearingDelta(bearing, it) }.minBy { abs(it) }
 
@@ -17,14 +20,16 @@ public class BearingTargets private constructor(internal val bearings: List<Doub
     /** Finite bearings, normalized to [0, 360). Duplicate bearings are combined. */
     public fun at(vararg bearings: Double): BearingTargets {
       require(bearings.isNotEmpty()) { "At least one bearing is required" }
-      require(bearings.all { it.isFinite() }) { "Bearings must be finite" }
+      require(bearings.all { it.isFinite() }) {
+        "Bearings must be finite, were ${bearings.toList()}"
+      }
       return BearingTargets(bearings.map(::normalizeBearing).distinct().sorted())
     }
 
     /** [count] equally spaced bearings, starting at [offset] degrees clockwise from north. */
     public fun evenlySpaced(count: Int, offset: Double = 0.0): BearingTargets {
-      require(count > 0) { "count must be positive" }
-      require(offset.isFinite()) { "offset must be finite" }
+      require(count > 0) { "count must be positive, was $count" }
+      require(offset.isFinite()) { "offset must be finite, was $offset" }
       val start = normalizeBearing(offset)
       return BearingTargets(List(count) { normalizeBearing(start + it * (360.0 / count)) }.sorted())
     }

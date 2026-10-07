@@ -16,6 +16,7 @@ import org.maplibre.compose.style.MlnFfiRenderSessions
 import org.maplibre.compose.style.MlnFfiStyleBinding
 import org.maplibre.compose.style.StyleReconciler
 import org.maplibre.compose.style.StyleSnapshot
+import org.maplibre.compose.style.UnspecifiedBaseStyle
 import org.maplibre.compose.util.rethrowIfFatal
 import org.maplibre.compose.util.toCameraOptions
 import org.maplibre.compose.util.toImageBitmap
@@ -31,7 +32,7 @@ import org.maplibre.nativeffi.runtime.RuntimeEvent
 import org.maplibre.nativeffi.runtime.RuntimeEventMask
 import org.maplibre.nativeffi.runtime.RuntimeEventType
 
-private val SNAPSHOT_EVENTS =
+private val SnapshotEvents =
   RuntimeEventMask.MAP_STYLE_LOADED +
     RuntimeEventMask.MAP_LOADING_FAILED +
     RuntimeEventMask.MAP_STILL_IMAGE_FINISHED +
@@ -169,7 +170,7 @@ private class NativeSnapshotterAdapter(
         onEvent = { map, event -> handleEvent(candidate, map, event) },
         onEventsDrained = {},
         requestFrame = {},
-        mapEventMask = SNAPSHOT_EVENTS,
+        mapEventMask = SnapshotEvents,
         mapMode = MapMode.STATIC,
         onFailure = { error ->
           val failure = Result.failure<Unit>(error)
@@ -412,6 +413,7 @@ private class NativeSnapshotterAdapter(
         when (baseStyle) {
           is BaseStyle.Uri -> map.setStyleUrl(baseStyle.uri)
           is BaseStyle.Json -> map.setStyleJson(baseStyle.json.encodeToByteArray())
+          UnspecifiedBaseStyle -> error("UnspecifiedBaseStyle is never created")
         }
       } catch (_: MaplibreException) {
         // A rejected inline style also queues MAP_LOADING_FAILED. That event owns completion so it
@@ -432,9 +434,6 @@ private class NativeSnapshotterAdapter(
       runCatching { action(map) }.onFailure { operation.completion.complete(Result.failure(it)) }
     }
   }
-
-  private fun MapSnapshotRequest.extent(): MapExtent =
-    MapExtent.fromLogical(width, height, density.density.toDouble())
 
   /** One request step that snapshot events or the owner thread complete. */
   private class NativeSnapshotOperation(val awaits: Awaits) {

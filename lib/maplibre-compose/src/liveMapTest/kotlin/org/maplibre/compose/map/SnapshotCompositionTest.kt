@@ -21,6 +21,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.NonCancellable
@@ -33,7 +34,10 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.maplibre.compose.expressions.dsl.image
+import org.maplibre.compose.layers.Anchor
+import org.maplibre.compose.layers.BackgroundLayer
 import org.maplibre.compose.layers.SymbolLayer
+import org.maplibre.compose.layers.TestLayer
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeoJsonSource
@@ -56,7 +60,7 @@ class SnapshotCompositionTest {
             prepare = { _, _ -> binding },
             capture = { request, revision ->
               reconciler.apply(binding, revision)
-              FakeImageBitmap(request.width, request.height)
+              FakeImageBitmap(request.extent().width, request.extent().height)
             },
           )
         }
@@ -71,7 +75,7 @@ class SnapshotCompositionTest {
         runtime.createSnapshotter(BaseStyle.Empty) {
           if (declared) SymbolLayer("pin", source, visible = visible, iconImage = image(bitmap))
         }
-      val request = MapSnapshotRequest(4, 4)
+      val request = MapSnapshotRequest(DpSize(4.dp, 4.dp))
       snapshotter.capture(request)
       val sourceHandle = assertNotNull(snapshotter.style.sources[source])
       val layerHandle = assertNotNull(snapshotter.style.layers["pin"])
@@ -111,6 +115,44 @@ class SnapshotCompositionTest {
   }
 
   @Test
+  fun a_throwing_anchor_predicate_fails_the_capture() = runTest {
+    val binding = RecordingStyleBinding(layers = listOf(TestLayer("base", "background")))
+    val reconciler = StyleReconciler()
+    val runtime =
+      mapRuntimeForTest(
+        createSnapshotterAdapter = {
+          FakeSnapshotterAdapter(
+            prepare = { _, _ -> binding },
+            capture = { request, revision ->
+              reconciler.apply(binding, revision)
+              FakeImageBitmap(request.extent().width, request.extent().height)
+            },
+          )
+        }
+      )
+    try {
+      val snapshotter =
+        runtime.createSnapshotter(BaseStyle.Empty) {
+          Anchor.Above({ error("bad predicate") }) { BackgroundLayer("over", visible = true) }
+        }
+      val thrown =
+        assertFailsWith<MapSnapshotException> {
+          snapshotter.capture(MapSnapshotRequest(DpSize(4.dp, 4.dp)))
+        }
+      // Coroutines on the JVM can rethrow a copy that has the original exception as its cause.
+      assertTrue(
+        generateSequence<Throwable>(thrown) { it.cause }
+          .any { it is IllegalStateException && it.message == "bad predicate" },
+        "Thrown: ${thrown.stackTraceToString()}",
+      )
+      assertEquals(listOf("base"), binding.layerIds())
+    } finally {
+      runtime.close()
+      runtime.awaitClosed()
+    }
+  }
+
+  @Test
   fun snapshot_disposes_style_effects_without_holding_resource_commands() = runTest {
     val runtime = mapRuntimeForTest(createSnapshotterAdapter = { FakeSnapshotterAdapter() })
     val cleanup = CompletableDeferred<Result<Unit>>()
@@ -135,7 +177,7 @@ class SnapshotCompositionTest {
             onDispose { job.cancel() }
           }
         }
-      snapshotter.capture(MapSnapshotRequest(4, 4))
+      snapshotter.capture(MapSnapshotRequest(DpSize(4.dp, 4.dp)))
       cleanup.await().getOrThrow()
     } finally {
       runtime.close()
@@ -170,7 +212,7 @@ class SnapshotCompositionTest {
             iconImage = image(painter, size = DpSize(4.dp, 4.dp)),
           )
         }
-      val bitmap = snapshotter.capture(MapSnapshotRequest(4, 4))
+      val bitmap = snapshotter.capture(MapSnapshotRequest(DpSize(4.dp, 4.dp)))
       val pixels = IntArray(16)
       bitmap.readPixels(pixels)
       assertEquals(List(16) { 0xffff0000.toInt() }, pixels.toList())
@@ -215,8 +257,7 @@ class SnapshotCompositionTest {
         }
       snapshotter.capture(
         MapSnapshotRequest(
-          30,
-          20,
+          DpSize(30.dp, 20.dp),
           density = Density(2f, 1.5f),
           layoutDirection = LayoutDirection.Rtl,
         )
@@ -229,8 +270,7 @@ class SnapshotCompositionTest {
       value = "second"
       snapshotter.capture(
         MapSnapshotRequest(
-          10,
-          40,
+          DpSize(10.dp, 40.dp),
           density = Density(3f, 2f),
           layoutDirection = LayoutDirection.Ltr,
         )

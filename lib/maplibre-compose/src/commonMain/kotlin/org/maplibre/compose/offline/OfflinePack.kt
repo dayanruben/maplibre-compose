@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 internal interface OfflinePackOwner {
-  /** Throws [IllegalStateException] when the runtime that owns this manager is closed. */
+  /** Throws [IllegalStateException] when the runtime that owns this storage is closed. */
   fun requireRuntimeOpen()
 
   suspend fun updateMetadata(pack: OfflinePack, metadata: ByteArray)
@@ -21,7 +21,7 @@ internal constructor(
   initialMetadata: ByteArray?,
 ) {
   internal val metadataState = MutableStateFlow(initialMetadata)
-  internal val progressState = MutableStateFlow<DownloadProgress>(DownloadProgress.Unknown)
+  internal val progressState = MutableStateFlow<DownloadProgress>(DownloadProgress.NotReported)
 
   /** Arbitrary data stored alongside the downloaded resources. */
   public val metadata: StateFlow<ByteArray?> = metadataState.asStateFlow()
@@ -29,7 +29,7 @@ internal constructor(
   /**
    * The pack's current download progress.
    *
-   * A pack reads as [DownloadProgress.Unknown] until MapLibre reports its first status.
+   * A pack reads as [DownloadProgress.NotReported] until MapLibre reports its first status.
    */
   public val downloadProgress: StateFlow<DownloadProgress> = progressState.asStateFlow()
 
@@ -37,7 +37,7 @@ internal constructor(
    * Replaces the arbitrary metadata that is associated with this offline pack.
    *
    * @throws IllegalStateException if the pack's runtime is closed.
-   * @throws [OfflineManagerException] if the operation failed.
+   * @throws [OfflineStorageException] if the operation failed.
    */
   public suspend fun setMetadata(metadata: ByteArray) {
     owner.requireRuntimeOpen()

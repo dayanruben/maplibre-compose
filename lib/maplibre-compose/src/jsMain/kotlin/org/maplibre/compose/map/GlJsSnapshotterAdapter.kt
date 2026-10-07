@@ -9,7 +9,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.maplibre.compose.camera.Viewport
 import org.maplibre.compose.gljs.CanvasContextAttributes
-import org.maplibre.compose.gljs.DEFAULT_WORKER_URL
+import org.maplibre.compose.gljs.DefaultWorkerUrl
 import org.maplibre.compose.gljs.GlJsRuntime
 import org.maplibre.compose.gljs.GlJsSubscription
 import org.maplibre.compose.gljs.JumpToOptions
@@ -52,9 +52,9 @@ internal class GlJsSnapshotterAdapter(
     val pixelRatio = renderPixelRatio(request)
     val renderedWidth = (extent.width * pixelRatio).roundToInt()
     val renderedHeight = (extent.height * pixelRatio).roundToInt()
-    require(renderedWidth <= MAX_CANVAS_SIZE && renderedHeight <= MAX_CANVAS_SIZE) {
+    require(renderedWidth <= MaxCanvasSize && renderedHeight <= MaxCanvasSize) {
       "The Web snapshot needs a ${renderedWidth}x$renderedHeight render canvas, " +
-        "which exceeds MapLibre GL JS's ${MAX_CANVAS_SIZE}px canvas limit"
+        "which exceeds MapLibre GL JS's ${MaxCanvasSize}px canvas limit"
     }
   }
 
@@ -116,12 +116,14 @@ internal class GlJsSnapshotterAdapter(
    * Reads the viewport the next capture renders. GL JS adopts the resize and camera of [configure]
    * synchronously, and the loaded style's projection shapes the bounds, so this runs after both.
    */
-  private fun readViewport(map: MaplibreMap, request: MapSnapshotRequest): Viewport =
-    map.readViewport(
-      request.width.toDouble(),
-      request.height.toDouble(),
+  private fun readViewport(map: MaplibreMap, request: MapSnapshotRequest): Viewport {
+    val extent = request.extent()
+    return map.readViewport(
+      extent.width.toDouble(),
+      extent.height.toDouble(),
       viewportInsets = DpPadding.Zero.toPaddingOptions(),
     )
+  }
 
   override suspend fun capture(
     request: MapSnapshotRequest,
@@ -173,19 +175,19 @@ internal class GlJsSnapshotterAdapter(
     }
     check(open) { "The Web snapshotter is closed" }
     val host = document.createElement("div").unsafeCast<HTMLElement>()
-    host.style.cssText = GlJsMapSession.OFFSCREEN_CONTAINER_STYLE
-    host.setAttribute(SNAPSHOTTER_TARGET_ATTRIBUTE, "")
+    host.style.cssText = GlJsMapSession.OffscreenContainerStyle
+    host.setAttribute(SnapshotterTargetAttribute, "")
     size(host, request)
     awaitDocumentBody().appendChild(host)
     container = host
 
     val options =
       headlessMapOptions(host, renderPixelRatio(request), requests) {
-        maxCanvasSize = arrayOf(MAX_CANVAS_SIZE.toDouble(), MAX_CANVAS_SIZE.toDouble())
+        maxCanvasSize = arrayOf(MaxCanvasSize.toDouble(), MaxCanvasSize.toDouble())
         canvasContextAttributes =
           unsafeJso<CanvasContextAttributes> { preserveDrawingBuffer = true }
       }
-    GlJsRuntime.pointAtWorker(DEFAULT_WORKER_URL)
+    GlJsRuntime.pointAtWorker(DefaultWorkerUrl)
     return try {
       MaplibreMap(options).also { map = it }
     } catch (error: Throwable) {
@@ -255,7 +257,8 @@ internal class GlJsSnapshotterAdapter(
   }
 
   private fun renderPixelRatio(request: MapSnapshotRequest): Double {
-    val minimumRatio = 1.0 / minOf(request.width, request.height)
+    val extent = request.extent()
+    val minimumRatio = 1.0 / minOf(extent.width, extent.height)
     return maxOf(request.density.density.toDouble(), minimumRatio)
   }
 
@@ -309,11 +312,8 @@ internal class GlJsSnapshotterAdapter(
     return if (body == null) null else body.unsafeCast<HTMLElement>()
   }
 
-  private fun MapSnapshotRequest.extent(): MapExtent =
-    MapExtent.fromLogical(width, height, density.density.toDouble())
-
   private companion object {
-    const val MAX_CANVAS_SIZE = 4_096
-    const val SNAPSHOTTER_TARGET_ATTRIBUTE = "data-maplibre-compose-snapshotter"
+    const val MaxCanvasSize = 4_096
+    const val SnapshotterTargetAttribute = "data-maplibre-compose-snapshotter"
   }
 }

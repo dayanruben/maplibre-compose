@@ -55,8 +55,12 @@ public class DragRotatePitchBuilder internal constructor(from: DragRotatePitchSe
   internal fun build(): DragRotatePitchSettings {
     requireNonnegativeFinite(startSlop.value.toDouble(), "startSlop")
     requireNonnegativeFinite(mouseStartSlop.value.toDouble(), "mouseStartSlop")
-    require(bearingDegreesPerDp.isFinite()) { "bearingDegreesPerDp must be finite" }
-    require(pitchDegreesPerDp.isFinite()) { "pitchDegreesPerDp must be finite" }
+    require(bearingDegreesPerDp.isFinite()) {
+      "bearingDegreesPerDp must be finite, was $bearingDegreesPerDp"
+    }
+    require(pitchDegreesPerDp.isFinite()) {
+      "pitchDegreesPerDp must be finite, was $pitchDegreesPerDp"
+    }
     return DragRotatePitchSettings(
       startSlop,
       mouseStartSlop,
@@ -152,7 +156,7 @@ public class TransformZoomBuilder internal constructor(from: TransformZoomBindin
 
   internal fun build(): TransformZoomBinding {
     requireNonnegativeFinite(startSpanSlop.value.toDouble(), "startSpanSlop")
-    require(zoomScale.isFinite()) { "zoomScale must be finite" }
+    require(zoomScale.isFinite()) { "zoomScale must be finite, was $zoomScale" }
     return TransformZoomBinding(
       enabled,
       pointerTypes?.toSet(),
@@ -177,7 +181,7 @@ public class TransformRotateBuilder internal constructor(from: TransformRotateBi
 
   internal fun build(): TransformRotateBinding {
     requireNonnegativeFinite(startAngle, "startAngle")
-    require(rotationScale.isFinite()) { "rotationScale must be finite" }
+    require(rotationScale.isFinite()) { "rotationScale must be finite, was $rotationScale" }
     return TransformRotateBinding(
       enabled,
       pointerTypes?.toSet(),
@@ -201,7 +205,9 @@ public class TransformPitchBuilder internal constructor(from: TransformPitchBind
 
   internal fun build(): TransformPitchBinding {
     requireNonnegativeFinite(startSlop.value.toDouble(), "startSlop")
-    require(pitchDegreesPerDp.isFinite()) { "pitchDegreesPerDp must be finite" }
+    require(pitchDegreesPerDp.isFinite()) {
+      "pitchDegreesPerDp must be finite, was $pitchDegreesPerDp"
+    }
     return TransformPitchBinding(
       enabled,
       pointerTypes?.toSet(),
@@ -220,12 +226,20 @@ public class TapDragBuilder internal constructor(from: TapDragBinding) {
   public var modifiers: ModifierMatch? = from.modifiers
   public var startSlop: Dp = from.startSlop
   public var anchor: GestureAnchor = from.anchor
+
+  /**
+   * Which vertical drag direction zooms in. The default follows the platform's usual map app:
+   * [QuickZoomDirection.UpZoomsIn] on iOS, as in Apple Maps, and [QuickZoomDirection.DownZoomsIn]
+   * on Android, the browser, and desktop, including macOS, as in Google Maps.
+   */
   public var direction: QuickZoomDirection = from.direction
   public var zoomLevelsPerViewport: Double = from.zoomLevelsPerViewport
 
   internal fun build(): TapDragBinding {
     requireNonnegativeFinite(startSlop.value.toDouble(), "startSlop")
-    require(zoomLevelsPerViewport.isFinite()) { "zoomLevelsPerViewport must be finite" }
+    require(zoomLevelsPerViewport.isFinite()) {
+      "zoomLevelsPerViewport must be finite, was $zoomLevelsPerViewport"
+    }
     return TapDragBinding(
       enabled,
       pointerTypes?.toSet(),
@@ -296,7 +310,7 @@ public class ScrollBindingBuilder internal constructor(from: ScrollBinding) {
 
   internal fun build(): ScrollBinding {
     requireNonnegativeFinite(idleDuration, "idleDuration")
-    require(zoomPerDp.isFinite()) { "zoomPerDp must be finite" }
+    require(zoomPerDp.isFinite()) { "zoomPerDp must be finite, was $zoomPerDp" }
     return ScrollBinding(
       enabled,
       pointerTypes?.toSet(),
@@ -320,14 +334,28 @@ public class TapBindingBuilder internal constructor(from: TapBinding) {
   }
 
   public var anchor: GestureAnchor = from.anchor
-  public var zoomStep: Double = from.zoomStep
+
+  /**
+   * Zoom levels that one [CameraAction.ZoomIn] or [CameraAction.ZoomOut] tap changes. One zoom
+   * level doubles or halves the map scale. Must be finite; negative values reverse the direction.
+   * Building the options throws [IllegalArgumentException] for a value that is not finite.
+   */
+  public var zoomStepLevels: Double = from.zoomStepLevels
 
   internal fun build(): TapBinding {
-    require(zoomStep.isFinite()) { "zoomStep must be finite" }
-    return TapBinding(enabled, pointerTypes?.toSet(), rows, anchor, zoomStep)
+    require(zoomStepLevels.isFinite()) { "zoomStepLevels must be finite, was $zoomStepLevels" }
+    return TapBinding(enabled, pointerTypes?.toSet(), rows, anchor, zoomStepLevels)
   }
 }
 
+/**
+ * Key input and the camera steps that keys take. A press and release of a camera key moves the
+ * camera by one step. A held key moves one step per [MapInteractions.animationDuration], or one
+ * step per key repeat when that duration is zero.
+ *
+ * Each step must be finite; negative values reverse the key's direction. Building the options
+ * throws [IllegalArgumentException] for a step that is not finite.
+ */
 @MapInteractionDsl
 public class KeyBindingBuilder internal constructor(from: KeyBinding) {
   public var enabled: Boolean = from.enabled
@@ -337,30 +365,58 @@ public class KeyBindingBuilder internal constructor(from: KeyBinding) {
     rows = KeyMappingsBuilder().apply(block).build()
   }
 
+  /** Screen distance that one step of a pan key moves the map. */
   public var panStep: Dp = from.panStep
-  public var zoomStep: Double = from.zoomStep
-  public var rotateStep: Double = from.rotateStep
-  public var pitchStep: Double = from.pitchStep
+
+  /**
+   * Zoom levels that one step of a zoom key changes. One zoom level doubles or halves the map
+   * scale.
+   */
+  public var zoomStepLevels: Double = from.zoomStepLevels
+
+  /** Degrees that one step of a rotate key changes the bearing. */
+  public var bearingStepDegrees: Double = from.bearingStepDegrees
+
+  /** Degrees that one step of a pitch key changes the pitch. */
+  public var pitchStepDegrees: Double = from.pitchStepDegrees
 
   internal fun build(): KeyBinding {
-    require(panStep.value.isFinite()) { "panStep must be finite" }
-    require(zoomStep.isFinite()) { "zoomStep must be finite" }
-    require(rotateStep.isFinite()) { "rotateStep must be finite" }
-    require(pitchStep.isFinite()) { "pitchStep must be finite" }
-    return KeyBinding(enabled, rows, panStep, zoomStep, rotateStep, pitchStep)
+    require(panStep.value.isFinite()) { "panStep must be finite, was $panStep" }
+    require(zoomStepLevels.isFinite()) { "zoomStepLevels must be finite, was $zoomStepLevels" }
+    require(bearingStepDegrees.isFinite()) {
+      "bearingStepDegrees must be finite, was $bearingStepDegrees"
+    }
+    require(pitchStepDegrees.isFinite()) {
+      "pitchStepDegrees must be finite, was $pitchStepDegrees"
+    }
+    return KeyBinding(
+      enabled,
+      rows,
+      panStep,
+      zoomStepLevels,
+      bearingStepDegrees,
+      pitchStepDegrees,
+    )
   }
 }
 
+/** Zoom from rotary input, such as a watch crown. Only Android reports rotary input. */
 @MapInteractionDsl
 public class RotaryBindingBuilder internal constructor(from: RotaryBinding) {
   public var enabled: Boolean = from.enabled
-  public var zoomStep: Double = from.zoomStep
+
+  /**
+   * Zoom levels that one notch of rotary input changes. One zoom level doubles or halves the map
+   * scale. Must be finite; negative values reverse the direction. Building the options throws
+   * [IllegalArgumentException] for a value that is not finite.
+   */
+  public var zoomStepLevels: Double = from.zoomStepLevels
   public var idleDuration: Duration = from.idleDuration
 
   internal fun build(): RotaryBinding {
-    require(zoomStep.isFinite()) { "zoomStep must be finite" }
+    require(zoomStepLevels.isFinite()) { "zoomStepLevels must be finite, was $zoomStepLevels" }
     requireNonnegativeFinite(idleDuration, "idleDuration")
-    return RotaryBinding(enabled, zoomStep, idleDuration)
+    return RotaryBinding(enabled, zoomStepLevels, idleDuration)
   }
 }
 

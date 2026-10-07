@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** The hillshade algorithm used to shade a DEM. */
+/**
+ * The hillshade algorithm used to shade a DEM.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class HillshadeMethod private constructor(override val value: String) : EnumValue {
   public companion object : EnumType<HillshadeMethod> {

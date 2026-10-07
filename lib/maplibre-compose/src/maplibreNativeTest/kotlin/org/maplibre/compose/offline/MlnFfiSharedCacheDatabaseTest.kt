@@ -22,8 +22,8 @@ import org.maplibre.nativeffi.runtime.RuntimeOptions
 /**
  * Verifies that two MapLibre runtimes can use one persistent cache database.
  *
- * MapLibre binds a runtime to its creating thread and allows only one per thread, so an offline
- * manager usable without a map needs a second runtime opening the same cache file. If that is not
+ * MapLibre binds a runtime to its creating thread and allows only one per thread, so offline
+ * storage usable without a map needs a second runtime opening the same cache file. If that is not
  * safe, an FFI platform needs a process-level runtime service instead. Each runtime invalidates the
  * ambient cache so the test reaches the database instead of only pumping an idle runtime.
  */
@@ -79,7 +79,7 @@ class MlnFfiSharedCacheDatabaseTest {
     val operation = runtime.startAmbientCacheOperation(AmbientCacheOperation.INVALIDATE)
     try {
       val started = TimeSource.Monotonic.markNow()
-      while (started.elapsedNow() < CACHE_OPERATION_TIMEOUT) {
+      while (started.elapsedNow() < CacheOperationTimeout) {
         runtime.pump(100)
         val completion = runtime.completionFor(operation) ?: continue
         assertEquals(RuntimeEventType.OFFLINE_OPERATION_COMPLETED, completion.first)
@@ -102,6 +102,6 @@ class MlnFfiSharedCacheDatabaseTest {
     }
 
   private companion object {
-    val CACHE_OPERATION_TIMEOUT = 30.seconds
+    val CacheOperationTimeout = 30.seconds
   }
 }

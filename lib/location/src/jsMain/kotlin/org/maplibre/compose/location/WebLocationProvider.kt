@@ -46,9 +46,9 @@ import web.permissions.query
  * A missing Geolocation API reports [LocationBackendAvailability.Unsupported]. Permission denial
  * reports [LocationUnavailableReason.PermissionDenied] and updates [permission]. Timeouts and
  * unavailable positions report [LocationUnavailableReason.TemporarilyUnavailable]. Failure to start
- * location updates reports [LocationUnavailableReason.UnexpectedFailure].
+ * location updates reports a `null` reason with the failure as the cause.
  */
-public class BrowserLocationProvider
+public class WebLocationProvider
 internal constructor(
   private val boundary: BrowserGeolocationBoundary,
   coroutineScope: CoroutineScope,
@@ -56,7 +56,7 @@ internal constructor(
   /** Creates a provider that observes permission in [coroutineScope]. */
   public constructor(coroutineScope: CoroutineScope) : this(BrowserGeolocation, coroutineScope)
 
-  private val requester = BrowserLocationPermissionRequester(boundary, coroutineScope)
+  private val requester = WebLocationPermissionRequester(boundary, coroutineScope)
 
   override val backendAvailability: LocationBackendAvailability =
     if (boundary.supported) {
@@ -82,7 +82,8 @@ internal constructor(
             close()
             this@launch.cancel()
           }
-          LocationPermission.Unknown -> Unit
+          LocationPermission.NotDetermined,
+          UnspecifiedLocationPermission -> Unit
           is LocationPermission.NotGranted ->
             send(LocationEvent.Unavailable(LocationUnavailableReason.PermissionDenied))
         }
@@ -124,7 +125,7 @@ internal constructor(
       try {
         boundary.startWatch(request.asBrowserOptions(), ::publish)
       } catch (error: Throwable) {
-        trySend(LocationEvent.Unavailable(LocationUnavailableReason.UnexpectedFailure, error))
+        trySend(LocationEvent.Unavailable(reason = null, cause = error))
         close()
         null
       }
@@ -136,7 +137,7 @@ internal constructor(
 /**
  * Observes and requests browser geolocation permission.
  *
- * [BrowserLocationProvider] delegates [LocationProvider.permission] and
+ * [WebLocationProvider] delegates [LocationProvider.permission] and
  * [LocationProvider.requestPermission] to an instance of this class. Construct one with a
  * [CoroutineScope] to back a custom [LocationProvider].
  *
@@ -146,7 +147,7 @@ internal constructor(
  * reports `canRequest = null` until an explicit request determines the result. A missing
  * Geolocation API maps [backendAvailability] to [LocationBackendAvailability.Unsupported].
  */
-public class BrowserLocationPermissionRequester
+public class WebLocationPermissionRequester
 internal constructor(
   private val boundary: BrowserGeolocationBoundary,
   private val coroutineScope: CoroutineScope,
@@ -165,7 +166,7 @@ internal constructor(
       LocationBackendAvailability.Unsupported
     }
 
-  private val mutableStatus = MutableStateFlow<LocationPermission>(LocationPermission.Unknown)
+  private val mutableStatus = MutableStateFlow<LocationPermission>(LocationPermission.NotDetermined)
 
   /** Current foreground location permission. */
   public val status: StateFlow<LocationPermission> = mutableStatus
@@ -184,7 +185,7 @@ internal constructor(
         .permissionChanges()
         .catch { emit(BrowserPermission.Unknown) }
         .collect {
-          if (it != BrowserPermission.Unknown || status.value == LocationPermission.Unknown) {
+          if (it != BrowserPermission.Unknown || status.value == LocationPermission.NotDetermined) {
             mutableStatus.value = it.asLocationPermission()
           }
         }
@@ -213,17 +214,16 @@ internal constructor(
         when (
           val result =
             boundary.requestPosition(
-              BrowserOptions(highAccuracy = true, timeout = PERMISSION_PROBE_TIMEOUT)
+              BrowserOptions(highAccuracy = true, timeout = PermissionProbeTimeout)
             )
         ) {
           is BrowserResult.Position ->
-            mutableStatus.value = LocationPermission.Granted(LocationAccuracyAuthorization.Unknown)
+            mutableStatus.value = LocationPermission.Granted(accuracy = null)
           is BrowserResult.Error ->
             if (result.value == BrowserError.PermissionDenied) {
               acceptDenial()
             } else {
-              mutableStatus.value =
-                LocationPermission.Granted(LocationAccuracyAuthorization.Unknown)
+              mutableStatus.value = LocationPermission.Granted(accuracy = null)
             }
         }
       } catch (error: Throwable) {
@@ -236,12 +236,12 @@ internal constructor(
   }
 
   private companion object {
-    private val PERMISSION_PROBE_TIMEOUT = 1.seconds
+    private val PermissionProbeTimeout = 1.seconds
   }
 }
 
 /**
- * Browser Permissions API states that [BrowserLocationPermissionRequester] maps to
+ * Browser Permissions API states that [WebLocationPermissionRequester] maps to
  * [LocationPermission].
  */
 internal enum class BrowserPermission {
@@ -391,19 +391,19 @@ private fun BrowserPosition.asLocationMeasurement(): LocationMeasurement =
     measuredAt = capturedAt,
   )
 
-private fun BrowserError.asUnavailableReason(): LocationUnavailableReason =
+private fun BrowserError.asUnavailableReason(): LocationUnavailableReason? =
   when (this) {
     BrowserError.PermissionDenied -> LocationUnavailableReason.PermissionDenied
     BrowserError.PositionUnavailable,
     BrowserError.Timeout -> LocationUnavailableReason.TemporarilyUnavailable
-    BrowserError.Unknown -> LocationUnavailableReason.UnexpectedFailure
+    BrowserError.Unknown -> null
   }
 
 private fun BrowserPermission.asLocationPermission(): LocationPermission =
   when (this) {
     BrowserPermission.Unknown -> LocationPermission.NotGranted(canRequest = null)
     BrowserPermission.Prompt -> LocationPermission.NotGranted(canRequest = true)
-    BrowserPermission.Granted -> LocationPermission.Granted(LocationAccuracyAuthorization.Unknown)
+    BrowserPermission.Granted -> LocationPermission.Granted(accuracy = null)
     BrowserPermission.Denied -> LocationPermission.NotGranted(canRequest = false)
   }
 

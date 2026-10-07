@@ -2,7 +2,6 @@ package org.maplibre.compose.desktop.skiko
 
 import java.awt.Window
 import org.jetbrains.skia.DirectContext
-import org.maplibre.compose.desktop.ComposeGpuContext
 import org.maplibre.compose.desktop.ComposeMapPresentationHost
 import org.maplibre.compose.desktop.Direct3D12ComposeGpuContext
 import org.maplibre.compose.desktop.MetalComposeGpuContext
@@ -12,7 +11,6 @@ import org.maplibre.compose.desktop.skiko.SkikoReflection.getField
 import org.maplibre.compose.desktop.skiko.SkikoReflection.invokeDeclaredNoArg
 import org.maplibre.compose.desktop.skiko.SkikoReflection.staticInvoke
 import org.maplibre.compose.location.XdgPortalWindow
-import org.maplibre.compose.mlnffi.ComposeRenderBackend
 import org.maplibre.compose.mlnffi.NativeHandle
 
 /** Operating systems the AWT host distinguishes between. */
@@ -21,16 +19,6 @@ internal enum class HostOperatingSystem {
   Macos,
   Windows,
   Unsupported;
-
-  /** The backend Compose Desktop draws with here. */
-  val composeBackend: ComposeRenderBackend?
-    get() =
-      when (this) {
-        Linux -> ComposeRenderBackend.OpenGl
-        Macos -> ComposeRenderBackend.Metal
-        Windows -> ComposeRenderBackend.Direct3D12
-        Unsupported -> null
-      }
 
   companion object {
     fun current(): HostOperatingSystem {
@@ -52,68 +40,69 @@ internal enum class HostOperatingSystem {
  * that is confined to [SkikoReflection] and to the supplied window. An application running its own
  * Compose windowing supplies a different host and needs no reflection at all.
  */
-internal class AwtComposeMapPresentationHost(private val window: Window) :
-  ComposeMapPresentationHost {
+internal class AwtComposeMapPresentationHost(private val window: Window) {
 
   private val operatingSystem = HostOperatingSystem.current()
 
-  override val description: String
+  private val description: String
     get() = "an AWT Compose window on ${operatingSystem.name.lowercase()}"
 
-  override val xdgPortalWindow: XdgPortalWindow?
+  private val xdgPortalWindow: XdgPortalWindow?
     get() {
       if (operatingSystem != HostOperatingSystem.Linux) return null
       val windowId = SkikoReflection.findNativeWindowHandle(window) ?: return null
       return XdgPortalWindow.X11(windowId)
     }
 
-  /**
-   * The operating system determines the Compose Desktop backend, so it is available before Skiko
-   * initializes [gpuContext].
-   */
-  override val backend: ComposeRenderBackend
-    get() =
-      checkNotNull(operatingSystem.composeBackend) {
-        "MapLibre Compose has no desktop GPU bridge for ${System.getProperty("os.name")}."
-      }
+  val presentationHost: ComposeMapPresentationHost =
+    when (operatingSystem) {
+      HostOperatingSystem.Macos ->
+        ComposeMapPresentationHost.metal(
+          "$description using Metal",
+          { SkikoReflection.findSkiaLayer(window)?.let(::metalContext) },
+          ::runOnGpuThread,
+          { xdgPortalWindow },
+        )
+      HostOperatingSystem.Windows ->
+        ComposeMapPresentationHost.direct3D12(
+          "$description using Direct3D 12",
+          { SkikoReflection.findSkiaLayer(window)?.let(::direct3D12Context) },
+          ::runOnGpuThread,
+          { xdgPortalWindow },
+        )
+      HostOperatingSystem.Linux ->
+        ComposeMapPresentationHost.openGl(
+          "$description using OpenGL",
+          { SkikoReflection.findSkiaLayer(window)?.let(::openGlContext) },
+          ::runOnGpuThread,
+          { xdgPortalWindow },
+        )
+      HostOperatingSystem.Unsupported ->
+        error("MapLibre Compose has no desktop GPU bridge for ${System.getProperty("os.name")}.")
+    }
 
   /**
    * Skiko updates pictures on the AWT event thread, then Metal and Direct3D replay them on a render
    * worker. Their render lock keeps shared textures and the Skia context out of both threads at
    * once. Linux replays on the event thread itself.
    */
-  override fun runOnGpuThread(action: Runnable) {
+  private fun runOnGpuThread(action: Runnable) {
     SkikoReflection.onEdt {
       val layer = SkikoReflection.findSkiaLayer(window)
       val renderLock =
         when (operatingSystem) {
           HostOperatingSystem.Macos ->
             layer?.let {
-              SkikoReflection.requireRenderLock(it, SkikoReflection.METAL_REDRAWER_CLASS)
+              SkikoReflection.requireRenderLock(it, SkikoReflection.MetalRedrawerClass)
             }
           HostOperatingSystem.Windows ->
             layer?.let {
-              SkikoReflection.requireRenderLock(it, SkikoReflection.DIRECT3D_REDRAWER_CLASS)
+              SkikoReflection.requireRenderLock(it, SkikoReflection.Direct3dRedrawerClass)
             }
           HostOperatingSystem.Linux,
           HostOperatingSystem.Unsupported -> null
         }
       if (renderLock == null) action.run() else synchronized(renderLock) { action.run() }
-    }
-  }
-
-  /**
-   * Null until Compose Desktop has a window whose Skia context exists, which on Linux means until
-   * it has drawn a frame. A redrawer for a backend other than [backend] is a different matter, and
-   * throws.
-   */
-  override fun gpuContext(): ComposeGpuContext? {
-    val layer = SkikoReflection.findSkiaLayer(window) ?: return null
-    return when (operatingSystem) {
-      HostOperatingSystem.Macos -> metalContext(layer)
-      HostOperatingSystem.Linux -> openGlContext(layer)
-      HostOperatingSystem.Windows -> direct3D12Context(layer)
-      HostOperatingSystem.Unsupported -> null
     }
   }
 
@@ -124,16 +113,16 @@ internal class AwtComposeMapPresentationHost(private val window: Window) :
     // Skiko's device object is its own wrapper; `adapter` holds the real `id<MTLDevice>`, which is
     // what MapLibre's texture has to be allocated on.
     val adapter =
-      ObjectiveC.sendPointer(device.ptr, SkikoReflection.SKIKO_METAL_DEVICE_ADAPTER).takeIf {
+      ObjectiveC.sendPointer(device.ptr, SkikoReflection.SkikoMetalDeviceAdapter).takeIf {
         it != 0L
       } ?: return null
     return MetalComposeGpuContext(skiaContext = skiaContext, device = NativeHandle(adapter))
   }
 
   private fun direct3D12Context(layer: Any): Direct3D12ComposeGpuContext? {
-    val redrawer = SkikoReflection.requireRedrawer(layer, SkikoReflection.DIRECT3D_REDRAWER_CLASS)
+    val redrawer = SkikoReflection.requireRedrawer(layer, SkikoReflection.Direct3dRedrawerClass)
     val handler =
-      SkikoReflection.requireContextHandler(redrawer, SkikoReflection.DIRECT3D_REDRAWER_CLASS)
+      SkikoReflection.requireContextHandler(redrawer, SkikoReflection.Direct3dRedrawerClass)
     val skiaContext = handler.directContext(makeContext = "makeContext") ?: return null
     val device = SkikoReflection.findDirect3DDevice(redrawer) ?: return null
     val rawDevice = SkikoDirect3DDeviceLayout.rawDevice(device).takeIf { it != 0L } ?: return null
@@ -141,10 +130,9 @@ internal class AwtComposeMapPresentationHost(private val window: Window) :
   }
 
   private fun openGlContext(layer: Any): OpenGlComposeGpuContext? {
-    val redrawer =
-      SkikoReflection.requireRedrawer(layer, SkikoReflection.LINUX_OPENGL_REDRAWER_CLASS)
+    val redrawer = SkikoReflection.requireRedrawer(layer, SkikoReflection.LinuxOpenGlRedrawerClass)
     val handler =
-      SkikoReflection.requireContextHandler(redrawer, SkikoReflection.LINUX_OPENGL_REDRAWER_CLASS)
+      SkikoReflection.requireContextHandler(redrawer, SkikoReflection.LinuxOpenGlRedrawerClass)
     val skiaContext = handler.directContext() ?: return null
     return OpenGlComposeGpuContext(
       skiaContext = skiaContext,
@@ -159,16 +147,16 @@ internal class AwtComposeMapPresentationHost(private val window: Window) :
   private fun withOpenGlContextCurrent(layer: Any, redrawer: Any, action: Runnable) {
     val backedLayer =
       layer.getField("backedLayer")
-        ?: error("${SkikoReflection.SKIA_LAYER_CLASS}.backedLayer was null")
+        ?: error("${SkikoReflection.SkiaLayerClass}.backedLayer was null")
     val context =
       redrawer.getField("context") as? Long
-        ?: error("${SkikoReflection.LINUX_OPENGL_REDRAWER_CLASS}.context was null")
-    check(context != 0L) { "${SkikoReflection.LINUX_OPENGL_REDRAWER_CLASS}.context was zero" }
+        ?: error("${SkikoReflection.LinuxOpenGlRedrawerClass}.context was null")
+    check(context != 0L) { "${SkikoReflection.LinuxOpenGlRedrawerClass}.context was zero" }
 
-    val surfaceHelpers = Class.forName(SkikoReflection.AWT_LINUX_DRAWING_SURFACE_HELPERS_CLASS)
+    val surfaceHelpers = Class.forName(SkikoReflection.AwtLinuxDrawingSurfaceHelpersClass)
     val drawingSurface = surfaceHelpers.staticInvoke("lockLinuxDrawingSurface", backedLayer)
     try {
-      Class.forName(SkikoReflection.LINUX_OPENGL_REDRAWER_HELPERS_CLASS)
+      Class.forName(SkikoReflection.LinuxOpenGlRedrawerHelpersClass)
         .staticInvoke("access\$makeCurrent", drawingSurface, context)
       action.run()
     } finally {

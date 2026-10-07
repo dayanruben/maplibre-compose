@@ -19,9 +19,10 @@ class RasterDemTileSourceJsonTest {
     val json =
       RasterDemTileSource(
           id = "dem",
-          tiles = listOf(TILE_TEMPLATE),
-          options = TileSetOptions(tileCoordinateSystem = TileCoordinateSystem.Tms),
-          demEncoding = RasterDemEncoding.Custom(redFactor = 2f),
+          tiles = listOf(TileTemplate),
+          options = TileSetOptions(scheme = TileScheme.Tms),
+          demEncoding = RasterDemEncoding.Custom,
+          redFactor = 2f,
         )
         .toJson()
 
@@ -36,8 +37,9 @@ class RasterDemTileSourceJsonTest {
     val source =
       RasterDemTileSource(
         id = "dem",
-        tiles = listOf(TILE_TEMPLATE),
-        demEncoding = RasterDemEncoding.Custom(redFactor = 2f),
+        tiles = listOf(TileTemplate),
+        demEncoding = RasterDemEncoding.Custom,
+        redFactor = 2f,
       )
 
     SourceInstallation(binding, source.definition())
@@ -53,8 +55,10 @@ class RasterDemTileSourceJsonTest {
     val source =
       RasterDemTileSource(
         id = "dem",
-        tiles = listOf(TILE_TEMPLATE),
-        demEncoding = RasterDemEncoding.Custom(redFactor = 2f, baseShift = 3f),
+        tiles = listOf(TileTemplate),
+        demEncoding = RasterDemEncoding.Custom,
+        redFactor = 2f,
+        baseShift = 3f,
       )
 
     SourceInstallation(binding, source.definition())
@@ -66,8 +70,23 @@ class RasterDemTileSourceJsonTest {
   }
 
   @Test
+  fun a_named_encoding_ignores_the_custom_factors() {
+    val json =
+      RasterDemTileSource(
+          id = "dem",
+          tiles = listOf(TileTemplate),
+          demEncoding = RasterDemEncoding.Terrarium,
+          redFactor = 2f,
+        )
+        .toJson()
+
+    assertEquals("terrarium", json["encoding"]?.jsonPrimitive?.content)
+    assertFalse("redFactor" in json)
+  }
+
+  @Test
   fun a_definition_keeps_the_tiles_present_when_it_was_created() {
-    val tiles = mutableListOf(TILE_TEMPLATE)
+    val tiles = mutableListOf(TileTemplate)
     val definition = RasterDemTileSource(id = "dem", tiles = tiles).definition()
     tiles[0] = "https://changed.invalid/{z}/{x}/{y}.png"
     val binding = RecordingStyleBinding()
@@ -76,7 +95,7 @@ class RasterDemTileSourceJsonTest {
 
     val installedTile =
       assertNotNull(binding.sources["dem"])["tiles"]?.jsonArray?.single()?.jsonPrimitive?.content
-    assertEquals(TILE_TEMPLATE, installedTile)
+    assertEquals(TileTemplate, installedTile)
   }
 
   @Test
@@ -85,8 +104,8 @@ class RasterDemTileSourceJsonTest {
     val source =
       RasterDemTileSource(
         id = "dem",
-        tiles = listOf(TILE_TEMPLATE),
-        options = TileSetOptions(tileCoordinateSystem = TileCoordinateSystem.Xyz),
+        tiles = listOf(TileTemplate),
+        options = TileSetOptions(scheme = TileScheme.Xyz),
       )
 
     SourceInstallation(binding, source.definition())
@@ -100,14 +119,14 @@ class RasterDemTileSourceJsonTest {
     val source =
       RasterDemTileSource(
         id = "dem",
-        tiles = listOf(TILE_TEMPLATE),
-        options = TileSetOptions(tileCoordinateSystem = TileCoordinateSystem.Tms),
+        tiles = listOf(TileTemplate),
+        options = TileSetOptions(scheme = TileScheme.Tms),
       )
 
     val error =
       assertFailsWith<IllegalStateException> { SourceInstallation(binding, source.definition()) }
 
-    assertContains(error.message.orEmpty(), "TileCoordinateSystem.Xyz")
+    assertContains(error.message.orEmpty(), "TileScheme.Xyz")
     assertFalse("dem" in binding.sources)
   }
 
@@ -125,6 +144,6 @@ class RasterDemTileSourceJsonTest {
 
   private companion object {
     /** Unresolvable on purpose: tests must not reach the network. */
-    const val TILE_TEMPLATE = "https://example.invalid/{z}/{x}/{y}.png"
+    const val TileTemplate = "https://example.invalid/{z}/{x}/{y}.png"
   }
 }

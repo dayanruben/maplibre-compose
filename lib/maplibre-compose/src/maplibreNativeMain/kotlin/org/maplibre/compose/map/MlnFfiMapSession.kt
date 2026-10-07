@@ -50,6 +50,7 @@ import org.maplibre.compose.style.StylePresentation
 import org.maplibre.compose.style.StyleReconciler
 import org.maplibre.compose.style.StyleRequestId
 import org.maplibre.compose.style.StyleSnapshot
+import org.maplibre.compose.style.UnspecifiedBaseStyle
 import org.maplibre.compose.util.DpPadding
 import org.maplibre.compose.util.mercatorPixelDistance
 import org.maplibre.compose.util.metersPerDpAtLatitude
@@ -88,19 +89,19 @@ import org.maplibre.spatialk.geojson.Geometry
 import org.maplibre.spatialk.geojson.Position
 import org.maplibre.spatialk.geojson.toJson
 
-private const val MIN_PITCH_DEGREES = 0.0
+private const val MinPitchDegrees = 0.0
 
 /** MapLibre rejects a pitch beyond this, so the drag is clamped rather than throwing. */
-private const val MAX_PITCH_DEGREES = 60.0
+private const val MaxPitchDegrees = 60.0
 
 /** `util::MAX_ZOOM`, the zoom MapLibre Native clamps to when the map has no maximum. */
-private const val MAX_NATIVE_ZOOM = 25.5
+private const val MaxNativeZoom = 25.5
 
 /** The zoom curve of a flight, `rho` in `Transform::flyTo`. */
-private const val FLIGHT_CURVE = 1.42
+private const val FlightCurve = 1.42
 
 /** The events [MlnFfiMapSession.handleEvent] consumes. */
-private val HANDLED_MAP_EVENTS: RuntimeEventMask =
+private val HandledMapEvents: RuntimeEventMask =
   RuntimeEventMask.MAP_RENDER_UPDATE_AVAILABLE +
     RuntimeEventMask.MAP_STYLE_LOADED +
     RuntimeEventMask.MAP_IDLE +
@@ -193,7 +194,7 @@ internal class MlnFfiMapSession(
       onEvent = { map, event -> handleEvent(checkNotNull(loopEngine), map, event) },
       onEventsDrained = ::onEventsDrained,
       requestFrame = presentation::requestRender,
-      mapEventMask = HANDLED_MAP_EVENTS,
+      mapEventMask = HandledMapEvents,
     )
 
   private val cameraTransitions = MlnFfiCameraTransitions { logger }
@@ -671,6 +672,7 @@ internal class MlnFfiMapSession(
       when (style) {
         is BaseStyle.Uri -> map.setStyleUrl(style.uri)
         is BaseStyle.Json -> map.setStyleJson(style.json.encodeToByteArray())
+        UnspecifiedBaseStyle -> error("UnspecifiedBaseStyle is never created")
       }
     } catch (error: MaplibreException) {
       val reason = error.message ?: "Failed to apply the base style"
@@ -927,7 +929,7 @@ internal class MlnFfiMapSession(
     val start = current.center ?: return null
     val end = camera.center ?: start
     val mapMinZoom = bounds.minZoom ?: 0.0
-    val zoomRange = mapMinZoom..(bounds.maxZoom ?: MAX_NATIVE_ZOOM)
+    val zoomRange = mapMinZoom..(bounds.maxZoom ?: MaxNativeZoom)
     val zoom = (camera.zoom ?: startZoom).coerceIn(zoomRange)
     val floor = maxOf(minZoom ?: mapMinZoom, mapMinZoom)
     val peakZoom = minOf(floor, startZoom, zoom).coerceIn(zoomRange)
@@ -941,7 +943,7 @@ internal class MlnFfiMapSession(
         size.height - padding.top - padding.bottom,
       )
     val peakSpan = startSpan / 2.0.pow(peakZoom - startZoom)
-    return floor.takeIf { sqrt(peakSpan / pathLength * 2.0) < FLIGHT_CURVE }
+    return floor.takeIf { sqrt(peakSpan / pathLength * 2.0) < FlightCurve }
   }
 
   private fun CameraAnimation.toAnimationOptions(): AnimationOptions =
@@ -1343,8 +1345,7 @@ internal class MlnFfiMapSession(
       val target =
         CameraOptions().also {
           it.bearing = (camera.bearing ?: 0.0) + bearingDelta
-          it.pitch =
-            ((camera.pitch ?: 0.0) + pitchDelta).coerceIn(MIN_PITCH_DEGREES, MAX_PITCH_DEGREES)
+          it.pitch = ((camera.pitch ?: 0.0) + pitchDelta).coerceIn(MinPitchDegrees, MaxPitchDegrees)
           it.anchor = anchor?.toScreenPoint()
         }
       map.jumpTo(target)
@@ -1392,8 +1393,7 @@ internal class MlnFfiMapSession(
         CameraOptions().also {
           it.anchor = anchor?.toScreenPoint()
           it.bearing = (camera.bearing ?: 0.0) + bearingDelta
-          it.pitch =
-            ((camera.pitch ?: 0.0) + pitchDelta).coerceIn(MIN_PITCH_DEGREES, MAX_PITCH_DEGREES)
+          it.pitch = ((camera.pitch ?: 0.0) + pitchDelta).coerceIn(MinPitchDegrees, MaxPitchDegrees)
         },
         animation,
       )

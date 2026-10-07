@@ -1,5 +1,7 @@
 package org.maplibre.compose.map
 
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CountDownLatch
@@ -41,7 +43,7 @@ class NativeProcessExitTest {
       val exited = process.waitFor(30, TimeUnit.SECONDS)
       val log = Files.readString(output)
       assertTrue(
-        log.lineSequence().any { it == READY_TO_EXIT },
+        log.lineSequence().any { it == ReadyToExit },
         "Child did not finish cleanup:\n$log",
       )
       assertTrue(exited, "JVM hung during native shutdown:\n$log")
@@ -79,7 +81,7 @@ internal object NativeProcessExitProbe {
         val style = BaseStyle.Json("""{"version":8,"center":false,"sources":{},"layers":[]}""")
         val snapshotter = runtime.createSnapshotter(style)
         try {
-          snapshotter.capture(MapSnapshotRequest(width = 64, height = 64))
+          snapshotter.capture(MapSnapshotRequest(DpSize(64.dp, 64.dp)))
           check(received.await(10, TimeUnit.SECONDS)) { "No asynchronous native parser warning" }
         } finally {
           snapshotter.close()
@@ -99,10 +101,9 @@ internal object NativeProcessExitProbe {
         fixture.pumpUntilRendered()
       }
     }
-    println(READY_TO_EXIT)
+    println(ReadyToExit)
     exitProcess(0)
   }
 }
 
-private const val READY_TO_EXIT =
-  "Native callback and runtime cleanup finished; requesting JVM exit"
+private const val ReadyToExit = "Native callback and runtime cleanup finished; requesting JVM exit"

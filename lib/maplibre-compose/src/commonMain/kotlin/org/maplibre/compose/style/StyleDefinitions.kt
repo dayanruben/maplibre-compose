@@ -7,7 +7,7 @@ import org.maplibre.compose.sources.CustomVectorTileSourceOptions
 import org.maplibre.compose.sources.GeoJsonData
 import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeometryTileProvider
-import org.maplibre.compose.sources.RasterDemEncoding
+import org.maplibre.compose.sources.RasterDemDecoding
 import org.maplibre.compose.sources.TileSetOptions
 import org.maplibre.compose.sources.VectorTileProvider
 import org.maplibre.compose.util.ImageStretch
@@ -50,7 +50,7 @@ internal sealed interface SourceDefinition {
     val tiles: List<String>,
     val options: TileSetOptions,
     val tileSize: Int,
-    val demEncoding: RasterDemEncoding,
+    val decoding: RasterDemDecoding,
   ) : SourceDefinition
 }
 
@@ -86,8 +86,8 @@ internal fun layerDefinitionFromJson(id: String, value: JsonObject): LayerDefini
 internal fun LayerDefinition.hasSameConstructionProperties(other: LayerDefinition): Boolean {
   if (value === other.value) return true
   return value.all { (name, value) ->
-    name in MUTABLE_LAYER_PROPERTIES || other.value[name] == value
-  } && other.value.keys.all { it in MUTABLE_LAYER_PROPERTIES || it in value }
+    name in MutableLayerProperties || other.value[name] == value
+  } && other.value.keys.all { it in MutableLayerProperties || it in value }
 }
 
-private val MUTABLE_LAYER_PROPERTIES = setOf("layout", "paint", "filter", "minzoom", "maxzoom")
+private val MutableLayerProperties = setOf("layout", "paint", "filter", "minzoom", "maxzoom")

@@ -2,6 +2,8 @@ package org.maplibre.compose.sources
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
@@ -13,6 +15,8 @@ import org.maplibre.compose.map.MlnFfiMapRuntimeLoop
 import org.maplibre.compose.mlnffi.FfiTestPlatform
 import org.maplibre.compose.mlnffi.MlnFfiRuntime
 import org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions
+import org.maplibre.compose.mlnffi.TestLatch
+import org.maplibre.compose.mlnffi.launchTestTask
 import org.maplibre.compose.style.MlnFfiStyleBinding
 import org.maplibre.compose.testing.RecordingList
 import org.maplibre.nativeffi.geo.CanonicalTileId
@@ -42,6 +46,29 @@ class MlnFfiTileRequestCoordinatorTest {
   }
 
   @Test
+  fun blocking_loads_leave_default_dispatcher_work_running() = withDroppingBinding { binding ->
+    // More than a pool sized to the CPU count, such as Dispatchers.Default, runs at once.
+    val loads = 32
+    val started = TestLatch(loads)
+    val release = TestLatch(1)
+    val coordinator =
+      coordinator(binding) {
+        started.countDown()
+        release.await()
+      }
+    try {
+      repeat(loads) { coordinator.fetch(CanonicalTileId(z = 6, x = it.toLong(), y = 0)) }
+      assertTrue(started.await(5_000), "blocking loads did not all run at once")
+      val defaultWork = TestLatch(1)
+      launchTestTask { defaultWork.countDown() }
+      assertTrue(defaultWork.await(5_000), "blocking loads starved Default")
+    } finally {
+      release.countDown()
+      coordinator.close()
+    }
+  }
+
+  @Test
   fun a_duplicate_request_cancels_and_replaces_the_older_job() = withDroppingBinding { binding ->
     val invocations = RecordingList<TileCoordinate>()
     val firstStarted = CompletableDeferred<Unit>()
@@ -61,6 +88,8 @@ class MlnFfiTileRequestCoordinatorTest {
           secondFinished.complete(Unit)
         }
       }
+    val answers = RecordingList<Unit>()
+    binding.onDrop = { answers += Unit }
     val tile = CanonicalTileId(z = 0, x = 0, y = 0)
 
     coordinator.fetch(tile)
@@ -70,8 +99,11 @@ class MlnFfiTileRequestCoordinatorTest {
     withTimeout(5.seconds) {
       firstCancelled.await()
       secondFinished.await()
+      while (answers.size < 1) kotlinx.coroutines.yield()
     }
+    delay(100)
     assertEquals(2, invocations.size)
+    assertEquals(1, answers.size, "the replaced request must not be answered")
     coordinator.close()
   }
 
@@ -91,6 +123,8 @@ class MlnFfiTileRequestCoordinatorTest {
             firstCancelled.complete(Unit)
           }
         }
+      val answers = RecordingList<Unit>()
+      binding.onDrop = { answers += Unit }
       coordinator.fetch(CanonicalTileId(z = 0, x = 0, y = 0))
       withTimeout(5.seconds) { firstStarted.await() }
 
@@ -100,6 +134,7 @@ class MlnFfiTileRequestCoordinatorTest {
 
       delay(100)
       assertEquals(1, starts.size, "a closed coordinator must not load")
+      assertEquals(0, answers.size, "a closed coordinator must not answer")
     }
 
   @Test
@@ -117,6 +152,18 @@ class MlnFfiTileRequestCoordinatorTest {
     coordinator.fetch(CanonicalTileId(z = 1, x = 1, y = 0))
 
     withTimeout(5.seconds) { successful.await() }
+    coordinator.close()
+  }
+
+  @Test
+  fun a_provider_timeout_answers_the_tile() = withDroppingBinding { binding ->
+    val answered = CompletableDeferred<Unit>()
+    binding.onDrop = { answered.complete(Unit) }
+    val coordinator = coordinator(binding) { withTimeout(1.milliseconds) { awaitCancellation() } }
+
+    coordinator.fetch(CanonicalTileId(z = 0, x = 0, y = 0))
+
+    withTimeout(5.seconds) { answered.await() }
     coordinator.close()
   }
 

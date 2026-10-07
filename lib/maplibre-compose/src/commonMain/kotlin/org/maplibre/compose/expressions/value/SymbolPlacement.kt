@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** Symbol placement relative to its geometry. */
+/**
+ * Symbol placement relative to its geometry.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class SymbolPlacement private constructor(override val value: String) : EnumValue {
   public companion object : EnumType<SymbolPlacement> {

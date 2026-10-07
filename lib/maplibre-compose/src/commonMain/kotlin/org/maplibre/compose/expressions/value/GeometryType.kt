@@ -1,11 +1,15 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
 /**
  * Type of a GeoJson feature, as returned by
  * [Feature.geometryType][org.maplibre.compose.expressions.dsl.Feature.geometryType].
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
  */
+@Immutable
 @JvmInline
 public value class GeometryType private constructor(override val value: String) : EnumValue {
   public companion object : EnumType<GeometryType> {

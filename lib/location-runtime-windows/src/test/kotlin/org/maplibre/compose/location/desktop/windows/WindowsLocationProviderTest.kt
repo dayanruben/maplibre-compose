@@ -19,7 +19,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import org.maplibre.compose.location.DesktopLocationBackend
 import org.maplibre.compose.location.LocationAccuracy
-import org.maplibre.compose.location.LocationAccuracyAuthorization
 import org.maplibre.compose.location.LocationBackendAvailability
 import org.maplibre.compose.location.LocationEvent
 import org.maplibre.compose.location.LocationPermission
@@ -49,7 +48,7 @@ class WindowsLocationProviderTest {
 
     client.completeAccessRequest(WindowsAccessStatus.Allowed)
     assertEquals(
-      LocationPermission.Granted(LocationAccuracyAuthorization.Unknown),
+      LocationPermission.Granted(accuracy = null),
       requester.status.value,
     )
     requester.requestForegroundPermission()
@@ -79,7 +78,7 @@ class WindowsLocationProviderTest {
     assertEquals(
       LocationUnavailableReason.ServicesDisabled,
       WindowsPositionStatus.Disabled.asUnavailableReason(
-        LocationPermission.Granted(LocationAccuracyAuthorization.Unknown)
+        LocationPermission.Granted(accuracy = null)
       ),
     )
     assertEquals(
@@ -93,7 +92,7 @@ class WindowsLocationProviderTest {
   @Test
   fun convertsWindowsFixAndTimestamp() {
     val measurement = sampleMeasurement(windowsTimestampTicks = 133_444_735_980_000_000L)
-    val location = checkNotNull(measurement.asMapLibreLocationMeasurement())
+    val location = checkNotNull(measurement.asMaplibreLocationMeasurement())
 
     assertEquals(52.0, location.position.latitude)
     assertEquals(13.0, location.position.longitude)
@@ -109,12 +108,12 @@ class WindowsLocationProviderTest {
 
   @Test
   fun rejectsMalformedRequiredValuesAndOmitsMalformedOptionalValues() {
-    assertNull(sampleMeasurement(latitude = Double.NaN).asMapLibreLocationMeasurement())
-    assertNull(sampleMeasurement(latitude = 91.0).asMapLibreLocationMeasurement())
-    assertNull(sampleMeasurement(longitude = -181.0).asMapLibreLocationMeasurement())
-    assertNull(sampleMeasurement(horizontalAccuracyMeters = -1.0).asMapLibreLocationMeasurement())
+    assertNull(sampleMeasurement(latitude = Double.NaN).asMaplibreLocationMeasurement())
+    assertNull(sampleMeasurement(latitude = 91.0).asMaplibreLocationMeasurement())
+    assertNull(sampleMeasurement(longitude = -181.0).asMaplibreLocationMeasurement())
+    assertNull(sampleMeasurement(horizontalAccuracyMeters = -1.0).asMaplibreLocationMeasurement())
     assertNull(
-      sampleMeasurement(windowsTimestampTicks = Long.MIN_VALUE).asMapLibreLocationMeasurement()
+      sampleMeasurement(windowsTimestampTicks = Long.MIN_VALUE).asMaplibreLocationMeasurement()
     )
 
     val location =
@@ -125,7 +124,7 @@ class WindowsLocationProviderTest {
             headingDegrees = Double.POSITIVE_INFINITY,
             speedMetersPerSecond = -1.0,
           )
-          .asMapLibreLocationMeasurement()
+          .asMaplibreLocationMeasurement()
       )
     assertNull(location.position.altitude)
     assertNull(location.altitudeAccuracy)
@@ -141,17 +140,17 @@ class WindowsLocationProviderTest {
     assertTrue(filter.shouldDeliver(first))
     assertFalse(
       filter.shouldDeliver(
-        first.copy(longitude = 1.0, windowsTimestampTicks = 500 * TICKS_PER_MILLISECOND)
+        first.copy(longitude = 1.0, windowsTimestampTicks = 500 * TicksPerMillisecond)
       )
     )
     assertFalse(
       filter.shouldDeliver(
-        first.copy(longitude = 13.00001, windowsTimestampTicks = 2_000 * TICKS_PER_MILLISECOND)
+        first.copy(longitude = 13.00001, windowsTimestampTicks = 2_000 * TicksPerMillisecond)
       )
     )
     assertTrue(
       filter.shouldDeliver(
-        first.copy(longitude = 13.01, windowsTimestampTicks = 2_500 * TICKS_PER_MILLISECOND)
+        first.copy(longitude = 13.01, windowsTimestampTicks = 2_500 * TicksPerMillisecond)
       )
     )
   }
@@ -178,19 +177,20 @@ class WindowsLocationProviderTest {
     assertEquals(2_000, session.configuration.reportIntervalMilliseconds)
 
     session.listener.onPosition(sampleMeasurement())
+    session.listener.onStatus(WindowsPositionStatus.Ready)
     session.listener.onStatus(WindowsPositionStatus.NoData)
     session.listener.onFailure(IllegalStateException("native failure"))
+    session.listener.onStatus(WindowsPositionStatus.Unknown)
 
+    assertEquals(4, events.size)
     assertIs<LocationEvent.Update>(events[0])
     assertEquals(
       LocationUnavailableReason.TemporarilyUnavailable,
       assertIs<LocationEvent.Unavailable>(events[1]).reason,
     )
-    assertEquals(
-      LocationUnavailableReason.UnexpectedFailure,
-      assertIs<LocationEvent.Unavailable>(events[2]).reason,
-    )
+    assertNull(assertIs<LocationEvent.Unavailable>(events[2]).reason)
     assertIs<IllegalStateException>(assertIs<LocationEvent.Unavailable>(events[2]).cause)
+    assertNull(assertIs<LocationEvent.Unavailable>(events[3]).reason)
 
     job.cancelAndJoin()
     assertEquals(1, session.closeCount)
@@ -309,7 +309,7 @@ class WindowsLocationProviderTest {
     val provider = WindowsLocationProvider(client)
 
     val event = assertIs<LocationEvent.Unavailable>(provider.updates(LocationRequest()).first())
-    assertEquals(LocationUnavailableReason.UnexpectedFailure, event.reason)
+    assertNull(event.reason)
     assertIs<IllegalStateException>(event.cause)
   }
 }
@@ -397,7 +397,7 @@ private fun sampleMeasurement(
   verticalAccuracyMeters: Double? = 3.0,
   headingDegrees: Double? = 90.0,
   speedMetersPerSecond: Double? = 4.0,
-  windowsTimestampTicks: Long = WINDOWS_EPOCH_TICKS + 1_700_000_000_000 * TICKS_PER_MILLISECOND,
+  windowsTimestampTicks: Long = WindowsEpochTicks + 1_700_000_000_000 * TicksPerMillisecond,
 ): WindowsLocationMeasurement =
   WindowsLocationMeasurement(
     latitude,

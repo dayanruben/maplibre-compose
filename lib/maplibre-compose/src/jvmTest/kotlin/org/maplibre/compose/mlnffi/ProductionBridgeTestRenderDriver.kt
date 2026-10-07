@@ -69,15 +69,13 @@ import org.lwjgl.system.macosx.DynamicLinkLoader.dlopen
 import org.lwjgl.system.macosx.DynamicLinkLoader.dlsym
 import org.maplibre.compose.desktop.ComposeGpuContext
 import org.maplibre.compose.desktop.ComposeMapPresentationHost
-import org.maplibre.compose.desktop.Direct3D12ComposeGpuContext
+import org.maplibre.compose.desktop.DesktopComposeMapPresentationHost
+import org.maplibre.compose.desktop.Direct3D12PresentationHost
 import org.maplibre.compose.desktop.MetalComposeGpuContext
 import org.maplibre.compose.desktop.OpenGlComposeGpuContext
-import org.maplibre.compose.desktop.bridge.ComposeMapPresentationHostFactory
 import org.maplibre.compose.desktop.bridge.MapRendererThread
 import org.maplibre.compose.desktop.bridge.ObjectiveC
-import org.maplibre.compose.desktop.bridge.currentContext
-import org.maplibre.compose.desktop.bridge.withOpenGlContext
-import org.maplibre.compose.desktop.onGpuThread
+import org.maplibre.compose.desktop.mapHostFactory
 import org.maplibre.compose.desktop.skiko.AwtComposeMapPresentationHost
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.testing.RgbaPixel
@@ -89,6 +87,8 @@ private constructor(
   private val environment: DesktopTestGpuEnvironment,
   private val bridge: MlnFfiMapHost,
 ) : FfiTestRenderDriver, MlnFfiMapHost by bridge {
+  fun <T> withComposeContext(action: (ComposeGpuContext) -> T): T = environment.withContext(action)
+
   override fun acquireFrame(extent: MapExtent): MlnFfiMapFrameAcquisition =
     environment.withContext {
       bridge.acquireFrame(extent)
@@ -133,7 +133,7 @@ private constructor(
         }
       val environment = DesktopTestGpuEnvironment.create()
       return try {
-        val factory = ComposeMapPresentationHostFactory(environment.presentationHost)
+        val factory = environment.presentationHost.mapHostFactory
         val backends =
           factory.bridges.singleOrNull { it.producer == producer }
             ?: error("${factory.description} cannot bridge packaged runtime $producer")
@@ -153,7 +153,7 @@ private constructor(
 }
 
 private abstract class DesktopTestGpuEnvironment : AutoCloseable {
-  abstract val presentationHost: ComposeMapPresentationHost
+  abstract val presentationHost: DesktopComposeMapPresentationHost<*>
 
   private var destination: Surface? = null
   private var destinationWidth = 0
@@ -267,16 +267,13 @@ private constructor(
   private val composeContext = MetalComposeGpuContext(context, NativeHandle(device))
 
   override val presentationHost =
-    object : ComposeMapPresentationHost {
-      override val description = "the test Metal context"
-      override val backend = ComposeRenderBackend.Metal
-
-      override fun gpuContext(): ComposeGpuContext = composeContext
-
-      override fun runOnGpuThread(action: Runnable) {
+    ComposeMapPresentationHost.metal(
+      description = "the test Metal context",
+      gpuContext = { composeContext },
+      runOnGpuThread = { action ->
         gpuThread.run { ObjectiveC.runInAutoreleasePool { action.run() } }
-      }
-    }
+      },
+    ) as DesktopComposeMapPresentationHost<*>
 
   override fun <T> withContext(action: (ComposeGpuContext) -> T): T = gpuThread.run {
     ObjectiveC.runInAutoreleasePool { action(composeContext) }
@@ -349,24 +346,19 @@ private class OpenGlTestGpuEnvironment
 private constructor(private val gpuThread: MapRendererThread, private val egl: EglTestContext) :
   DesktopTestGpuEnvironment() {
   private val composeContext =
-    OpenGlComposeGpuContext(egl.directContext) { action -> egl.withCurrent { action.run() } }
+    OpenGlComposeGpuContext(egl.directContext) { action ->
+      egl.withCurrent { action.run() }
+    }
 
   override val presentationHost =
-    object : ComposeMapPresentationHost {
-      override val description = "the test EGL OpenGL context"
-      override val backend = ComposeRenderBackend.OpenGl
-
-      override fun gpuContext(): ComposeGpuContext = composeContext
-
-      override fun runOnGpuThread(action: Runnable) {
-        gpuThread.run { egl.withCurrent { action.run() } }
-      }
-    }
+    ComposeMapPresentationHost.openGl(
+      description = "the test EGL OpenGL context",
+      gpuContext = { composeContext },
+      runOnGpuThread = { action -> gpuThread.run { egl.withCurrent { action.run() } } },
+    ) as DesktopComposeMapPresentationHost<*>
 
   override fun <T> withContext(action: (ComposeGpuContext) -> T): T =
-    presentationHost.withOpenGlContext {
-      action(it)
-    }
+    checkNotNull(presentationHost.withContext(action))
 
   override fun close() {
     try {
@@ -393,10 +385,11 @@ private constructor(private val gpuThread: MapRendererThread, private val egl: E
 @OptIn(ExperimentalComposeUiApi::class)
 private class Direct3D12TestGpuEnvironment private constructor(private val window: ComposeWindow) :
   DesktopTestGpuEnvironment() {
-  override val presentationHost: ComposeMapPresentationHost = AwtComposeMapPresentationHost(window)
+  override val presentationHost =
+    AwtComposeMapPresentationHost(window).presentationHost as Direct3D12PresentationHost
 
   override fun <T> withContext(action: (ComposeGpuContext) -> T): T = presentationHost.onGpuThread {
-    action(checkNotNull(presentationHost.currentContext() as? Direct3D12ComposeGpuContext))
+    action(checkNotNull(presentationHost.currentContext()))
   }
 
   override fun discardPresentedFrame() {}
@@ -417,15 +410,15 @@ private class Direct3D12TestGpuEnvironment private constructor(private val windo
       EventQueue.invokeAndWait {
         window = ComposeWindow()
         window.isUndecorated = true
-        window.setSize(WINDOW_WIDTH, WINDOW_HEIGHT)
-        window.setLocation(-WINDOW_WIDTH * 2, -WINDOW_HEIGHT * 2)
+        window.setSize(WindowWidth, WindowHeight)
+        window.setLocation(-WindowWidth * 2, -WindowHeight * 2)
         window.setContent {}
         window.isVisible = true
         window.renderImmediately()
       }
       val environment = Direct3D12TestGpuEnvironment(window)
       try {
-        val deadline = TimeSource.Monotonic.markNow() + CONTEXT_TIMEOUT
+        val deadline = TimeSource.Monotonic.markNow() + ContextTimeout
         while (environment.presentationHost.currentContext() == null) {
           check(deadline.hasNotPassedNow()) { "Timed out waiting for Skiko's D3D12 context" }
           EventQueue.invokeAndWait { window.renderImmediately() }
@@ -438,9 +431,9 @@ private class Direct3D12TestGpuEnvironment private constructor(private val windo
       }
     }
 
-    private const val WINDOW_WIDTH = 512
-    private const val WINDOW_HEIGHT = 512
-    private val CONTEXT_TIMEOUT = 30.seconds
+    private const val WindowWidth = 512
+    private const val WindowHeight = 512
+    private val ContextTimeout = 30.seconds
   }
 }
 
@@ -513,7 +506,7 @@ private class EglTestContext private constructor() : AutoCloseable {
         eglCreatePbufferSurface(
           display,
           config,
-          stack.ints(EGL_WIDTH, PBUFFER_SIZE, EGL_HEIGHT, PBUFFER_SIZE, EGL_NONE),
+          stack.ints(EGL_WIDTH, PbufferSize, EGL_HEIGHT, PbufferSize, EGL_NONE),
         )
       check(surface != EGL_NO_SURFACE) { eglFailure("eglCreatePbufferSurface") }
       context = eglCreateContext(display, config, EGL_NO_CONTEXT, stack.ints(EGL_NONE))
@@ -548,7 +541,7 @@ private class EglTestContext private constructor() : AutoCloseable {
     "$operation failed with EGL error 0x${eglGetError().toString(16)}"
 
   companion object {
-    private const val PBUFFER_SIZE = 1024
+    private const val PbufferSize = 1024
 
     fun create(): EglTestContext = EglTestContext()
   }
@@ -558,7 +551,7 @@ private class EglTestContext private constructor() : AutoCloseable {
 private fun interface GlProcAddressCallbackI : CallbackI {
   fun invoke(context: Long, name: Long): Long
 
-  override fun getDescriptor(): Callback.Descriptor = DESCRIPTOR
+  override fun getDescriptor(): Callback.Descriptor = Descriptor
 
   override fun callback(ret: Long, args: Long) {
     val context = memGetAddress(args)
@@ -567,7 +560,7 @@ private fun interface GlProcAddressCallbackI : CallbackI {
   }
 
   companion object {
-    val DESCRIPTOR =
+    val Descriptor =
       Callback.Descriptor(
         GlProcAddressCallbackI::class.java,
         MethodHandles.lookup(),
@@ -577,7 +570,7 @@ private fun interface GlProcAddressCallbackI : CallbackI {
 }
 
 private abstract class GlProcAddressCallback :
-  Callback(GlProcAddressCallbackI.DESCRIPTOR), GlProcAddressCallbackI {
+  Callback(GlProcAddressCallbackI.Descriptor), GlProcAddressCallbackI {
   override fun address(): Long = super<Callback>.address()
 
   override fun getDescriptor(): Callback.Descriptor = super<GlProcAddressCallbackI>.getDescriptor()

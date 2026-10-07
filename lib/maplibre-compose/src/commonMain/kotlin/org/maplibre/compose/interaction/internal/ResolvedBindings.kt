@@ -85,7 +85,7 @@ internal data class TapDragBinding(
   val modifiers: ModifierMatch? = null,
   val startSlop: Dp = 7.dp,
   val anchor: GestureAnchor = GestureAnchor.CameraCenter,
-  val direction: QuickZoomDirection = QuickZoomDirection.DownZoomsIn,
+  val direction: QuickZoomDirection = platformQuickZoomDirection,
   val zoomLevelsPerViewport: Double = 4.0,
 )
 
@@ -110,21 +110,21 @@ internal data class TapBinding(
   val pointerTypes: Set<PointerType>? = null,
   val mappings: List<TapMapping> = emptyList(),
   val anchor: GestureAnchor = GestureAnchor.Input,
-  val zoomStep: Double = 1.0,
+  val zoomStepLevels: Double = 1.0,
 )
 
 internal data class KeyBinding(
   val enabled: Boolean = true,
   val mappings: List<KeyMapping> = emptyList(),
   val panStep: Dp = 100.dp,
-  val zoomStep: Double = 1.0,
-  val rotateStep: Double = 15.0,
-  val pitchStep: Double = 10.0,
+  val zoomStepLevels: Double = 1.0,
+  val bearingStepDegrees: Double = 15.0,
+  val pitchStepDegrees: Double = 10.0,
 )
 
 internal data class RotaryBinding(
   val enabled: Boolean = true,
-  val zoomStep: Double = 0.15,
+  val zoomStepLevels: Double = 0.15,
   val idleDuration: Duration = 200.milliseconds,
 )
 

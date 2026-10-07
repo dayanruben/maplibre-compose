@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** Orientation of icon when map is pitched. */
+/**
+ * Orientation of icon when map is pitched.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class IconPitchAlignment private constructor(override val value: String) : EnumValue {
   public companion object : EnumType<IconPitchAlignment> {

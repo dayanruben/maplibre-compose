@@ -1,21 +1,32 @@
 package org.maplibre.compose.resource
 
+import androidx.compose.runtime.Immutable
+import kotlin.jvm.JvmInline
 import kotlin.time.Instant
 
 /**
  * The kind of resource MapLibre is about to fetch.
  *
- * A newer engine may report a kind that has no name here; that value becomes [Unknown].
+ * [value] is the engine's name for the kind, such as `SpriteJSON`. MapLibre Native reports a kind
+ * as a number, so a kind that has no name here holds that number as decimal text, such as `8`.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
  */
-public enum class MapResourceKind {
-  Style,
-  Source,
-  Tile,
-  Glyphs,
-  SpriteJson,
-  SpriteImage,
-  Image,
-  Unknown,
+@Immutable
+@JvmInline
+public value class MapResourceKind internal constructor(public val value: String) {
+  public companion object {
+    public val Style: MapResourceKind = MapResourceKind("Style")
+    public val Source: MapResourceKind = MapResourceKind("Source")
+    public val Tile: MapResourceKind = MapResourceKind("Tile")
+    public val Glyphs: MapResourceKind = MapResourceKind("Glyphs")
+    public val SpriteJson: MapResourceKind = MapResourceKind("SpriteJSON")
+    public val SpriteImage: MapResourceKind = MapResourceKind("SpriteImage")
+    public val Image: MapResourceKind = MapResourceKind("Image")
+
+    /** A resource that the engine requests without saying which kind it is. */
+    public val Unknown: MapResourceKind = MapResourceKind("Unknown")
+  }
 }
 
 /**
@@ -32,9 +43,15 @@ internal constructor(
 /**
  * Rewrites the URL of a resource request, or adds HTTP headers to it. Override either function.
  *
+ * On MapLibre Native, both functions run on background threads, and calls for different requests
+ * can run at the same time. On the browser, both run on the page's main thread, one call at a time.
+ *
  * Callbacks must return quickly, be safe to call concurrently, and call no map API. They may be
  * called repeatedly; return the same result while the request and application state are unchanged.
  * Read changing credentials from a thread-safe store.
+ *
+ * If a function throws an exception, the library logs a warning and the request continues: with its
+ * original URL when [rewriteUrl] throws, or with no added headers when [headers] throws.
  *
  * Use [MapResourceProvider] to supply resource data directly.
  */
@@ -57,7 +74,12 @@ public interface MapRequestInterceptor {
   public fun headers(request: MapResourceRequest): Map<String, String> = emptyMap()
 }
 
-/** Returns an interceptor that calls [rewriteUrl] and [headers]. */
+/**
+ * Returns an interceptor that calls [rewriteUrl] and [headers].
+ *
+ * [rewriteUrl] and [headers] run on the same threads as the [MapRequestInterceptor] functions with
+ * the same names, and the library handles their exceptions the same way.
+ */
 public fun MapRequestInterceptor(
   rewriteUrl: (MapResourceRequest) -> String? = { null },
   headers: (MapResourceRequest) -> Map<String, String> = { emptyMap() },
@@ -93,52 +115,112 @@ internal constructor(
   /** The cached body, or null when the cache has no body for this resource. */
   public val priorData: ByteArray? = null,
 ) {
-  /** Limits the load to the cache or to the network. [All] allows both. */
-  public enum class LoadingMethod {
-    All,
-    CacheOnly,
-    NetworkOnly,
+  /**
+   * Limits the load to the cache or to the network. [All] allows both.
+   *
+   * [value] is MapLibre Native's name for the method, such as `CacheOnly`. A method that has no
+   * name here holds the number that MapLibre Native reports, as decimal text.
+   *
+   * Values may be added in minor releases; use an `else` branch when matching.
+   */
+  @Immutable
+  @JvmInline
+  public value class LoadingMethod internal constructor(public val value: String) {
+    public companion object {
+      public val All: LoadingMethod = LoadingMethod("All")
+      public val CacheOnly: LoadingMethod = LoadingMethod("CacheOnly")
+      public val NetworkOnly: LoadingMethod = LoadingMethod("NetworkOnly")
+    }
   }
 
-  /** The priority of the load. */
-  public enum class Priority {
-    Regular,
-    Low,
+  /**
+   * The priority of the load.
+   *
+   * [value] is MapLibre Native's name for the priority, such as `Low`. A priority that has no name
+   * here holds the number that MapLibre Native reports, as decimal text.
+   *
+   * Values may be added in minor releases; use an `else` branch when matching.
+   */
+  @Immutable
+  @JvmInline
+  public value class Priority internal constructor(public val value: String) {
+    public companion object {
+      public val Regular: Priority = Priority("Regular")
+      public val Low: Priority = Priority("Low")
+    }
   }
 
-  /** The consumer of the resource: a map, or an offline pack download. */
-  public enum class Usage {
-    Online,
-    Offline,
+  /**
+   * The consumer of the resource: a map, or an offline pack download.
+   *
+   * [value] is MapLibre Native's name for the usage, such as `Offline`. A usage that has no name
+   * here holds the number that MapLibre Native reports, as decimal text.
+   *
+   * Values may be added in minor releases; use an `else` branch when matching.
+   */
+  @Immutable
+  @JvmInline
+  public value class Usage internal constructor(public val value: String) {
+    public companion object {
+      public val Online: Usage = Usage("Online")
+      public val Offline: Usage = Usage("Offline")
+    }
   }
 
-  /** The cache retention policy for the resource. */
-  public enum class StoragePolicy {
-    Permanent,
-    Volatile,
+  /**
+   * The cache retention policy for the resource.
+   *
+   * [value] is MapLibre Native's name for the policy, such as `Volatile`. A policy that has no name
+   * here holds the number that MapLibre Native reports, as decimal text.
+   *
+   * Values may be added in minor releases; use an `else` branch when matching.
+   */
+  @Immutable
+  @JvmInline
+  public value class StoragePolicy internal constructor(public val value: String) {
+    public companion object {
+      public val Permanent: StoragePolicy = StoragePolicy("Permanent")
+      public val Volatile: StoragePolicy = StoragePolicy("Volatile")
+    }
   }
 
   override fun toString(): String = "MapResourceLoadRequest(url=$url, kind=$kind)"
 }
 
-/** The cause of a failed resource load. Each reason corresponds to an HTTP status. */
-public enum class MapResourceError {
-  /** A 404. */
-  NotFound,
+/**
+ * The cause of a failed resource load. Most reasons correspond to an HTTP status.
+ *
+ * [value] is MapLibre Native's name for the reason, such as `NotFound`. MapLibre Native reports a
+ * reason as a number, so a reason that has no name here holds that number as decimal text, such as
+ * `6`.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
+@JvmInline
+public value class MapResourceError internal constructor(public val value: String) {
+  public companion object {
+    /** A 404. */
+    public val NotFound: MapResourceError = MapResourceError("NotFound")
 
-  /** A 5xx. */
-  Server,
+    /** A 5xx. */
+    public val Server: MapResourceError = MapResourceError("Server")
 
-  /** A transport failure. */
-  Connection,
+    /** A transport failure. */
+    public val Connection: MapResourceError = MapResourceError("Connection")
 
-  /** A 429. */
-  RateLimit,
-  Other,
+    /** A 429. */
+    public val RateLimit: MapResourceError = MapResourceError("RateLimit")
+
+    /** A failure that matches no other reason. */
+    public val Other: MapResourceError = MapResourceError("Other")
+  }
 }
 
 /**
  * The result of [MapResourceProvider.load].
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
  *
  * Each case corresponds to one HTTP response, and the engine handles the case as it handles that
  * response. [modified] and [expires] are cache metadata that every case can include.
@@ -202,22 +284,45 @@ public sealed interface MapResourceLoad {
 /**
  * Loads resources for the requests that the application accepts.
  *
- * [accepts] receives the URL after [MapRequestInterceptor.rewriteUrl]. It runs on a network thread
- * and must return quickly. Return true only for requests that this provider loads. [load] may
- * suspend; cancellation means that the engine no longer needs the resource. An exception from
- * [load] becomes a [MapResourceLoad.Failed] with reason [MapResourceError.Other].
- *
  * A true [accepts] result replaces the engine HTTP client for that request. MapLibre Native stores
  * the result in its ambient cache. After the cached entry expires, the engine requests the resource
  * again with the prior validators set on the request.
  */
 public interface MapResourceProvider {
+  /**
+   * Returns whether this provider loads [request]. Return true only for requests that [load]
+   * handles.
+   *
+   * [MapResourceRequest.url] is the URL after [MapRequestInterceptor.rewriteUrl]. This function
+   * runs on the same threads as [MapRequestInterceptor.rewriteUrl]. It must return quickly, be safe
+   * to call concurrently, and call no map API.
+   *
+   * If it throws an exception, the library logs a warning and treats the result as false: the
+   * request loads as if this provider had not accepted it.
+   */
   public fun accepts(request: MapResourceRequest): Boolean
 
+  /**
+   * Loads the resource for a request that [accepts] returned true for.
+   *
+   * On MapLibre Native, calls run on background threads where blocking work, such as reading a file
+   * or a database, is safe, and calls for different requests can run at the same time. On the
+   * browser, calls run on the page's main thread and overlap only where they suspend.
+   *
+   * The library cancels a call when the engine no longer needs the resource or the map runtime
+   * closes. Any other exception, including a cancellation that the provider causes itself, such as
+   * its own timeout, fails the request the same way as a [MapResourceLoad.Failed] with reason
+   * [MapResourceError.Other].
+   */
   public suspend fun load(request: MapResourceLoadRequest): MapResourceLoad
 }
 
-/** Returns a provider that calls [accepts] and [load]. */
+/**
+ * Returns a provider that calls [accepts] and [load].
+ *
+ * [accepts] and [load] run on the same threads as the [MapResourceProvider] functions with the same
+ * names, and the library handles their exceptions the same way.
+ */
 public fun MapResourceProvider(
   accepts: (MapResourceRequest) -> Boolean,
   load: suspend (MapResourceLoadRequest) -> MapResourceLoad,
@@ -231,7 +336,8 @@ public fun MapResourceProvider(
 /**
  * Returns a provider that serves URLs whose scheme is [scheme].
  *
- * [scheme] is the scheme name without a trailing colon, such as `app`.
+ * [scheme] is the scheme name without a trailing colon, such as `app`. [load] runs as
+ * [MapResourceProvider.load] does, and an exception from it fails the request the same way.
  */
 public fun MapResourceProvider(
   scheme: String,

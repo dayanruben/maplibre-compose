@@ -11,6 +11,7 @@ import versions from "../../generated/versions.json";
 import gettingStarted from "../../../../demo-app/common/src/commonMain/kotlin/org/maplibre/compose/docsnippets/GettingStarted.kt?raw";
 import desktopGettingStarted from "../../../../demo-app/common/src/jvmMain/kotlin/org/maplibre/compose/docsnippets/GettingStartedDesktop.kt?raw";
 import macosGettingStarted from "../../../../demo-app/common/src/macosMain/kotlin/org/maplibre/compose/docsnippets/GettingStartedMacos.kt?raw";
+import webGettingStarted from "../../../../demo-app/common/src/jsMain/kotlin/org/maplibre/compose/docsnippets/GettingStartedWeb.kt?raw";
 
 This page assumes you have a Compose Multiplatform project. To create one,
 follow [the official JetBrains documentation][compose-guide] or run
@@ -138,10 +139,18 @@ Alongside the library, add a runtime for your platform and one render backend.
   </TabItem>
 
   <TabItem label="Kotlin Toolchain" icon="seti:kotlin">
-    <Aside type="caution">
-      Use Gradle for the desktop target. Kotlin Toolchain 0.12.0 cannot fetch the
-      native runtime.
-    </Aside>
+    Requires Kotlin Toolchain 0.13.0 or later.
+
+    ```yaml title="desktop-app/module.yaml"
+    dependencies:
+      - //shared
+      - $compose.desktop.currentOs
+      - $libs.maplibre.compose
+
+      # Linux x64 with Vulkan, for example.
+      - org.maplibre.compose:maplibre-compose-runtime-vulkan-linux-x64:{{release}}:
+          scope: runtime-only
+    ```
   </TabItem>
 </Tabs>
 
@@ -161,9 +170,15 @@ drivers with external-memory support.
 On desktop, a <Api of="ComposeMapPresentationHost" /> supplies the window's
 graphics context. For Java AWT windows, use
 <Api of="rememberAwtComposeMapPresentationHost" />. For an alternative Compose
-host, implement `ComposeMapPresentationHost` yourself.
+host, use `ComposeMapPresentationHost.metal`, `direct3D12`, `openGl` (Linux), or
+`angleD3D11` (Windows). Supply the typed GPU context callback and synchronous
+exclusive GPU access callback. The context may be unavailable during initialization.
 
 <Code code={region(desktopGettingStarted, "main")} lang="kotlin" title="Main.kt" />
+
+A custom Metal host supplies its window callbacks:
+
+<Code code={region(desktopGettingStarted, "custom-host")} lang="kotlin" />
 
 Enable native access when you run the desktop app:
 
@@ -179,9 +194,14 @@ Enable native access when you run the desktop app:
   </TabItem>
 
   <TabItem label="Kotlin Toolchain" icon="seti:kotlin">
+    ```shell
+    kotlin run --module desktop-app --jvm-args="--enable-native-access=ALL-UNNAMED"
+    ```
+
     <Aside type="caution">
-      Use Gradle for the desktop target. Kotlin Toolchain 0.12.0 cannot fetch the
-      native runtime.
+      Kotlin Toolchain can't add this flag to a packaged app. Pass it yourself
+      when you run the JAR:
+      `java --enable-native-access=ALL-UNNAMED -jar desktop-app-jvm-executable.jar`.
     </Aside>
   </TabItem>
 </Tabs>
@@ -234,14 +254,7 @@ Compile the JS target to ES modules. Non-ESM builds are not supported.
 Install the browser graphics integration inside `onWasmReady`, before Compose
 starts.
 
-```kotlin title="main.kt"
-fun main() {
-  onWasmReady {
-    installMapLibreCompose()
-    ComposeViewport(document.body!!) { App() }
-  }
-}
-```
+<Code code={region(webGettingStarted, "main")} lang="kotlin" title="main.kt" />
 
 ## Display your first map
 

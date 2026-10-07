@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** Specifies how to capitalize text, similar to the CSS text-transform property. */
+/**
+ * Specifies how to capitalize text, similar to the CSS text-transform property.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class TextTransform private constructor(override val value: String) : EnumValue {
   public companion object : EnumType<TextTransform> {

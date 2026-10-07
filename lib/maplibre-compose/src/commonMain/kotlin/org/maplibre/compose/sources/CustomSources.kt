@@ -25,12 +25,16 @@ public data class TileCoordinate(
 ) {
 
   init {
-    require(zoomLevel in MIN_ZOOM..MAX_ZOOM) {
-      "zoomLevel must be within $MIN_ZOOM..$MAX_ZOOM"
+    require(zoomLevel in MinZoom..MaxZoom) {
+      "zoomLevel must be within $MinZoom..$MaxZoom, was $zoomLevel"
     }
     val tileCount = 1L shl zoomLevel
-    require(x in 0 until tileCount) { "x must be within 0 until $tileCount at zoom $zoomLevel" }
-    require(y in 0 until tileCount) { "y must be within 0 until $tileCount at zoom $zoomLevel" }
+    require(x in 0 until tileCount) {
+      "x must be within 0 until $tileCount at zoom $zoomLevel, was $x"
+    }
+    require(y in 0 until tileCount) {
+      "y must be within 0 until $tileCount at zoom $zoomLevel, was $y"
+    }
   }
 
   /** The geographic bounds of this tile. */
@@ -46,27 +50,55 @@ public data class TileCoordinate(
     }
 
   private companion object {
-    const val MIN_ZOOM = 0
-    const val MAX_ZOOM = 32
+    const val MinZoom = 0
+    const val MaxZoom = 32
   }
 }
 
 /**
  * Supplies geographic features for one tile.
  *
- * Calls for different tiles can overlap. Cancellation means MapLibre no longer needs that request.
+ * On MapLibre Native, calls run on background threads where blocking work, such as reading a file
+ * or a database, is safe, and calls for different tiles can run at the same time. On the browser,
+ * calls run on the page's main thread and overlap only where they suspend.
+ *
+ * A tile can be requested again while a call for it is still running. The library may cancel a call
+ * that it no longer needs, or share one call between requests for the same tile, so do not expect
+ * exactly one call for each request.
  */
 public fun interface GeometryTileProvider {
+  /**
+   * Returns the features of [tile].
+   *
+   * The library cancels a call when MapLibre no longer needs the tile or the source leaves the
+   * style. Any other exception, including a cancellation that the provider causes itself, such as
+   * its own timeout, is handled differently on each platform:
+   * - On the browser, the exception is logged as a warning, and the tile fails to load. MapLibre
+   *   reports a tile error with the exception message, shows lower-zoom data in place of the tile
+   *   where available, and requests the tile again when it is needed again.
+   * - On MapLibre Native, the exception is logged as an error, and the tile loads with no features.
+   *   MapLibre does not report a tile error.
+   */
   public suspend fun loadTile(tile: TileCoordinate): FeatureCollection<*, *>
 }
 
 /**
  * Supplies encoded vector data for one tile.
  *
- * Calls for different tiles can overlap. Cancellation means MapLibre no longer needs that request.
+ * Calls run on the same threads, overlap the same way, and are cancelled or shared the same way as
+ * [GeometryTileProvider] calls.
  */
 public fun interface VectorTileProvider {
-  /** Returns an uncompressed MVT protobuf document. An empty array represents an empty tile. */
+  /**
+   * Returns an uncompressed MVT protobuf document for [tile]. An empty array represents an empty
+   * tile.
+   *
+   * The library cancels a call when MapLibre no longer needs the tile or the source leaves the
+   * style. Any other exception, including a cancellation that the provider causes itself, such as
+   * its own timeout, is logged as a warning, and the tile fails to load. MapLibre reports a tile
+   * error with the exception message, shows lower-zoom data in place of the tile where available,
+   * and requests the tile again when it is needed again.
+   */
   public suspend fun loadTile(tile: TileCoordinate): ByteArray
 }
 
@@ -81,8 +113,8 @@ public fun interface VectorTileProvider {
  * Layers read the source's single feature layer regardless of their `source-layer` setting. On the
  * browser, a layer handle reads back the source id as its `source-layer`.
  *
- * Browser invalidation reloads the whole source after outstanding tile requests finish. Provider
- * failures are logged and produce an empty tile.
+ * When the provider fails, the tile fails to load on the browser and loads with no features on
+ * MapLibre Native. See [GeometryTileProvider.loadTile].
  */
 public class CustomGeometrySource(
   id: String,
@@ -108,6 +140,8 @@ public class CustomGeometrySource(
  * A source whose tiles contain uncompressed MVT protobuf documents that the application supplies.
  *
  * Layers that use this source specify a source layer that exists in the returned MVT document.
+ *
+ * When the provider fails, the tile fails to load. See [VectorTileProvider.loadTile].
  */
 public class CustomVectorTileSource(
   id: String,
@@ -193,9 +227,11 @@ public fun rememberCustomVectorTileSource(
 }
 
 private fun validateZoomRange(minZoom: Int, maxZoom: Int) {
-  require(minZoom in 0..32) { "minZoom must be within 0..32" }
-  require(maxZoom in 0..32) { "maxZoom must be within 0..32" }
-  require(minZoom <= maxZoom) { "minZoom must be less than or equal to maxZoom" }
+  require(minZoom in 0..32) { "minZoom must be within 0..32, was $minZoom" }
+  require(maxZoom in 0..32) { "maxZoom must be within 0..32, was $maxZoom" }
+  require(minZoom <= maxZoom) {
+    "minZoom must be less than or equal to maxZoom, was $minZoom and $maxZoom"
+  }
 }
 
 private fun longitudeAt(column: Long, tileCount: Double): Double =

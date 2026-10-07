@@ -13,18 +13,18 @@ public object MapLogging {
   /**
    * The sink for every record. Null drops every record. Defaults to [platformLogger].
    *
-   * The logger runs on engine threads. See [MapLogger] for what an implementation may do.
+   * The logger can run on any thread. See [MapLogger] for what an implementation may do.
    */
   @Volatile @set:DelicateMaplibreComposeApi public var logger: MapLogger? = platformLogger
 }
 
 internal expect fun platformMapLogger(): MapLogger
 
-internal const val MAP_LOG_TAG: String = "maplibre-compose"
+internal const val MapLogTag: String = "maplibre-compose"
 
 /** The message, prefixed with the category when the engine reported one. */
 internal fun MapLogRecord.categorizedMessage(): String =
   if (category == null) message else "[$category] $message"
 
 /** The platform log line: the tag and the categorized message. */
-internal fun MapLogRecord.toPlatformLine(): String = "$MAP_LOG_TAG: ${categorizedMessage()}"
+internal fun MapLogRecord.toPlatformLine(): String = "$MapLogTag: ${categorizedMessage()}"

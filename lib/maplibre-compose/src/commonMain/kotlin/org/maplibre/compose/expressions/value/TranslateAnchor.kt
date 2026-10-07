@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** Frame of reference for offsetting geometry. */
+/**
+ * Frame of reference for offsetting geometry.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class TranslateAnchor private constructor(override val value: String) : EnumValue {
   public companion object : EnumType<TranslateAnchor> {

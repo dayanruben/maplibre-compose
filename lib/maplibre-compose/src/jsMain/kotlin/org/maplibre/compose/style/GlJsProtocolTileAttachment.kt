@@ -48,6 +48,12 @@ internal class GlJsProtocolTileAttachment(
   private val scope =
     CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineName("maplibre-$name"))
   private val requests = mutableMapOf<TileCoordinate, SharedRequest>()
+  private val failed = mutableSetOf<TileCoordinate>()
+
+  /** Tiles whose last request failed, which GL JS holds as errored. */
+  val failedTiles: Set<TileCoordinate>
+    get() = failed
+
   private var open = true
 
   init {
@@ -69,14 +75,17 @@ internal class GlJsProtocolTileAttachment(
               val data =
                 try {
                   loadTile(tile)
-                } catch (cancellation: CancellationException) {
-                  throw cancellation
                 } catch (error: Throwable) {
+                  // A cancelled job means the request ended. The provider's own cancellation,
+                  // such as a timeout, leaves the job active and fails the tile.
+                  if (error is CancellationException) currentCoroutineContext().ensureActive()
+                  failed += tile
                   throw protocolFailure(error)
                 }
               currentCoroutineContext().ensureActive()
               if (!open)
                 throw CancellationException("Protocol tile attachment '$name' was detached")
+              failed -= tile
               data
             }
           )
@@ -108,6 +117,7 @@ internal class GlJsProtocolTileAttachment(
     if (open) {
       generation++
       requests.clear()
+      failed.clear()
     }
     return tileUrlTemplate
   }
@@ -116,6 +126,7 @@ internal class GlJsProtocolTileAttachment(
     if (!open) return
     open = false
     requests.clear()
+    failed.clear()
     scope.cancel()
     removeProtocol(protocol)
   }

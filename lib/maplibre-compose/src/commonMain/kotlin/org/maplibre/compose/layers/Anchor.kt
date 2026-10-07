@@ -14,6 +14,8 @@ internal val LocalAnchor: ProvidableCompositionLocal<Anchor> = compositionLocalO
  * style: [Top], [Bottom], [Above], or [Below]. Layers that resolve to the same position keep their
  * order from the style content.
  *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ *
  * See [Anchor.Companion] for the composable functions that apply an anchor to a block of layers.
  */
 @Immutable
@@ -37,6 +39,16 @@ public sealed interface Anchor {
    * predicate runs outside composition, so snapshot state it reads is not observed; read state in
    * composition and capture the values. See [Anchor.Companion.Above] to use this in the style
    * content.
+   *
+   * The library calls [predicate] each time it applies the style content to a loaded style. Calls
+   * can run on any thread, and an anchor used by several maps or snapshotters can receive calls at
+   * the same time. The predicate must be a fast, pure function of its argument and must call no map
+   * API.
+   *
+   * If [predicate] throws, applying the style content fails the same way as any other failure while
+   * applying it: for a map, see
+   * [MapStyleState.loadState][org.maplibre.compose.map.MapStyleState.loadState]; a snapshot capture
+   * throws a [MapSnapshotException][org.maplibre.compose.map.MapSnapshotException].
    */
   public class Above private constructor(private val selector: LayerSelector) : Anchor {
     public constructor(predicate: (LayerSummary) -> Boolean) : this(LayerSelector(predicate))
@@ -61,6 +73,8 @@ public sealed interface Anchor {
    * predicate runs outside composition, so snapshot state it reads is not observed; read state in
    * composition and capture the values. See [Anchor.Companion.Below] to use this in the style
    * content.
+   *
+   * [predicate] is called, and its exceptions fail the style content, as described for [Above].
    */
   public class Below private constructor(private val selector: LayerSelector) : Anchor {
     public constructor(predicate: (LayerSummary) -> Boolean) : this(LayerSelector(predicate))

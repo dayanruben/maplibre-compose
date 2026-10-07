@@ -18,13 +18,11 @@ import org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL
 import org.lwjgl.vulkan.VK10.VK_SUCCESS
 import org.lwjgl.vulkan.VK11.VK_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE_BIT
 import org.lwjgl.vulkan.VkMemoryWin32HandlePropertiesKHR
-import org.maplibre.compose.desktop.ComposeMapPresentationHost
 import org.maplibre.compose.desktop.Direct3D12ComposeGpuContext
-import org.maplibre.compose.desktop.onGpuThread
+import org.maplibre.compose.desktop.Direct3D12PresentationHost
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.mlnffi.ComposeRenderBackend
 import org.maplibre.compose.mlnffi.MapRenderBackend
-import org.maplibre.compose.mlnffi.MlnFfiHostException
 import org.maplibre.compose.mlnffi.MlnFfiMapDestination
 import org.maplibre.compose.mlnffi.MlnFfiMapFrame
 import org.maplibre.compose.mlnffi.MlnFfiMapFrameAcquisition
@@ -61,7 +59,7 @@ internal data class Direct3DTextureTarget(
  * texture origin.
  */
 internal class Direct3D12MapHost(
-  presentationHost: ComposeMapPresentationHost,
+  presentationHost: Direct3D12PresentationHost,
   producer: MapRenderBackend = MapRenderBackend.Vulkan,
 ) :
   SharedTextureMapHost<Direct3D12ComposeGpuContext, Direct3D12MapHost.SharedTexture>(
@@ -198,18 +196,6 @@ internal class Direct3D12MapHost(
     WindowsDirect3DInterop.release(direct3DTexture)
   }
 
-  override fun <R> withComposeContext(action: (Direct3D12ComposeGpuContext) -> R): R? =
-    presentationHost.onGpuThread {
-      val context = presentationHost.gpuContext() ?: return@onGpuThread null
-      val direct3DContext =
-        context as? Direct3D12ComposeGpuContext
-          ?: throw MlnFfiHostException(
-            "${presentationHost.description} switched from Direct3D12ComposeGpuContext to " +
-              context::class.simpleName
-          )
-      action(direct3DContext)
-    }
-
   override fun contextReplaced() {
     presenter.closeAll()
   }
@@ -291,12 +277,12 @@ private fun VulkanDevice.importDirect3D12Resource(sharedHandle: Long, extent: Ma
  * wrong index calls the wrong method rather than failing.
  */
 private object WindowsDirect3DInterop {
-  private const val IID_ID3D12_DEVICE_DATA1 = 0x189819F1
-  private const val IID_ID3D12_DEVICE_DATA2 = 0x1DB6
-  private const val IID_ID3D12_DEVICE_DATA3 = 0x4B57
-  private const val IID_ID3D12_RESOURCE_DATA1 = 0x696442BE
-  private const val IID_ID3D12_RESOURCE_DATA2 = 0xA72E
-  private const val IID_ID3D12_RESOURCE_DATA3 = 0x4059
+  private const val ID3d12DeviceIidData1 = 0x189819F1
+  private const val ID3d12DeviceIidData2 = 0x1DB6
+  private const val ID3d12DeviceIidData3 = 0x4B57
+  private const val ID3d12ResourceIidData1 = 0x696442BE
+  private const val ID3d12ResourceIidData2 = 0xA72E
+  private const val ID3d12ResourceIidData3 = 0x4059
   private const val GENERIC_ALL = 0x10000000
 
   private const val D3D12_HEAP_TYPE_DEFAULT = 1
@@ -305,11 +291,11 @@ private object WindowsDirect3DInterop {
   private const val D3D12_RESOURCE_STATE_COMMON = 0
   private const val D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET = 0x1
   private const val D3D12_TEXTURE_LAYOUT_UNKNOWN = 0
-  private const val ID3D12_DEVICE_CHILD_GET_DEVICE_INDEX = 7
-  private const val ID3D12_DEVICE_CREATE_COMMITTED_RESOURCE_INDEX = 27
-  private const val ID3D12_DEVICE_CREATE_SHARED_HANDLE_INDEX = 31
-  private const val ID3D12_DEVICE_GET_ADAPTER_LUID_INDEX = 43
-  private const val IUNKNOWN_RELEASE_INDEX = 2
+  private const val ID3d12DeviceChildGetDeviceIndex = 7
+  private const val ID3d12DeviceCreateCommittedResourceIndex = 27
+  private const val ID3d12DeviceCreateSharedHandleIndex = 31
+  private const val ID3d12DeviceGetAdapterLuidIndex = 43
+  private const val IUnknownReleaseIndex = 2
 
   private val linker = Linker.nativeLinker()
   private val kernel32 = SymbolLookup.libraryLookup("kernel32", Arena.global())
@@ -325,7 +311,7 @@ private object WindowsDirect3DInterop {
       // The Windows C ABI returns LUID through an explicit output pointer (d3d12.h).
       linker
         .downcallHandle(
-          comMethod(device.address, ID3D12_DEVICE_GET_ADAPTER_LUID_INDEX),
+          comMethod(device.address, ID3d12DeviceGetAdapterLuidIndex),
           FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS),
         )
         .invokeWithArguments(address(device.address), luid)
@@ -346,7 +332,7 @@ private object WindowsDirect3DInterop {
       val resourceOut = arena.allocate(ValueLayout.ADDRESS)
       checkHResult(
         invokeHResult(
-          comMethod(rawDevice, ID3D12_DEVICE_CREATE_COMMITTED_RESOURCE_INDEX),
+          comMethod(rawDevice, ID3d12DeviceCreateCommittedResourceIndex),
           address(rawDevice),
           heapProperties(arena),
           D3D12_HEAP_FLAG_SHARED,
@@ -374,7 +360,7 @@ private object WindowsDirect3DInterop {
       val deviceOut = arena.allocate(ValueLayout.ADDRESS)
       checkHResult(
         invokeHResult(
-          comMethod(resource.address, ID3D12_DEVICE_CHILD_GET_DEVICE_INDEX),
+          comMethod(resource.address, ID3d12DeviceChildGetDeviceIndex),
           address(resource.address),
           iidId3D12Device(arena),
           deviceOut,
@@ -386,7 +372,7 @@ private object WindowsDirect3DInterop {
         val handleOut = arena.allocate(ValueLayout.ADDRESS)
         checkHResult(
           invokeHResult(
-            comMethod(device, ID3D12_DEVICE_CREATE_SHARED_HANDLE_INDEX),
+            comMethod(device, ID3d12DeviceCreateSharedHandleIndex),
             address(device),
             address(resource.address),
             MemorySegment.NULL,
@@ -448,9 +434,9 @@ private object WindowsDirect3DInterop {
   private fun iidId3D12Device(arena: Arena): MemorySegment =
     guid(
       arena,
-      IID_ID3D12_DEVICE_DATA1,
-      IID_ID3D12_DEVICE_DATA2,
-      IID_ID3D12_DEVICE_DATA3,
+      ID3d12DeviceIidData1,
+      ID3d12DeviceIidData2,
+      ID3d12DeviceIidData3,
       0xBE,
       0x54,
       0x18,
@@ -465,9 +451,9 @@ private object WindowsDirect3DInterop {
   private fun iidId3D12Resource(arena: Arena): MemorySegment =
     guid(
       arena,
-      IID_ID3D12_RESOURCE_DATA1,
-      IID_ID3D12_RESOURCE_DATA2,
-      IID_ID3D12_RESOURCE_DATA3,
+      ID3d12ResourceIidData1,
+      ID3d12ResourceIidData2,
+      ID3d12ResourceIidData3,
       0xBC,
       0x79,
       0x5B,
@@ -506,7 +492,7 @@ private object WindowsDirect3DInterop {
   private fun release(instance: Long) {
     if (instance != NULL) {
       invokeInt(
-        comMethod(instance, IUNKNOWN_RELEASE_INDEX),
+        comMethod(instance, IUnknownReleaseIndex),
         FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS),
         address(instance),
       )

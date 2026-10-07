@@ -1381,8 +1381,8 @@ class MapPresentationTest {
     fixture.state.durableStyleCallbacks().onStyleReady(fixture.adapter)
     val first = PreparedImage.fromBitmap(FakeImageBitmap(1, 1))
     val second = PreparedImage.fromBitmap(FakeImageBitmap(2, 1))
-    val moved = IMAGE_QUAD.copy(topLeft = Position(-2.0, 1.0))
-    val source = ImageSource("image", IMAGE_QUAD, first)
+    val moved = ImageQuad.copy(topLeft = Position(-2.0, 1.0))
+    val source = ImageSource("image", ImageQuad, first)
 
     val handle = fixture.state.style.sources.add(source)
     assertSame(first, binding.addedImageSourceImages["image"])
@@ -2149,6 +2149,28 @@ class MapPresentationTest {
   }
 
   @Test
+  fun an_equal_resolver_replaces_the_current_one() = runTest {
+    class EqualResolver(val image: ResolvedStyleImage?) : MissingImageResolver {
+      override suspend fun resolve(request: MissingImageRequest): ResolvedStyleImage? = image
+
+      override fun equals(other: Any?): Boolean = other is EqualResolver
+
+      override fun hashCode(): Int = 0
+    }
+    val fixture = presentationFixture()
+    val binding = RecordingStyleBinding()
+    fixture.state.missingImageResolver = EqualResolver(null)
+    fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, binding)
+    fixture.state.missingImageResolver =
+      EqualResolver(ResolvedStyleImage(PreparedImage.fromBitmap(FakeImageBitmap(1, 1))))
+
+    assertNotNull(fixture.state.styleAuthority.resolveMissingImage(fixture.adapter, "icon")).await()
+
+    assertTrue(binding.imageExists("icon"))
+    fixture.close()
+  }
+
+  @Test
   fun imperative_commands_cannot_mutate_composition_owned_resources() = runTest {
     val fixture = presentationFixture()
     val source = attributedVectorSource("owned", "owned attribution")
@@ -2891,7 +2913,7 @@ private fun attributedVectorSource(id: String, attribution: String): VectorTileS
     options = TileSetOptions(attributionHtml = attribution),
   )
 
-private val IMAGE_QUAD =
+private val ImageQuad =
   PositionQuad(
     Position(-1.0, 1.0),
     Position(1.0, 1.0),

@@ -2,9 +2,8 @@ package org.maplibre.compose.desktop.bridge
 
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import java.util.concurrent.ConcurrentLinkedQueue
-import org.maplibre.compose.desktop.ComposeMapPresentationHost
 import org.maplibre.compose.desktop.MetalComposeGpuContext
-import org.maplibre.compose.desktop.onGpuThread
+import org.maplibre.compose.desktop.MetalPresentationHost
 import org.maplibre.compose.map.MapExtent
 import org.maplibre.compose.mlnffi.ComposeRenderBackend
 import org.maplibre.compose.mlnffi.MapRenderBackend
@@ -20,7 +19,7 @@ import org.maplibre.compose.mlnffi.TextureOrigin
 
 /** All map producers share Metal allocation, presentation, and frame ownership. */
 internal class MetalMapHost(
-  presentationHost: ComposeMapPresentationHost,
+  presentationHost: MetalPresentationHost,
   producer: MapRenderBackend = MapRenderBackend.Metal,
 ) :
   SharedTextureMapHost<MetalComposeGpuContext, MetalMapHost.SharedTexture>(
@@ -141,13 +140,6 @@ internal class MetalMapHost(
     deferred?.let(pendingMetalDisposals::add)
   }
 
-  override fun <R> withComposeContext(action: (MetalComposeGpuContext) -> R): R? =
-    presentationHost.onGpuThread {
-      val context = presentationHost.gpuContext() ?: return@onGpuThread null
-      check(context is MetalComposeGpuContext) { "The host no longer reports a Metal context" }
-      action(context)
-    }
-
   override fun contextReplaced() {
     presenter.closeAll()
   }
@@ -179,11 +171,11 @@ internal class MetalMapHost(
  * run on threads that have none of their own.
  */
 internal object MetalTexture {
-  private const val MTL_TEXTURE_TYPE_2D = 2L
-  private const val MTL_PIXEL_FORMAT_BGRA8_UNORM = 80L
-  private const val MTL_TEXTURE_USAGE_SHADER_READ = 1L
-  private const val MTL_TEXTURE_USAGE_RENDER_TARGET = 4L
-  private const val MTL_STORAGE_MODE_PRIVATE = 2L
+  private const val MTLTextureType2D = 2L
+  private const val MTLPixelFormatBGRA8Unorm = 80L
+  private const val MTLTextureUsageShaderRead = 1L
+  private const val MTLTextureUsageRenderTarget = 4L
+  private const val MTLStorageModePrivate = 2L
 
   /**
    * Allocates a texture of [width] by [height] physical pixels, reusing [oldTexture] if it already
@@ -201,16 +193,16 @@ internal object MetalTexture {
 
       val descriptor = ObjectiveC.allocInit("MTLTextureDescriptor")
       try {
-        ObjectiveC.sendVoid(descriptor, "setTextureType:", MTL_TEXTURE_TYPE_2D)
-        ObjectiveC.sendVoid(descriptor, "setPixelFormat:", MTL_PIXEL_FORMAT_BGRA8_UNORM)
+        ObjectiveC.sendVoid(descriptor, "setTextureType:", MTLTextureType2D)
+        ObjectiveC.sendVoid(descriptor, "setPixelFormat:", MTLPixelFormatBGRA8Unorm)
         ObjectiveC.sendVoid(descriptor, "setWidth:", width.toLong())
         ObjectiveC.sendVoid(descriptor, "setHeight:", height.toLong())
         ObjectiveC.sendVoid(
           descriptor,
           "setUsage:",
-          MTL_TEXTURE_USAGE_SHADER_READ or MTL_TEXTURE_USAGE_RENDER_TARGET,
+          MTLTextureUsageShaderRead or MTLTextureUsageRenderTarget,
         )
-        ObjectiveC.sendVoid(descriptor, "setStorageMode:", MTL_STORAGE_MODE_PRIVATE)
+        ObjectiveC.sendVoid(descriptor, "setStorageMode:", MTLStorageModePrivate)
         val texture = ObjectiveC.sendPointer(device, "newTextureWithDescriptor:", descriptor)
         if (texture == 0L) {
           throw MlnFfiHostException("Metal texture allocation returned null")

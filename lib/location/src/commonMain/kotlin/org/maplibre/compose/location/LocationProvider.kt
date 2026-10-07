@@ -1,5 +1,6 @@
 package org.maplibre.compose.location
 
+import androidx.compose.runtime.Immutable
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeMark
@@ -31,9 +32,9 @@ public interface LocationProvider : AutoCloseable {
    *
    * This value also reflects changes made outside the application when the platform reports them.
    *
-   * The default is always [LocationPermission.Granted] at [LocationAccuracyAuthorization.Unknown].
-   * A source where permission is not a concept, such as an external receiver or a network feed,
-   * keeps the default and needs no permission handling.
+   * The default is always [LocationPermission.Granted] with a `null` accuracy authorization. A
+   * source where permission is not a concept, such as an external receiver or a network feed, keeps
+   * the default and needs no permission handling.
    */
   public val permission: StateFlow<LocationPermission>
     get() = AlwaysGrantedLocationPermission
@@ -71,14 +72,17 @@ public interface LocationProvider : AutoCloseable {
 }
 
 private val AlwaysGrantedLocationPermission: StateFlow<LocationPermission> =
-  MutableStateFlow(LocationPermission.Granted(LocationAccuracyAuthorization.Unknown))
+  MutableStateFlow(LocationPermission.Granted(accuracy = null))
 
 /**
  * Whether a location implementation has a usable platform backend.
  *
  * This describes application and backend setup. It does not describe location permission, system
  * location services, or whether the next request can obtain a measurement.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
  */
+@Immutable
 public sealed interface LocationBackendAvailability {
   /** A platform implementation is installed and initialized. */
   public data object Available : LocationBackendAvailability
@@ -102,6 +106,12 @@ public sealed interface LocationBackendAvailability {
 }
 
 /**
+ * Keeps [LocationBackendAvailability] open: callers' `when` needs an `else` branch. No provider in
+ * this library reports it.
+ */
+internal data object UnspecifiedLocationBackendAvailability : LocationBackendAvailability
+
+/**
  * Preferences for foreground location updates.
  *
  * A provider applies each preference when its platform supports that setting. A platform may ignore
@@ -111,19 +121,26 @@ public sealed interface LocationBackendAvailability {
  * @property minimumInterval Preferred minimum time between delivered locations.
  * @property minimumDistance Preferred minimum movement between delivered locations.
  */
+@Immutable
 public data class LocationRequest(
   val accuracy: LocationAccuracy = LocationAccuracy.High,
   val minimumInterval: Duration = 1.seconds,
   val minimumDistance: Length = 1.meters,
 ) {
   init {
-    require(!minimumInterval.isNegative()) { "minimumInterval must not be negative" }
-    require(minimumDistance.inMeters >= 0.0) { "minimumDistance must not be negative" }
+    require(!minimumInterval.isNegative()) {
+      "minimumInterval must not be negative, was $minimumInterval"
+    }
+    require(minimumDistance.inMeters >= 0.0) {
+      "minimumDistance must not be negative, was $minimumDistance"
+    }
   }
 }
 
 /**
  * Accuracy levels for [LocationRequest], which are mapped to platform accuracy and power levels.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
  *
  * Use [High] to display the user's location, or [Balanced] to reduce power usage.
  */
@@ -148,7 +165,14 @@ public enum class LocationAccuracy {
   Lowest,
 }
 
-/** Events emitted while collecting [LocationProvider.updates]. */
+/**
+ * Events emitted while collecting [LocationProvider.updates].
+ *
+ * A custom provider emits [Update] and [Unavailable].
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 public sealed interface LocationEvent {
   /**
    * A location measurement delivered by the provider.
@@ -165,24 +189,37 @@ public sealed interface LocationEvent {
   /**
    * A condition or failure that currently prevents location delivery.
    *
-   * @property reason Portable classification of the condition.
+   * @property reason Portable classification of the condition, or `null` when the provider has no
+   *   classification for it, such as an unexpected platform failure. [cause] then describes the
+   *   failure.
    * @property cause Underlying platform or provider exception, when one is available.
    */
   public data class Unavailable(
-    val reason: LocationUnavailableReason,
+    val reason: LocationUnavailableReason?,
     val cause: Throwable? = null,
   ) : LocationEvent
 }
 
-/** Reasons that a provider cannot currently deliver location measurements. */
-public enum class LocationUnavailableReason {
+/**
+ * Keeps [LocationEvent] open: callers' `when` needs an `else` branch. No provider in this library
+ * emits it.
+ */
+internal data object UnspecifiedLocationEvent : LocationEvent
+
+/**
+ * Reasons that a provider cannot currently deliver location measurements.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
+public sealed interface LocationUnavailableReason {
   /**
    * The device's location services are disabled.
    *
    * For example, the user turned off Location Services in system settings while the application was
    * running.
    */
-  ServicesDisabled,
+  public data object ServicesDisabled : LocationUnavailableReason
 
   /**
    * The provider cannot deliver a location now, but a later location request may succeed.
@@ -190,7 +227,7 @@ public enum class LocationUnavailableReason {
    * For example, a device in a tunnel may temporarily lose satellite positioning, or a browser
    * request may time out before a position is available.
    */
-  TemporarilyUnavailable,
+  public data object TemporarilyUnavailable : LocationUnavailableReason
 
   /**
    * An active request discovered that the target or host cannot provide location.
@@ -198,7 +235,7 @@ public enum class LocationUnavailableReason {
    * For example, an initialized Windows provider may report that location is not available on the
    * device.
    */
-  Unsupported,
+  public data object Unsupported : LocationUnavailableReason
 
   /**
    * Foreground location permission has not been granted.
@@ -206,40 +243,58 @@ public enum class LocationUnavailableReason {
    * For example, the user may deny the permission prompt or revoke permission in system settings
    * while the application is running.
    */
-  PermissionDenied,
-
-  /**
-   * The provider failed for a reason that is not a normal availability condition.
-   *
-   * For example, a platform service may return malformed location data, or a custom provider may
-   * throw while its update flow is being collected.
-   */
-  UnexpectedFailure,
+  public data object PermissionDenied : LocationUnavailableReason
 }
 
-/** The accuracy level that the user authorized. */
-public enum class LocationAccuracyAuthorization {
+/**
+ * Keeps [LocationUnavailableReason] open: callers' `when` needs an `else` branch. No provider in
+ * this library reports it.
+ */
+internal data object UnspecifiedLocationUnavailableReason : LocationUnavailableReason
+
+/**
+ * The accuracy level that the user authorized.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
+public sealed interface LocationAccuracyAuthorization {
   /** Fine location on Android or full accuracy on iOS. */
-  Precise,
+  public data object Precise : LocationAccuracyAuthorization
 
   /** Coarse location on Android or reduced accuracy on iOS. */
-  Approximate,
-
-  /** The platform does not report whether precise location is authorized. */
-  Unknown,
+  public data object Approximate : LocationAccuracyAuthorization
 }
 
-/** Current foreground location authorization. */
+/**
+ * Keeps [LocationAccuracyAuthorization] open: callers' `when` needs an `else` branch. No provider
+ * in this library reports it.
+ */
+internal data object UnspecifiedLocationAccuracyAuthorization : LocationAccuracyAuthorization
+
+/**
+ * Current foreground location authorization.
+ *
+ * A custom provider reports [NotDetermined], [Granted], and [NotGranted].
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 public sealed interface LocationPermission {
   /**
    * Authorization has not been determined. Collecting [LocationProvider.updates] retries the
    * permission check without prompting. The provider must determine authorization before delivering
    * measurements and report check failures through [LocationEvent.Unavailable].
    */
-  public data object Unknown : LocationPermission
+  public data object NotDetermined : LocationPermission
 
-  /** Foreground authorization is granted at [accuracy]. */
-  public data class Granted(val accuracy: LocationAccuracyAuthorization) : LocationPermission
+  /**
+   * Foreground authorization is granted.
+   *
+   * @property accuracy The accuracy level that the user authorized, or `null` when the platform
+   *   does not report whether precise location is authorized.
+   */
+  public data class Granted(val accuracy: LocationAccuracyAuthorization?) : LocationPermission
 
   /**
    * Foreground authorization is not granted.
@@ -257,6 +312,12 @@ public sealed interface LocationPermission {
     val shouldShowRationale: Boolean = false,
   ) : LocationPermission
 }
+
+/**
+ * Keeps [LocationPermission] open: callers' `when` needs an `else` branch. No provider in this
+ * library reports it.
+ */
+internal data object UnspecifiedLocationPermission : LocationPermission
 
 /** A provider for a target or host that has no installed location implementation. */
 public object UnsupportedLocationProvider :

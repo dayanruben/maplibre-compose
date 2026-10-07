@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** Controls whether to show an icon/text when it overlaps other symbols on the map. */
+/**
+ * Controls whether to show an icon/text when it overlaps other symbols on the map.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class SymbolOverlap private constructor(override val value: String) : EnumValue {
   public companion object : EnumType<SymbolOverlap> {

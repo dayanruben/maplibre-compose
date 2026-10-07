@@ -5,8 +5,8 @@ import org.jetbrains.skia.DirectContext
 
 private val browserWindow: dynamic = js("window")
 
-private const val MAKE_GL_SYMBOL = "org_jetbrains_skia_DirectContext__1nMakeGL"
-private const val RESET_SYMBOL = "org_jetbrains_skia_DirectContext__1nReset"
+private const val MakeGlSymbol = "org_jetbrains_skia_DirectContext__1nMakeGL"
+private const val ResetSymbol = "org_jetbrains_skia_DirectContext__1nReset"
 
 /** Every GL state bit, matching `DirectContext.resetGLAll`. */
 private const val GL_STATES = 0xffff
@@ -16,7 +16,7 @@ private const val GL_STATES = 0xffff
  * before Compose builds its renderer. A second `DirectContext.makeGL()` corrupts Compose's
  * rendering, so the existing one has to be caught as it is created.
  *
- * TODO: retire this, and [org.maplibre.compose.browser.installMapLibreCompose] with it, once
+ * TODO: retire this, and [org.maplibre.compose.browser.installMaplibreCompose] with it, once
  *   [JetBrains/skiko#1219](https://github.com/JetBrains/skiko/pull/1219) or an equivalent lands.
  */
 internal object SkikoGpuBridge {
@@ -36,9 +36,9 @@ internal object SkikoGpuBridge {
    */
   fun install(): Boolean {
     if (hookInstalled) return true
-    val original = browserWindow[MAKE_GL_SYMBOL]
+    val original = browserWindow[MakeGlSymbol]
     if (original == null || original == undefined) return false
-    browserWindow[MAKE_GL_SYMBOL] = {
+    browserWindow[MakeGlSymbol] = {
       val pointer = original()
       EmscriptenGl.currentHandle()?.let { handle ->
         contextPointers[handle] = pointer.unsafeCast<Any>()
@@ -67,7 +67,7 @@ internal object SkikoGpuBridge {
   /** `DirectContext.resetGLAll()`, through the export, since that method needs a real instance. */
   fun resetGlState(context: EmscriptenGlContext) {
     val pointer = contextPointers[context.handle] ?: return
-    val reset = browserWindow[RESET_SYMBOL]
+    val reset = browserWindow[ResetSymbol]
     if (reset == null || reset == undefined) return
     reset(pointer, GL_STATES)
   }

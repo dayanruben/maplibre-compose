@@ -1,8 +1,14 @@
 package org.maplibre.compose.expressions.value
 
+import androidx.compose.runtime.Immutable
 import kotlin.jvm.JvmInline
 
-/** Orientation of circles when the map is pitched. */
+/**
+ * Orientation of circles when the map is pitched.
+ *
+ * Values may be added in minor releases; use an `else` branch when matching.
+ */
+@Immutable
 @JvmInline
 public value class CirclePitchAlignment private constructor(override val value: String) :
   EnumValue {

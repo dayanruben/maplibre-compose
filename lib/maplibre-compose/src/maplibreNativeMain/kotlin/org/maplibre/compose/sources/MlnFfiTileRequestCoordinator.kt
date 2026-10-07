@@ -5,9 +5,11 @@ import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.maplibre.compose.mlnffi.MlnFfiLock
 import org.maplibre.compose.mlnffi.withLock
@@ -29,7 +31,8 @@ internal class MlnFfiTileRequestCoordinator<T>(
 ) : AutoCloseable {
   private class Request(val token: Long, val job: Job)
 
-  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default + CoroutineName(name))
+  /** On the IO dispatcher, because tile providers may block. */
+  private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CoroutineName(name))
   private val lock = MlnFfiLock()
   private var closed = false
   private var nextToken = 0L
@@ -47,8 +50,13 @@ internal class MlnFfiTileRequestCoordinator<T>(
             try {
               Result.success(load(coordinate))
             } catch (error: CancellationException) {
-              forget(tileId, token)
-              throw error
+              // A cancelled job means this coordinator ended the request. The provider's own
+              // cancellation, such as a timeout, leaves the job active and fails the tile.
+              if (!isActive) {
+                forget(tileId, token)
+                throw error
+              }
+              Result.failure(error)
             } catch (error: Throwable) {
               rethrowIfFatal(error)
               Result.failure(error)

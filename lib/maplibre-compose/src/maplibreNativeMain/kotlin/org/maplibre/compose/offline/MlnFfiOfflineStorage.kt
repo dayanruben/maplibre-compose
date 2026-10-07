@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.io.files.Path
 import org.maplibre.compose.mlnffi.MlnFfiRuntime
 import org.maplibre.compose.mlnffi.normalizeMlnFfiPath
+import org.maplibre.compose.resource.toCommon
 import org.maplibre.nativeffi.error.MaplibreException
 import org.maplibre.nativeffi.error.MaplibreStatus
 import org.maplibre.nativeffi.offline.OfflineRegionDownloadState
@@ -24,9 +25,9 @@ import org.maplibre.nativeffi.runtime.RuntimeEventPayload
 import org.maplibre.nativeffi.runtime.RuntimeEventType
 import org.maplibre.nativeffi.runtime.RuntimeHandle
 
-/** The MapLibre Native FFI offline manager that belongs to one map runtime. */
-internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
-  OfflineManagerBackend, OfflinePackOwner {
+/** The MapLibre Native FFI offline storage that belongs to one map runtime. */
+internal class MlnFfiOfflineStorage(private val owner: MlnFfiRuntime) :
+  OfflineStorageBackend, OfflinePackOwner {
 
   private val options = owner.options
   private val logger = options.logger
@@ -34,19 +35,19 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
   /**
    * Pack updates are serialized on the owner; closing can reject initialization from any thread.
    */
-  private val managerState = MutableStateFlow<OfflineManagerState>(OfflineManagerState.Loading)
+  private val storageState = MutableStateFlow<OfflineStorageState>(OfflineStorageState.Loading)
 
-  /** Owner-thread state: the packs this manager has seen, keyed by native region id. */
+  /** Owner-thread state: the packs this storage has seen, keyed by native region id. */
   private val packsById = mutableMapOf<Long, OfflinePack>()
 
   private val operations = MlnFfiOfflineOperations(owner, logger, ::handleEvent)
 
-  /** One manager applies one cache-budget change at a time. */
+  /** One storage applies one cache-budget change at a time. */
   private val cacheBudgetMutex = Mutex()
 
   @OptIn(ExperimentalAtomicApi::class) private val runtimeGuard = AtomicReference<() -> Unit> {}
 
-  override val state: StateFlow<OfflineManagerState> = managerState.asStateFlow()
+  override val state: StateFlow<OfflineStorageState> = storageState.asStateFlow()
 
   init {
     val accepted = configureCacheBudget { configured ->
@@ -66,21 +67,21 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
                 listed.fold(
                   onSuccess = {
                     owner.initialized(Result.success(Unit))
-                    managerState.compareAndSet(
-                      OfflineManagerState.Loading,
-                      OfflineManagerState.Ready(packsById.values.toSet()),
+                    storageState.compareAndSet(
+                      OfflineStorageState.Loading,
+                      OfflineStorageState.Ready(packsById.values.toSet()),
                     )
                   },
                   onFailure = ::failStartup,
                 )
               },
             )
-          if (!accepted) failStartup(OfflineManagerException("The offline manager is closed"))
+          if (!accepted) failStartup(OfflineStorageException("The offline storage is closed"))
         },
         onFailure = ::failStartup,
       )
     }
-    if (!accepted) failStartup(OfflineManagerException("The offline manager could not initialize"))
+    if (!accepted) failStartup(OfflineStorageException("The offline storage could not initialize"))
   }
 
   @OptIn(ExperimentalAtomicApi::class)
@@ -112,7 +113,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
 
   private fun failStartup(error: Throwable) {
     owner.initialized(Result.failure(error))
-    managerState.compareAndSet(OfflineManagerState.Loading, OfflineManagerState.Failed(error))
+    storageState.compareAndSet(OfflineStorageState.Loading, OfflineStorageState.Failed(error))
     operations.shutdown()
   }
 
@@ -125,7 +126,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
       start = { it.startCreateOfflineRegion(ffiDefinition, ffiMetadata) },
       finish = { nativeRuntime, handle ->
         registerRegion(nativeRuntime.takeCreateOfflineRegionResult(handle))
-          ?: throw OfflineManagerException(
+          ?: throw OfflineStorageException(
             "MapLibre created an offline region that this build cannot represent"
           )
       },
@@ -166,7 +167,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
   override suspend fun mergeDatabase(databaseFile: Path): Set<OfflinePack> {
     val sourceFile = normalizeMlnFfiPath(databaseFile)
     require(sourceFile != options.cacheFile) {
-      "The source database must differ from this manager's database"
+      "The source database must differ from this storage's database"
     }
     return runOperation(
       description = "merge offline database $sourceFile",
@@ -188,12 +189,12 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
     runAmbientCacheOperation("clear the ambient cache", AmbientCacheOperation.CLEAR)
   }
 
-  override suspend fun setMaximumAmbientCacheSize(size: Long) {
+  override suspend fun setMaximumAmbientCacheSize(sizeBytes: Long) {
     // Lowering the budget evicts ambient resources to fit; offline packs are left alone.
     cacheBudgetMutex.withLock {
       runOperation(
-        description = "set the maximum ambient cache size to $size bytes",
-        start = { it.startSetMaximumAmbientCacheSize(size) },
+        description = "set the maximum ambient cache size to $sizeBytes bytes",
+        start = { it.startSetMaximumAmbientCacheSize(sizeBytes) },
         finish = { _, _ -> },
       )
     }
@@ -202,14 +203,14 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
   /** Rejects further work immediately and asks the owner to release its resources. */
   override fun close() {
     operations.shutdown()
-    managerState.compareAndSet(
-      OfflineManagerState.Loading,
-      OfflineManagerState.Failed(OfflineManagerException("The offline manager is closed")),
+    storageState.compareAndSet(
+      OfflineStorageState.Loading,
+      OfflineStorageState.Failed(OfflineStorageException("The offline storage is closed")),
     )
   }
 
   private fun requireOwned(pack: OfflinePack) {
-    require(pack.owner === this) { "The offline pack belongs to a different manager" }
+    require(pack.owner === this) { "The offline pack belongs to a different offline storage" }
   }
 
   /** Backs [OfflinePack.setMetadata]; the pack itself holds no native state. */
@@ -245,7 +246,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
     packsById[info.id] = pack
     publishPacks()
 
-    // Status events only arrive for observed regions, and an unreported pack reads as Unknown.
+    // Status events only arrive for observed regions, and an unreported pack reads as NotReported.
     observe(info.id)
     refreshStatus(info.id)
     return pack
@@ -261,7 +262,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
         finish = { _, _ -> refreshStatus(pack.regionId) },
       )
     if (!accepted) {
-      logger?.w { "Cannot change the download state of pack ${pack.regionId}: manager disposed" }
+      logger?.w { "Cannot change the download state of pack ${pack.regionId}: storage disposed" }
     }
   }
 
@@ -280,7 +281,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
       finish = { nativeRuntime, handle ->
         publishProgress(
           regionId,
-          nativeRuntime.takeOfflineRegionStatusResult(handle).toDownloadProgress(logger),
+          nativeRuntime.takeOfflineRegionStatusResult(handle).toDownloadProgress(),
         )
       },
     )
@@ -306,7 +307,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
     when (event.type) {
       RuntimeEventType.OFFLINE_REGION_STATUS_CHANGED -> {
         val payload = event.payload as? RuntimeEventPayload.OfflineRegionStatusChanged ?: return
-        publishProgress(payload.regionId, payload.status.toDownloadProgress(logger))
+        publishProgress(payload.regionId, payload.status.toDownloadProgress())
       }
 
       RuntimeEventType.OFFLINE_REGION_TILE_COUNT_LIMIT_EXCEEDED -> {
@@ -317,16 +318,16 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
 
       RuntimeEventType.OFFLINE_REGION_RESPONSE_ERROR -> {
         val payload = event.payload as? RuntimeEventPayload.OfflineRegionResponseError ?: return
-        val reason = payload.reason.toDownloadErrorReason()
+        val reason = payload.reason.toCommon()
         val message = event.message.ifBlank { "MapLibre could not download an offline resource" }
-        logger?.e { "Offline pack ${payload.regionId} failed ($reason): $message" }
+        logger?.e { "Offline pack ${payload.regionId} failed (${reason.value}): $message" }
         publishProgress(payload.regionId, DownloadProgress.Error(reason, message))
       }
 
       else ->
         // Event types are value classes over Int, so an FFI upgrade can deliver a type this build
         // has never seen.
-        logger?.d { "Ignoring MapLibre event ${event.type} in the offline manager" }
+        logger?.d { "Ignoring MapLibre event ${event.type} in the offline storage" }
     }
   }
 
@@ -341,8 +342,8 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
 
   private fun publishPacks() {
     // Snapshotted so Compose never sees the mutable map behind it.
-    if (managerState.value is OfflineManagerState.Ready) {
-      managerState.value = OfflineManagerState.Ready(packsById.values.toSet())
+    if (storageState.value is OfflineStorageState.Ready) {
+      storageState.value = OfflineStorageState.Ready(packsById.values.toSet())
     }
   }
 
@@ -355,7 +356,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
    *
    * [start] and [finish] both run on the owner thread: the first when the task is dequeued, the
    * second when the runtime reports that this operation's id completed. Returns false when the
-   * manager is already disposed, in which case [onResult] is not called.
+   * storage is already disposed, in which case [onResult] is not called.
    */
   private fun <T, R> submit(
     description: String,
@@ -380,7 +381,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
                 failOnNativeError(description, event)
                 Result.success(finish(completedRuntime, handle))
               } catch (error: Throwable) {
-                Result.failure(error.toOfflineManagerException(description))
+                Result.failure(error.toOfflineStorageException(description))
               }
             onResult(result)
           },
@@ -388,7 +389,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
         )
         onStarted(handle)
       },
-      reject = { error -> onResult(Result.failure(error.toOfflineManagerException(description))) },
+      reject = { error -> onResult(Result.failure(error.toOfflineStorageException(description))) },
       isCancelled = isCancelled,
     )
   }
@@ -418,7 +419,7 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
         )
       if (!accepted) {
         continuation.resumeWithException(
-          OfflineManagerException("Cannot $description: the offline manager has been disposed")
+          OfflineStorageException("Cannot $description: the offline storage has been disposed")
         )
       }
     }
@@ -428,22 +429,22 @@ internal class MlnFfiOfflineManager(private val owner: MlnFfiRuntime) :
     val payload = event.payload as? RuntimeEventPayload.OfflineOperationCompleted ?: return
     if (payload.resultStatus == MaplibreStatus.OK.nativeCode) return
     val message = event.message.ifBlank { "status ${payload.resultStatus}" }
-    throw OfflineManagerException("Failed to $description: $message")
+    throw OfflineStorageException("Failed to $description: $message")
   }
 
-  private fun Throwable.toOfflineManagerException(description: String): Throwable =
+  private fun Throwable.toOfflineStorageException(description: String): Throwable =
     when (this) {
-      is OfflineManagerException,
+      is OfflineStorageException,
       is CancellationException,
       is Error -> this
       is MaplibreException -> {
         logger?.d(this) { "Native failure while trying to $description" }
         val detail = diagnostic.ifBlank { message.orEmpty() }
-        OfflineManagerException("Failed to $description: $detail", this)
+        OfflineStorageException("Failed to $description: $detail", this)
       }
       else -> {
         logger?.d(this) { "Failure while trying to $description" }
-        OfflineManagerException(
+        OfflineStorageException(
           "Failed to $description: ${message ?: this::class.simpleName.orEmpty()}",
           this,
         )

@@ -5,6 +5,8 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.DurationUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -133,7 +135,7 @@ internal open class MlnFfiStyleBinding(
     map.styleLayers().map { layer ->
       LayerSummary(layer.id, layer.type, layer.sourceId, layer.sourceLayer)
     }
-  override val baseSources: Map<String, Source?> =
+  override val baseSources: Map<String, Source> =
     map.styleSourceIds().associateWith { reconstructSource(map, it) }
 
   /** Runs [action] through [MlnFfiMapRuntimeLoop.await]. */
@@ -218,7 +220,7 @@ internal open class MlnFfiStyleBinding(
     map.styleLayers().map { LayerSummary(it.id, it.type, it.sourceId, it.sourceLayer) }
   }
 
-  private fun reconstructSource(map: MapHandle, id: String): Source? =
+  private fun reconstructSource(map: MapHandle, id: String): Source =
     reconstructedSource(id, sourceDefinition(map, id))
 
   private fun sourceDefinition(map: MapHandle, id: String): JsonObject {
@@ -370,7 +372,7 @@ internal open class MlnFfiStyleBinding(
           logger?.e(error) {
             "Loading tile ${tile.toTileCoordinate()} of source '$sourceId' failed"
           }
-          map.setCustomGeometrySourceTileData(sourceId, tile, EMPTY_FEATURE_COLLECTION)
+          map.setCustomGeometrySourceTileData(sourceId, tile, EmptyFeatureCollection)
         },
       )
     val callback =
@@ -419,7 +421,21 @@ internal open class MlnFfiStyleBinding(
       MlnFfiTileRequestCoordinator(
         name = "maplibre-custom-vector-$sourceId",
         binding = this,
-        load = provider::loadTile,
+        load = { tile ->
+          try {
+            provider.loadTile(tile)
+          } catch (error: Throwable) {
+            rethrowIfFatal(error)
+            // A cancelled job means the request ended. The provider's own cancellation, such as a
+            // timeout, leaves the job active and fails like any other exception.
+            if (error is CancellationException) currentCoroutineContext().ensureActive()
+            // Logged here rather than in `fail`, which a cancelled or replaced request skips.
+            // MapLibre logs the tile error as an error with the message alone; this record
+            // carries the exception.
+            logger?.w(error) { "Custom vector tile source '$sourceId' failed to load $tile" }
+            throw error
+          }
+        },
         deliver = { map, tile, data -> map.setCustomMvtVectorSourceTileData(sourceId, tile, data) },
         fail = { map, tile, error ->
           map.setCustomMvtVectorSourceTileError(
@@ -524,7 +540,7 @@ internal open class MlnFfiStyleBinding(
       if (data is GeoJsonData.Uri) {
         map.addGeoJsonSourceUrl(sourceId, data.uri, ffiOptions)
       } else {
-        GeoJsonSourceDataHandle.create(EMPTY_FEATURE_COLLECTION, ffiOptions).use { empty ->
+        GeoJsonSourceDataHandle.create(EmptyFeatureCollection, ffiOptions).use { empty ->
           map.addGeoJsonSourceData(sourceId, empty)
         }
       }
@@ -649,9 +665,9 @@ internal open class MlnFfiStyleBinding(
     sourceId: String,
     feature: Feature<*, JsonObject?>,
   ): Double? {
-    val result = queryClusterExtension(sourceId, feature, EXPANSION_ZOOM_FIELD) ?: return null
+    val result = queryClusterExtension(sourceId, feature, ExpansionZoomField) ?: return null
     val zoom = result.decodeToString().toDoubleOrNull()
-    if (zoom == null) reportClusterMiss(sourceId, EXPANSION_ZOOM_FIELD, result)
+    if (zoom == null) reportClusterMiss(sourceId, ExpansionZoomField, result)
     return zoom
   }
 
@@ -659,7 +675,7 @@ internal open class MlnFfiStyleBinding(
     sourceId: String,
     feature: Feature<*, JsonObject?>,
   ): FeatureCollection<Geometry, JsonObject?>? =
-    queryClusterFeatures(sourceId, feature, CHILDREN_FIELD, null)
+    queryClusterFeatures(sourceId, feature, ChildrenField, null)
 
   override suspend fun clusterLeaves(
     sourceId: String,
@@ -670,7 +686,7 @@ internal open class MlnFfiStyleBinding(
     queryClusterFeatures(
       sourceId,
       feature,
-      LEAVES_FIELD,
+      LeavesField,
       // Both must be unsigned: MapLibre type-checks them exactly and silently falls back to its own
       // default of ten otherwise, and it ignores offset unless limit is present. A non-negative
       // integer literal parses as unsigned.
@@ -698,7 +714,7 @@ internal open class MlnFfiStyleBinding(
         session.queryFeatureExtension(
           sourceId,
           ffiFeature,
-          SUPERCLUSTER_EXTENSION,
+          SuperclusterExtension,
           field,
           arguments,
         )
@@ -930,25 +946,25 @@ internal open class MlnFfiStyleBinding(
   // A property's transition travels the same write path, and native refuses it as hard as the
   // property itself.
   override fun unsupportedLayerPropertyReason(layerType: String, name: String): String? =
-    UNSUPPORTED_LAYER_PROPERTIES[layerType to name.removeSuffix(TRANSITION_SUFFIX)]
+    UnsupportedLayerProperties[layerType to name.removeSuffix(TransitionSuffix)]
 
   companion object {
     /** The only extension MapLibre answers for a GeoJSON source; anything else returns nothing. */
-    private const val SUPERCLUSTER_EXTENSION = "supercluster"
+    private const val SuperclusterExtension = "supercluster"
 
     /** Delivered for a tile whose provider failed, so the map's load can finish. */
-    private val EMPTY_FEATURE_COLLECTION =
+    private val EmptyFeatureCollection =
       """{"type":"FeatureCollection","features":[]}""".encodeToByteArray()
 
-    private const val EXPANSION_ZOOM_FIELD = "expansion-zoom"
-    private const val CHILDREN_FIELD = "children"
-    private const val LEAVES_FIELD = "leaves"
+    private const val ExpansionZoomField = "expansion-zoom"
+    private const val ChildrenField = "children"
+    private const val LeavesField = "leaves"
 
     /**
      * Style-spec properties MapLibre Native does not implement; writing one makes it refuse the
      * entire layer. Revisit when bumping the maplibre-native-ffi pin.
      */
-    private val UNSUPPORTED_LAYER_PROPERTIES: Map<Pair<String, String>, String> =
+    private val UnsupportedLayerProperties: Map<Pair<String, String>, String> =
       mapOf(
         ("symbol" to "icon-overlap") to
           "MapLibre Native does not implement it. Use iconAllowOverlap instead; note that it " +

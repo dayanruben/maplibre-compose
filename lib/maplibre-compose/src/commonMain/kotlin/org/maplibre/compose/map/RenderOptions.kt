@@ -1,6 +1,7 @@
 package org.maplibre.compose.map
 
 import androidx.compose.runtime.Immutable
+import org.maplibre.compose.util.formatToString
 
 /**
  * How the map renders.
@@ -31,7 +32,9 @@ private constructor(
   ) : this(builder.maximumFps, builder.tileLod, builder.debugBuilder.build(), builder.platform)
 
   init {
-    require(maximumFps == null || maximumFps > 0) { "maximumFps must be positive" }
+    require(maximumFps == null || maximumFps > 0) {
+      "maximumFps must be positive, was $maximumFps"
+    }
   }
 
   override fun equals(other: Any?): Boolean =
@@ -42,6 +45,15 @@ private constructor(
       platform == other.platform
 
   override fun hashCode(): Int = listOf(maximumFps, tileLod, debug, platform).hashCode()
+
+  override fun toString(): String =
+    formatToString(
+      "RenderOptions",
+      "maximumFps" to maximumFps,
+      "tileLod" to tileLod,
+      "debug" to debug,
+      *platform.fields.toTypedArray(),
+    )
 
   @MapOptionsDsl
   public class Builder internal constructor(from: RenderOptions) {
@@ -92,6 +104,14 @@ private constructor(
       platform == other.platform
 
   override fun hashCode(): Int = listOf(tileBorders, collisionBoxes, platform).hashCode()
+
+  override fun toString(): String =
+    formatToString(
+      "DebugOverlays",
+      "tileBorders" to tileBorders,
+      "collisionBoxes" to collisionBoxes,
+      *platform.fields.toTypedArray(),
+    )
 
   @MapOptionsDsl
   public class Builder internal constructor(from: DebugOverlays) {

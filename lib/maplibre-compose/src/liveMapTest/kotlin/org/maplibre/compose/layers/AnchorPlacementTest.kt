@@ -3,6 +3,7 @@ package org.maplibre.compose.layers
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import org.maplibre.compose.map.StyleLoadState
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.onOwner
 import org.maplibre.compose.testing.MapTestResult
@@ -64,6 +65,19 @@ class AnchorPlacementTest {
         assertEquals(expected, fixture.state.style.layers.map { it.id })
       }
     }
+
+  /** A predicate that throws fails the style content like any other failure applying it. */
+  @Test
+  fun a_throwing_predicate_fails_the_style(): MapTestResult = runMapTest {
+    createMapFixture().use { fixture ->
+      fixture.loadStyle(baseStyle("base-bottom", "base-top"))
+      fixture.declare {
+        Anchor.Above({ error("bad predicate") }) { BackgroundLayer("over", visible = true) }
+      }
+
+      assertEquals(StyleLoadState.Failed("bad predicate"), fixture.state.style.loadState)
+    }
+  }
 
   private fun baseStyle(vararg layerIds: String) =
     BaseStyle.Json(

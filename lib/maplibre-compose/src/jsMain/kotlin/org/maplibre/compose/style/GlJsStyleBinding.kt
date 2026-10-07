@@ -7,6 +7,8 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.DurationUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.await
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -20,6 +22,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import org.maplibre.compose.gljs.CanonicalTileId
 import org.maplibre.compose.gljs.FilterSpecification
 import org.maplibre.compose.gljs.GeoJsonSourceData
 import org.maplibre.compose.gljs.GlJsGeoJsonSource
@@ -48,7 +51,7 @@ import org.maplibre.compose.layers.GlJsLocationIndicator
 import org.maplibre.compose.layers.IndicatorImage
 import org.maplibre.compose.layers.LayerSummary
 import org.maplibre.compose.logging.MapLog
-import org.maplibre.compose.sources.CLUSTER_ID_PROPERTY
+import org.maplibre.compose.sources.ClusterIdProperty
 import org.maplibre.compose.sources.CustomGeometrySourceOptions
 import org.maplibre.compose.sources.CustomVectorTileSourceOptions
 import org.maplibre.compose.sources.GeoJsonData
@@ -139,18 +142,22 @@ internal class GlJsStyleBinding(
     event.sourceId?.let { pendingImageSourceUrls.remove(it) }
   }
 
-  private val pendingCustomGeometryReloads = mutableSetOf<String>()
+  private val pendingCustomSourceReloads = mutableSetOf<String>()
 
-  // Reload only after outstanding tiles settle. GL JS otherwise re-parses their old responses.
-  private val customGeometryReloads: GlJsSubscription =
-    map.subscribe("sourcedata") { event ->
-      val sourceId = event.sourceId ?: return@subscribe
-      if (!loaded || sourceId !in pendingCustomGeometryReloads) return@subscribe
-      if (map.getSource<GlJsVectorSource>(sourceId) == null || map.isSourceLoaded(sourceId) != true)
-        return@subscribe
-      pendingCustomGeometryReloads.remove(sourceId)
-      postWrite("Custom geometry source '$sourceId'") { invalidateCustomGeometrySource(sourceId) }
+  // Reload only after outstanding tiles settle. GL JS otherwise re-parses their old responses. A
+  // tile settles with `sourcedata` when it loads and with `error` when it fails.
+  private val customSourceReloads: List<GlJsSubscription> =
+    listOf("sourcedata", "error").map { type ->
+      map.subscribe(type) { event -> reloadPendingCustomSource(event.sourceId) }
     }
+
+  private fun reloadPendingCustomSource(sourceId: String?) {
+    if (sourceId == null || !loaded || sourceId !in pendingCustomSourceReloads) return
+    if (map.getSource<GlJsVectorSource>(sourceId) == null || map.isSourceLoaded(sourceId) != true)
+      return
+    pendingCustomSourceReloads.remove(sourceId)
+    postWrite("Custom source '$sourceId'") { reloadCustomSource(sourceId) }
+  }
 
   // GL JS serializes only JSON layers when recovering a lost context. Retain custom layer
   // positions before it destroys the style, then reattach them after the restored style loads.
@@ -206,8 +213,8 @@ internal class GlJsStyleBinding(
     contextLost.cancel()
     contextStyleLoaded.cancel()
     errors.forEach { it.cancel() }
-    customGeometryReloads.cancel()
-    pendingCustomGeometryReloads.clear()
+    customSourceReloads.forEach { it.cancel() }
+    pendingCustomSourceReloads.clear()
     val vectorAttachments = customVectorAttachments.values.toList()
     val geometryAttachments = customGeometryAttachments.values.toList()
     customVectorAttachments.clear()
@@ -222,7 +229,8 @@ internal class GlJsStyleBinding(
   override val supportsRasterDemScheme: Boolean = false
 
   override val baseLayers: List<LayerSummary> = layerSummaries()
-  override val baseSources: Map<String, Source?> = sourceIds().associateWith(::getSource)
+  override val baseSources: Map<String, Source> =
+    sourceIds().mapNotNull { id -> getSource(id)?.let { id to it } }.toMap()
 
   // GL JS runs the remove and add in one task, so no frame renders between them.
   override fun setImage(definition: StyleImageDefinition) {
@@ -369,7 +377,7 @@ internal class GlJsStyleBinding(
     mutate("remove source '$sourceId'") { map.removeSource(sourceId) }
     imageSourceImages.remove(sourceId)
     pendingImageSourceUrls.remove(sourceId)
-    pendingCustomGeometryReloads.remove(sourceId)
+    pendingCustomSourceReloads.remove(sourceId)
     customVectorAttachments.remove(sourceId)?.close()
     customGeometryAttachments.remove(sourceId)?.close()
   }
@@ -380,14 +388,14 @@ internal class GlJsStyleBinding(
     provider: GeometryTileProvider,
   ): Boolean {
     requireCurrent()
-    val attachment = GlJsCustomGeometryAttachment(sourceId, options, provider)
+    val attachment = GlJsCustomGeometryAttachment(sourceId, options, provider, logger)
     val added =
       try {
         addSource(
           sourceId,
           buildJsonObject {
             put("type", "vector")
-            putJsonArray("tiles") { add(attachment.tileUrlTemplate) }
+            putJsonArray("tiles") { add(attachment.tiles.tileUrlTemplate) }
             put("minzoom", options.minZoom)
             put("maxzoom", options.maxZoom)
           },
@@ -401,23 +409,44 @@ internal class GlJsStyleBinding(
   }
 
   override fun invalidateCustomGeometrySourceBounds(sourceId: String, bounds: BoundingBox) {
-    invalidateCustomGeometrySource(sourceId)
+    reloadCustomSource(sourceId)
   }
 
   override fun invalidateCustomGeometrySourceTile(sourceId: String, tile: TileCoordinate) {
-    invalidateCustomGeometrySource(sourceId)
+    reloadCustomSource(sourceId)
   }
 
-  private fun invalidateCustomGeometrySource(sourceId: String) {
+  /**
+   * Reloads every tile of a custom geometry or custom vector source. GL JS's `refreshTiles` skips
+   * cached and still-loading tiles, so a fresh tile URL makes GL JS refetch every tile instead.
+   */
+  private fun reloadCustomSource(sourceId: String) {
     requireCurrent()
-    val attachment = customGeometryAttachments[sourceId] ?: return
+    val attachment =
+      customVectorAttachments[sourceId] ?: customGeometryAttachments[sourceId]?.tiles ?: return
     val source = map.getSource<GlJsVectorSource>(sourceId) ?: return
     if (map.isSourceLoaded(sourceId) != true) {
-      pendingCustomGeometryReloads += sourceId
+      pendingCustomSourceReloads += sourceId
       return
     }
-    mutate("invalidate custom geometry source '$sourceId'") {
+    val failed = attachment.failedTiles.toList()
+    mutate("invalidate custom source '$sourceId'") {
       source.setTiles(arrayOf(attachment.invalidate()))
+      // The new URL reloads an errored tile as loading, and a vector source then waits for a
+      // response to a request it never sends. Refreshing the tile requests it again.
+      if (failed.isNotEmpty())
+        map.refreshTiles(
+          sourceId,
+          failed
+            .map { tile ->
+              unsafeJso<CanonicalTileId> {
+                x = tile.x.toInt()
+                y = tile.y.toInt()
+                z = tile.zoomLevel
+              }
+            }
+            .toTypedArray(),
+        )
     }
   }
 
@@ -431,7 +460,19 @@ internal class GlJsStyleBinding(
     val attachment =
       GlJsProtocolTileAttachment(
         name = "custom-vector-$sourceId",
-        loadTile = provider::loadTile,
+        loadTile = { tile ->
+          try {
+            provider.loadTile(tile)
+          } catch (error: Throwable) {
+            // A cancelled job means the request ended. The provider's own cancellation, such as a
+            // timeout, leaves the job active and fails like any other exception.
+            if (error is CancellationException) currentCoroutineContext().ensureActive()
+            // MapLibre reports the tile error as an `error` event with the message alone; this
+            // record carries the exception.
+            logger?.w(error) { "Custom vector tile source '$sourceId' failed to load $tile" }
+            throw error
+          }
+        },
       )
     customVectorAttachments[sourceId] = attachment
     val added =
@@ -453,11 +494,9 @@ internal class GlJsStyleBinding(
     return added
   }
 
-  override fun invalidateCustomVectorSourceTile(sourceId: String, tile: TileCoordinate): Unit =
-    throw UnsupportedOperationException(
-      "Custom vector tile invalidation is not available in the browser because MapLibre GL JS " +
-        "has no public per-tile invalidation operation."
-    )
+  override fun invalidateCustomVectorSourceTile(sourceId: String, tile: TileCoordinate) {
+    reloadCustomSource(sourceId)
+  }
 
   override fun sourceExists(sourceId: String): Boolean? {
     requireCurrent()
@@ -602,10 +641,10 @@ internal class GlJsStyleBinding(
   /** Null when the feature is not a cluster or the style has unloaded. */
   private fun clusterQuery(sourceId: String, feature: Feature<*, JsonObject?>): ClusterQuery? {
     val clusterId =
-      (feature.properties?.get(CLUSTER_ID_PROPERTY) as? JsonPrimitive)?.doubleOrNull
+      (feature.properties?.get(ClusterIdProperty) as? JsonPrimitive)?.doubleOrNull
         ?: run {
           logger?.w {
-            "Cluster query on a feature with no '$CLUSTER_ID_PROPERTY' in source '$sourceId'"
+            "Cluster query on a feature with no '$ClusterIdProperty' in source '$sourceId'"
           }
           return null
         }
