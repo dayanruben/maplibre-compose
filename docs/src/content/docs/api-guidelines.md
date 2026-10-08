@@ -228,15 +228,27 @@ internal object UnspecifiedMapEvent : MapEvent
 
 ## 5. Options and configuration
 
-Settings objects that might gain fields use the shape shown below.
+Settings objects, such as options, constraints, and requests, always use the
+shape shown below, even when every setting works on every platform today. A
+setting that only some platforms support can then be added later without
+changing the shape.
 
 - Use a class with a private or internal constructor and a builder, so that new
   options don't change any constructor. It may be a data class (section 1);
   otherwise write `equals`, `hashCode`, and `toString`.
+- A value that describes something rather than configuring behavior, such as a
+  camera position or the four edges of `DpPadding`, can be a data class with a
+  public constructor. If it might gain fields, add them last with
+  `@IntroducedAt` (section 12).
 - Take a `from` parameter in the builder instead of providing `copy`, and
   default it to a standard preset on the companion object.
 - Take required values with no sensible default, such as an ID, as constructor
   parameters before `block`.
+- When a function or constructor takes one settings object as its only settings,
+  take that object's `from` and `block` as its last parameters instead of the
+  object, so that callers write `createMapRuntime { … }`. Keep the object as a
+  parameter when the function takes several settings objects, such as
+  `MaplibreMap`, or already ends with another lambda.
 - Within a major version, don't start rejecting a value that an earlier release
   accepted.
 - Make every option that all platforms support settable from common code, with
@@ -244,13 +256,12 @@ Settings objects that might gain fields use the shape shown below.
   [[4]](https://kotlinlang.org/docs/api-guidelines-build-for-multiplatform.html#design-apis-for-use-from-common-code)
 - When settings differ by source set, such as JS and native, declare the options
   class and its builder as `expect` classes. The common declarations hold only
-  what every platform shares, and each `actual` adds its platform's settings.
-  Provide presets as companion `val`s named for their purpose, so that callers
-  in common code can still select one.
+  what every platform shares, and each `actual` adds its platform's settings as
+  members. An app whose targets all use MapLibre Native sees the native
+  `actual`, including those members, in its own common code. Provide presets as
+  companion `val`s named for their purpose, so that callers in common code can
+  still select one.
   [[4]](https://kotlinlang.org/docs/api-guidelines-predictability.html#do-the-right-thing-by-default)
-- A small value that callers construct directly, such as the four edges of
-  `DpPadding`, can be a data class with a public constructor. If it might gain
-  fields, add them last with `@IntroducedAt` (section 12).
 
 ```kotlin
 @Immutable
@@ -339,7 +350,7 @@ public fun MapButton(
 LineLayer(id = "routes", source = routes) {
   color = const(Color.Blue)
   interactions {
-    click { event -> ClickResult.Consume }
+    onClick { event -> ClickResult.Consume }
   }
 }
 
@@ -367,8 +378,8 @@ public fun MapButton(
 - Name the callback parameters of composables `onX`.
 - Declare every named callback type as a `fun interface`, not a typealias, so
   that they're consistent and each has its own KDoc.
-- Name a builder function that sets a handler after the event, without `on`.
-  Calling it again replaces the handler.
+- Name a builder function that sets a handler `onX`, as Compose does with
+  `onDispose`. Calling it again replaces the handler.
 - Make a callback that may wait on I/O a `suspend` function.
 - Document which thread each callback runs on, whether it can run in parallel or
   reentrantly, and what happens if it throws.
@@ -394,7 +405,7 @@ public fun interface MissingImageResolver {
 }
 
 interactions {
-  click { event ->
+  onClick { event ->
     select(event.hits.first().feature)
     ClickResult.Consume
   }
@@ -404,7 +415,7 @@ interactions {
 public typealias MissingImageResolver = suspend (id: String) -> ResolvedStyleImage?
 
 interactions {
-  click { // `this` is the event
+  onClick { // `this` is the event
     select(hits.first().feature)
     true
   }
@@ -453,10 +464,13 @@ public sealed interface MapSnapshotter
   name follows the platform prefix: `DesktopMetalGpuContext`.
 - Declarations in a source set shared by several platforms, such as the MapLibre
   Native one, take no prefix.
-- Leave a feature out of the source set of a platform that doesn't support it,
-  instead of adding a `canX` check. When it must stay in common code, reads
-  return an empty result, and writes throw `UnsupportedOperationException` or do
-  nothing, as documented.
+- Leave a feature out of the source set of a platform that doesn't support it.
+  When support varies within a source set at runtime, such as by operating
+  system or desktop environment on the JVM, and callers need to know before
+  acting, such as to decide whether to show a button, expose a capability
+  property such as `canOpenLocationServicesSettings`. Otherwise, when a feature
+  must stay in common code, reads return an empty result, and writes throw
+  `UnsupportedOperationException` or do nothing, as documented.
 - Don't name public packages after platforms or engine bindings.
 - For extra platform arguments, add an overload of a common factory function.
 - In artifacts that only provide a runtime, put public declarations in the
@@ -583,11 +597,11 @@ To keep these guarantees:
 
 ### Stability annotations
 
-| Annotation                       | Meaning                                                                                                           |
-| -------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `ExperimentalMaplibreComposeApi` | May change in any minor release. For new APIs without much real use, and APIs that expose dependencies below 1.0. |
-| `DelicateMaplibreComposeApi`     | Stable, but easy to misuse. KDoc explains how.                                                                    |
-| None                             | Stable.                                                                                                           |
+| Annotation                       | Meaning                                                                                                                                                                                             |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ExperimentalMaplibreComposeApi` | May change in any minor release. For new APIs without much real use, and APIs that expose a dependency we don't expect to stabilize before this library does, such as Skiko or the engine bindings. |
+| `DelicateMaplibreComposeApi`     | Stable, but easy to misuse. KDoc explains how.                                                                                                                                                      |
+| None                             | Stable.                                                                                                                                                                                             |
 
 ### Deprecation cycle
 

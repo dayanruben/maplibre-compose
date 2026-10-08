@@ -71,7 +71,9 @@ import org.maplibre.compose.style.StyleReconciler
 import org.maplibre.compose.style.StyleRequestId
 import org.maplibre.compose.style.StyleSnapshot
 import org.maplibre.compose.util.AngleMath
+import org.maplibre.compose.util.DelicateMaplibreComposeApi
 import org.maplibre.compose.util.DpPadding
+import org.maplibre.compose.util.ExperimentalMaplibreComposeApi
 import org.maplibre.compose.util.VisibleBounds
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.compose.util.metersPerDpAtLatitude
@@ -492,6 +494,7 @@ internal class GlJsMapSession(
   /** The current GL JS engine-map instance, exposed only to browser boundary tests. */
   internal fun engineMapForTest(): MaplibreMap? = map
 
+  @OptIn(DelicateMaplibreComposeApi::class, ExperimentalMaplibreComposeApi::class)
   internal suspend fun <T> withPlatformMap(block: PlatformMapScope.() -> T): T {
     val changed = "The Web platform map changed before access could begin"
     val engine = engineIdentity
@@ -896,7 +899,7 @@ internal class GlJsMapSession(
             applyUpdate(update)
             // A null property is not an absent one: GL JS reads `duration: null` as zero.
             animation.duration?.let { duration = it.inWholeMilliseconds.toDouble() }
-            screenSpeed = animation.speed ?: CameraAnimation.Fly.DefaultSpeed
+            screenSpeed = animation.speed
             animation.minZoom?.let { minZoom = it }
             easing = animation.easing.toEasingFunction()
           }

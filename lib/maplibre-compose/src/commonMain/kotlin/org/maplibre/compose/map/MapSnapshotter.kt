@@ -4,6 +4,7 @@ import androidx.compose.runtime.BroadcastFrameClock
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Composition
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.graphics.ImageBitmap
@@ -33,18 +34,20 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.Viewport
+import org.maplibre.compose.logging.MapLog
+import org.maplibre.compose.sources.GeometryTileProvider
+import org.maplibre.compose.sources.VectorTileProvider
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.MapNodeApplier
 import org.maplibre.compose.style.StyleBinding
 import org.maplibre.compose.style.StyleContent
-import org.maplibre.compose.style.StyleHandleException
 import org.maplibre.compose.style.StyleNode
 import org.maplibre.compose.style.StyleSnapshot
-import org.maplibre.compose.style.checkStyleHandle
 import org.maplibre.compose.util.MaplibreComposable
 import org.maplibre.compose.util.formatToString
 
 /** Immutable inputs for one snapshot capture. */
+@Immutable
 public data class MapSnapshotRequest(
   /**
    * Size of the captured map. Both dimensions must be finite and positive.
@@ -93,8 +96,16 @@ internal fun MapSnapshotRequest.extent(): MapExtent =
 private fun Dp.wholeLogicalPixels(): Int = value.roundToInt().coerceAtLeast(1)
 
 /** Reports a failed snapshot capture. */
-public class MapSnapshotException internal constructor(message: String, cause: Throwable) :
+public class MapSnapshotException internal constructor(message: String, cause: Throwable? = null) :
   RuntimeException(message, cause)
+
+/**
+ * A custom source provider's exception as the failure of a capture. A cancellation that the
+ * provider caused itself, such as its own timeout, is wrapped so that it does not read as a
+ * cancelled capture.
+ */
+internal fun Throwable.asProviderFailure(): Throwable =
+  if (this is CancellationException) IllegalStateException(message, this) else this
 
 /** Platform work for one snapshotter engine map. */
 internal interface SnapshotterAdapter {
@@ -111,10 +122,11 @@ internal interface SnapshotterAdapter {
     request: MapSnapshotRequest,
   ): SnapshotPreparation
 
-  suspend fun capture(
-    request: MapSnapshotRequest,
-    revision: StyleSnapshot,
-  ): ImageBitmap
+  /** Applies [revision] to the loaded style. Resource commands wait meanwhile, as on a map. */
+  suspend fun apply(revision: StyleSnapshot)
+
+  /** Renders the loaded style with the revision that [apply] applied. */
+  suspend fun capture(request: MapSnapshotRequest): ImageBitmap
 
   /** Requests cancellation and returns after the active platform operation has ended. */
   suspend fun cancelActiveCapture(): SnapshotterEngineDisposition
@@ -132,7 +144,7 @@ internal enum class SnapshotterEngineDisposition {
 }
 
 internal fun unsupportedSnapshots(): Nothing =
-  throw UnsupportedOperationException("Snapshot capture is not available on this platform")
+  throw MapSnapshotException("This map runtime does not render snapshots")
 
 internal data class SnapshotStyleOwnership(
   val sourceIds: Set<String>,
@@ -216,7 +228,13 @@ internal object DefaultStyleCompositionEvaluator : StyleCompositionEvaluator {
 
 /** An independent non-UI map that captures images. */
 public sealed interface MapSnapshotter {
-  /** Desired and applied style state for this snapshotter's engine map. */
+  /**
+   * Desired and applied style state for this snapshotter's engine map.
+   *
+   * A write during a capture that reuses the loaded style applies at once and may or may not appear
+   * in that capture; a write while the style loads, such as during the first capture or the one
+   * after a base style change, is skipped and logged.
+   */
   public val style: MapStyleState
 
   /**
@@ -225,11 +243,19 @@ public sealed interface MapSnapshotter {
    * Cancelling the caller removes a queued request or abandons an active result. After active
    * cancellation, the next request waits until platform rendering and terminal cleanup end.
    *
+   * A capture is all or nothing: it fails if any tile or resource that it needs fails to load,
+   * including a tile whose [GeometryTileProvider] or [VectorTileProvider] call fails. A tile that
+   * does not exist, such as one answered with HTTP 404, has no data and does not fail the capture.
+   * On the browser, MapLibre draws text whose glyphs fail to load with a local font instead.
+   *
    * @throws IllegalStateException if the snapshotter is closed before this call.
    * @throws IllegalArgumentException if the request cannot be rendered on the current platform.
-   * @throws UnsupportedOperationException if snapshots are unavailable on the current platform.
    * @throws CancellationException if the snapshotter closes after accepting this capture.
-   * @throws MapSnapshotException if style evaluation or rendering fails.
+   * @throws MapSnapshotException if the runtime cannot render offscreen, such as when MapLibre
+   *   Native offers no offscreen rendering backend for the device, style evaluation or rendering
+   *   fails, or a tile or resource fails to load. When a [GeometryTileProvider] or
+   *   [VectorTileProvider] call failed, the cause is its exception, wrapped in an
+   *   [IllegalStateException] when it is a cancellation that the provider caused itself.
    */
   public suspend fun capture(request: MapSnapshotRequest): ImageBitmap
 
@@ -270,9 +296,12 @@ internal class MapSnapshotterImplementation(
       style,
       runtime.physicalScope,
       commitSources = { binding, mutate -> commitSourcesAfterCommand(binding, mutate) },
-      rejected = { target, error -> runtime.logger?.w(error) { "Could not $target" } },
     )
   }
+
+  override val logger: MapLog?
+    get() = runtime.logger
+
   private var activeStyleClaim: StyleClaim? = null
   override val style: MapStyleState = MapStyleState(baseStyle).also { it.attach(this) }
 
@@ -350,7 +379,7 @@ internal class MapSnapshotterImplementation(
       try {
         adapter ?: runtime.createSnapshotterAdapter().also { adapter = it }
       } catch (error: Throwable) {
-        capture.resumeFailure(error.toSnapshotAvailabilityFailure())
+        capture.resumeFailure(error.toSnapshotFailure())
         return@coroutineScope
       }
     val operation =
@@ -365,7 +394,7 @@ internal class MapSnapshotterImplementation(
         var binding: StyleBinding? = null
         val result =
           try {
-            // Drain accepted commands before entering Loading, which rejects further writes.
+            // Drain accepted commands before a load enters Loading, which rejects further writes.
             // User composition and platform callbacks must run outside the command mutex.
             val currentClaim = resourceCommands.withCommit { claimStyle() }
             claim = currentClaim
@@ -373,6 +402,7 @@ internal class MapSnapshotterImplementation(
               platform.prepare(currentClaim.baseStyle, currentClaim.revision, capture.request)
             val currentBinding = prepared.binding
             binding = currentBinding
+            markReloaded(currentBinding)
             val request = capture.request
             val evaluationOwnership =
               styleEvaluationOwnership(currentBinding, currentClaim.ownership)
@@ -385,12 +415,15 @@ internal class MapSnapshotterImplementation(
                 request.layoutDirection,
                 evaluationOwnership,
               )
+            // A command sees the revision before or after this, never part of it.
             resourceCommands.withCommit {
-              if (style.currentLoadedStyle() === currentBinding)
-                resourceCommands.requireNoConflicts(revision)
+              declareRevision(currentBinding, revision)
               recordStyleOwnership(currentClaim, revision)
+              platform.apply(revision)
+              // Publish a reused style's handles before rendering, as a map does.
+              commitSourcesAfterCommand(currentBinding) {}
             }
-            val image = platform.capture(request, revision)
+            val image = platform.capture(request)
             resourceCommands.withCommit {
               if (!publishStyle(capture, currentClaim, currentBinding, revision)) {
                 currentBinding.invalidate()
@@ -491,7 +524,7 @@ internal class MapSnapshotterImplementation(
 
   override fun setBaseStyle(value: BaseStyle) {
     lock.withLock {
-      checkStyleHandle(!closed) { "The map snapshotter is closed" }
+      check(!closed) { "The map snapshotter is closed" }
       if (style.baseStyle == value) return
       baseStyleRevision++
       resourceCommands.clear()
@@ -501,32 +534,42 @@ internal class MapSnapshotterImplementation(
     }
   }
 
-  /** Runs [mutate] on the map owner and reads the sources it leaves behind in the same task. */
-  private suspend fun commitSourcesAfterCommand(binding: StyleBinding, mutate: () -> Unit) {
+  /**
+   * Runs [mutate] on the map owner and reads the sources it leaves behind in the same task.
+   *
+   * @return false, with nothing published, when the loaded style changed first.
+   */
+  private suspend fun commitSourcesAfterCommand(
+    binding: StyleBinding,
+    mutate: () -> Unit,
+  ): Boolean {
     val resources =
-      binding.awaitOwner {
+      style.visit(binding) {
         mutate()
         style.readResources(binding)
-      } ?: throw StyleHandleException("The loaded style changed before the command ran")
-    lock.withLock {
-      requireStyleHandleLocked(binding)
+      } ?: return false
+    return lock.withLock {
+      if (!isCurrentLocked(binding)) return@withLock false
       style.updateResources(resources)
+      true
     }
+  }
+
+  override fun requireOpen() {
+    lock.withLock { check(!closed) { "The map snapshotter is closed" } }
   }
 
   override fun readyLoadedStyle(): StyleBinding? = lock.withLock {
     style.currentLoadedStyle()?.takeIf { style.loadState == StyleLoadState.Ready }
   }
 
-  override fun <T> runStyleHandleOperation(
-    binding: StyleBinding,
-    action: () -> T,
-  ): T {
-    lock.withLock { requireStyleHandleLocked(binding) }
-    val result = action()
-    lock.withLock { requireStyleHandleLocked(binding) }
-    return result
+  // A closed snapshotter keeps its loaded style until cleanup finishes, so closure is checked too.
+  override fun isCurrent(binding: StyleBinding): Boolean = lock.withLock {
+    isCurrentLocked(binding)
   }
+
+  private fun isCurrentLocked(binding: StyleBinding): Boolean =
+    !closed && style.isReadyBinding(binding)
 
   private fun claimStyle(): StyleClaim = lock.withLock {
     check(!closed) { "The map snapshotter is closed" }
@@ -541,8 +584,28 @@ internal class MapSnapshotterImplementation(
       .also {
         check(activeStyleClaim == null)
         activeStyleClaim = it
-        style.loadState = StyleLoadState.Loading
+        // A ready style is reused, so it stays writable while the capture runs.
+        if (style.loadState != StyleLoadState.Ready) style.loadState = StyleLoadState.Loading
       }
+  }
+
+  /** A ready style that the adapter replaced anyway, such as for a new density, is loading. */
+  private fun markReloaded(binding: StyleBinding) {
+    lock.withLock {
+      if (
+        !closed && style.loadState == StyleLoadState.Ready && !style.isCurrentLoadedStyle(binding)
+      )
+        style.loadState = StyleLoadState.Loading
+    }
+  }
+
+  /** Declares [revision] for the reused [binding] before applying it, as a map does. */
+  private fun declareRevision(binding: StyleBinding, revision: StyleSnapshot) {
+    lock.withLock {
+      if (!style.isCurrentLoadedStyle(binding)) return
+      resourceCommands.requireNoConflicts(revision)
+      style.declaredRevision = revision
+    }
   }
 
   private fun styleEvaluationOwnership(
@@ -569,8 +632,8 @@ internal class MapSnapshotterImplementation(
   /**
    * Publishes [binding] with the handles of the resources it holds after [revision]. The engine
    * read runs as an owner task between two locked steps, so a UI-thread lookup never waits on the
-   * map owner while this snapshotter's lock is held. The style stays Loading until the handles are
-   * in place.
+   * map owner while this snapshotter's lock is held. A loading style stays Loading until the
+   * handles are in place.
    */
   private suspend fun publishStyle(
     capture: Capture,
@@ -621,11 +684,6 @@ internal class MapSnapshotterImplementation(
     }
   }
 
-  private fun requireStyleHandleLocked(binding: StyleBinding) {
-    checkStyleHandle(!closed) { "The map snapshotter is closed" }
-    style.requireReadyBinding(binding)
-  }
-
   private data class StyleClaim(
     val baseStyle: BaseStyle,
     val revision: Long,
@@ -657,9 +715,6 @@ internal class MapSnapshotterImplementation(
 
 internal fun snapshotterClosedCancellation(): CancellationException =
   CancellationException("The map snapshotter closed during capture")
-
-private fun Throwable.toSnapshotAvailabilityFailure(): Throwable =
-  if (this is UnsupportedOperationException) this else toSnapshotFailure()
 
 private fun Throwable.toSnapshotRequestFailure(): Throwable =
   if (this is IllegalArgumentException) this else toSnapshotFailure()

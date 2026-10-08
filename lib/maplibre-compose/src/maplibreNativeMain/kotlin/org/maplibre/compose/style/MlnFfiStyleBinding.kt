@@ -5,8 +5,10 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.DurationUnit
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -110,6 +112,8 @@ internal open class MlnFfiStyleBinding(
   private val sourceChanged: (String) -> Unit = {},
   private val sourceDataFailed: (StyleIdentity, String, Throwable) -> Unit = { _, _, _ -> },
   private val getScale: () -> Float = { 1f },
+  /** Receives the exception of a failed custom source provider call. Owner thread. */
+  private val customTileFailed: (Throwable) -> Unit = {},
 ) : StyleBinding {
   @Volatile private var loaded = true
   private val geoJsonCoordinators =
@@ -141,17 +145,26 @@ internal open class MlnFfiStyleBinding(
   /** Runs [action] through [MlnFfiMapRuntimeLoop.await]. */
   override suspend fun <T> awaitOwner(action: () -> T): T? {
     if (!isLoaded) return null
-    return loop.await { if (isLoaded) action() else null }
-  }
-
-  override fun postOwner(action: () -> Unit) {
-    requireCurrent()
-    submit {
+    return loop.await {
+      if (!isLoaded) return@await null
       try {
         action()
-      } catch (error: StyleHandleException) {
+      } catch (error: Exception) {
+        // A style unloaded during this visit has nothing left to read or update.
+        if (isLoaded) throw error
+        null
+      }
+    }
+  }
+
+  override fun postOwner(onDropped: () -> Unit, action: () -> Unit) {
+    submit(onDropped) {
+      try {
+        action()
+      } catch (error: Exception) {
         // A style unloaded during this accepted visit has nothing left to update.
         if (isLoaded) throw error
+        onDropped()
       }
     }
   }
@@ -160,7 +173,7 @@ internal open class MlnFfiStyleBinding(
    * Runs [action] with the map, on the owner thread only.
    *
    * @throws IllegalStateException on any other thread.
-   * @throws StyleHandleException when the style has unloaded.
+   * @throws IllegalStateException when the style has unloaded.
    */
   internal fun <T> withMap(action: (MapHandle) -> T): T {
     check(loop.isOwnerThread()) {
@@ -372,6 +385,7 @@ internal open class MlnFfiStyleBinding(
           logger?.e(error) {
             "Loading tile ${tile.toTileCoordinate()} of source '$sourceId' failed"
           }
+          customTileFailed(error)
           map.setCustomGeometrySourceTileData(sourceId, tile, EmptyFeatureCollection)
         },
       )
@@ -438,6 +452,7 @@ internal open class MlnFfiStyleBinding(
         },
         deliver = { map, tile, data -> map.setCustomMvtVectorSourceTileData(sourceId, tile, data) },
         fail = { map, tile, error ->
+          customTileFailed(error)
           map.setCustomMvtVectorSourceTileError(
             sourceId,
             tile,
@@ -617,7 +632,7 @@ internal open class MlnFfiStyleBinding(
       .withLock {
         if (!isLoaded) {
           coordinator.close()
-          throw StyleHandleException("Style operation belongs to a stale loaded-style identity")
+          requireCurrent()
         }
         geoJsonCoordinators.put(sourceId, coordinator)
       }
@@ -668,39 +683,50 @@ internal open class MlnFfiStyleBinding(
     val result = queryClusterExtension(sourceId, feature, ExpansionZoomField) ?: return null
     val zoom = result.decodeToString().toDoubleOrNull()
     if (zoom == null) reportClusterMiss(sourceId, ExpansionZoomField, result)
-    return zoom
+    // A source that does not cluster answers 0. A cluster always expands at zoom 1 or higher.
+    return zoom?.takeIf { it > 0.0 }
   }
 
   override suspend fun clusterChildren(
     sourceId: String,
     feature: Feature<*, JsonObject?>,
   ): FeatureCollection<Geometry, JsonObject?>? =
-    queryClusterFeatures(sourceId, feature, ChildrenField, null)
+    // A source that does not cluster answers an empty collection. A cluster always has children.
+    queryClusterFeatures(sourceId, feature, ChildrenField, null)?.takeIf {
+      it.features.isNotEmpty()
+    }
 
   override suspend fun clusterLeaves(
     sourceId: String,
     feature: Feature<*, JsonObject?>,
-    limit: Long,
-    offset: Long,
-  ): FeatureCollection<Geometry, JsonObject?>? =
-    queryClusterFeatures(
-      sourceId,
-      feature,
-      LeavesField,
-      // Both must be unsigned: MapLibre type-checks them exactly and silently falls back to its own
-      // default of ten otherwise, and it ignores offset unless limit is present. A non-negative
-      // integer literal parses as unsigned.
-      // https://github.com/maplibre/maplibre-native-ffi/pull/340
-      buildJsonObject {
-        put("limit", limit.coerceAtLeast(0))
-        put("offset", offset.coerceAtLeast(0))
-      }
-        .toJsonBytes(),
-    )
+    limit: Int,
+    offset: Int,
+  ): FeatureCollection<Geometry, JsonObject?>? {
+    val leaves =
+      queryClusterFeatures(
+        sourceId,
+        feature,
+        LeavesField,
+        // Both must be unsigned: MapLibre type-checks them exactly and silently falls back to its
+        // own default of ten otherwise, and it ignores offset unless limit is present. A
+        // non-negative integer literal parses as unsigned.
+        // https://github.com/maplibre/maplibre-native-ffi/pull/340
+        buildJsonObject {
+          put("limit", limit)
+          put("offset", offset)
+        }
+          .toJsonBytes(),
+      ) ?: return null
+    // A source that does not cluster also answers an empty page; only a cluster has children.
+    if (leaves.features.isEmpty() && clusterChildren(sourceId, feature) == null) return null
+    return leaves
+  }
 
   /**
    * Runs one supercluster query against the render session. Returns null when the feature carries
    * no cluster id, when no render session is attached yet, or when the engine reports no cluster.
+   *
+   * @throws StyleHandleException wrapping any other engine failure.
    */
   private suspend fun queryClusterExtension(
     sourceId: String,
@@ -719,11 +745,16 @@ internal open class MlnFfiStyleBinding(
           arguments,
         )
       }
-    } catch (error: NativeErrorException) {
-      // Supercluster exposes no typed missing-cluster error through the C API.
-      if (error.diagnostic != "No cluster with the specified id.") throw error
-      logger?.w { "Cluster '$field' query matched no cluster in source '$sourceId'" }
-      null
+    } catch (error: MaplibreException) {
+      // Supercluster's missing-cluster error reaches the C API only as this diagnostic text.
+      if (error is NativeErrorException && error.diagnostic == MissingClusterDiagnostic) {
+        logger?.w { "Cluster '$field' query matched no cluster in source '$sourceId'" }
+        return null
+      }
+      throw StyleHandleException(
+        "Cluster '$field' query failed in source '$sourceId': ${error.message}",
+        error,
+      )
     }
   }
 
@@ -735,7 +766,9 @@ internal open class MlnFfiStyleBinding(
   ): FeatureCollection<Geometry, JsonObject?>? {
     val result = queryClusterExtension(sourceId, feature, field, arguments) ?: return null
     val collection =
-      FeatureCollection.fromJsonOrNull<Geometry, JsonObject?>(result.decodeToString())
+      withContext(Dispatchers.Default) {
+        FeatureCollection.fromJsonOrNull<Geometry, JsonObject?>(result.decodeToString())
+      }
     if (collection == null) reportClusterMiss(sourceId, field, result)
     return collection
   }
@@ -743,8 +776,8 @@ internal open class MlnFfiStyleBinding(
   /** Reports a cluster query whose result does not contain the requested value. */
   private fun reportClusterMiss(sourceId: String, field: String, result: ByteArray) {
     logger?.w {
-      "Cluster '$field' query matched no cluster in source '$sourceId'; the feature's cluster_id " +
-        "is probably stale. MapLibre answered with ${result.decodeToString()}."
+      "Cluster '$field' query in source '$sourceId' returned no result. MapLibre answered with " +
+        "${result.decodeToString()}."
     }
   }
 
@@ -801,9 +834,10 @@ internal open class MlnFfiStyleBinding(
         it.sourceLayerIds = sourceLayerIds.toList()
         it.filter = filter?.toJsonBytes()
       }
-    return awaitRenderSession { session -> session.querySourceFeatures(sourceId, options) }
-      ?.toGeoJsonFeatures()
-      .orEmpty()
+    val result =
+      awaitRenderSession { session -> session.querySourceFeatures(sourceId, options) }
+        ?: return emptyList()
+    return withContext(Dispatchers.Default) { result.toGeoJsonFeatures() }
   }
 
   override fun addLayer(layer: JsonObject, beforeLayerId: String): Boolean = mutateMap { map ->
@@ -959,6 +993,7 @@ internal open class MlnFfiStyleBinding(
     private const val ExpansionZoomField = "expansion-zoom"
     private const val ChildrenField = "children"
     private const val LeavesField = "leaves"
+    private const val MissingClusterDiagnostic = "No cluster with the specified id."
 
     /**
      * Style-spec properties MapLibre Native does not implement; writing one makes it refuse the

@@ -54,14 +54,18 @@ internal interface StyleBinding {
   /** Invalidates this loaded style before its base style starts changing. */
   fun invalidate()
 
+  /**
+   * @throws IllegalStateException when the style has unloaded. Handles check first and never let it
+   *   reach the caller; [awaitOwner] and [postOwner] absorb it when the style unloads during a
+   *   visit.
+   */
   fun requireCurrent() {
-    checkStyleHandle(isLoaded) {
-      "Style operation belongs to a stale loaded-style identity"
-    }
+    check(isLoaded) { "Style operation belongs to a stale loaded-style identity" }
   }
 
+  /** @throws IllegalStateException when the style has unloaded or is not [expectedIdentity]. */
   fun requireCurrent(expectedIdentity: StyleIdentity) {
-    checkStyleHandle(identity === expectedIdentity && isLoaded) {
+    check(identity === expectedIdentity && isLoaded) {
       "Style operation belongs to a stale loaded-style identity"
     }
   }
@@ -75,18 +79,17 @@ internal interface StyleBinding {
    * during the call.
    *
    * @return the result, or null when the style has unloaded or the owner stops before [action]
-   *   runs. An operation inside [action] still fails if the style unloads while it runs.
+   *   runs, or when the style unloads while [action] runs and [action] fails.
    */
   suspend fun <T> awaitOwner(action: () -> T): T? = if (isLoaded) action() else null
 
   /**
    * Runs [action] on the engine owner without waiting. It runs inline during an owner visit and is
-   * dropped if this style unloads before it starts. Callers capture and check resource identity
-   * inside [action].
+   * dropped if this style has unloaded or unloads before it runs; [onDropped] then runs instead.
+   * Callers capture and check resource identity inside [action].
    */
-  fun postOwner(action: () -> Unit) {
-    requireCurrent()
-    action()
+  fun postOwner(onDropped: () -> Unit = {}, action: () -> Unit) {
+    if (isLoaded) action() else onDropped()
   }
 
   /**
@@ -423,8 +426,9 @@ internal interface StyleBinding {
   /**
    * Returns the cluster expansion zoom for [feature].
    *
-   * @return null if the feature has no cluster ID, the source is unavailable, or the engine reports
-   *   that the cluster no longer exists.
+   * @return null if the feature has no cluster ID, the source is unavailable or does not cluster
+   *   its data, or the engine reports that the cluster no longer exists.
+   * @throws StyleHandleException wrapping any other engine failure.
    */
   suspend fun clusterExpansionZoom(sourceId: String, feature: Feature<*, JsonObject?>): Double?
 
@@ -436,12 +440,15 @@ internal interface StyleBinding {
     feature: Feature<*, JsonObject?>,
   ): FeatureCollection<Geometry, JsonObject?>?
 
-  /** Returns the cluster leaves for [feature], or null under [clusterExpansionZoom] conditions. */
+  /**
+   * Returns the cluster leaves for [feature], or null under [clusterExpansionZoom] conditions.
+   * [limit] is positive and [offset] is not negative.
+   */
   suspend fun clusterLeaves(
     sourceId: String,
     feature: Feature<*, JsonObject?>,
-    limit: Long,
-    offset: Long,
+    limit: Int,
+    offset: Int,
   ): FeatureCollection<Geometry, JsonObject?>?
 
   /**
@@ -481,21 +488,6 @@ internal interface StyleBinding {
     sourceLayerIds: Set<String>,
     filter: JsonElement?,
   ): List<Feature<Geometry, JsonObject?>>
-}
-
-/** Posts an admitted write; [action] rechecks any resource identity before touching the engine. */
-internal fun StyleBinding.postWrite(
-  target: String,
-  value: JsonElement? = null,
-  action: () -> Unit,
-) {
-  postOwner {
-    try {
-      action()
-    } catch (error: StyleMutationException) {
-      reportRejectedWrite(target, value, error)
-    }
-  }
 }
 
 internal fun LayerDefinition.summary(): LayerSummary =

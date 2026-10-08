@@ -6,6 +6,7 @@ import org.maplibre.compose.desktop.ComposeMapPresentationHost
 import org.maplibre.compose.desktop.MetalComposeGpuContext
 import org.maplibre.compose.desktop.ProvideMapPresentationHost
 import org.maplibre.compose.desktop.rememberAwtComposeMapPresentationHost
+import org.maplibre.compose.util.ExperimentalMaplibreComposeApi
 
 // #region main
 fun main() {
@@ -21,11 +22,12 @@ fun main() {
 @Composable private fun App() = Unit
 
 // #region custom-host
+@OptIn(ExperimentalMaplibreComposeApi::class)
 fun customMetalHost(
   gpuContext: () -> MetalComposeGpuContext?,
   runOnGpuThread: (Runnable) -> Unit,
 ): ComposeMapPresentationHost =
-  ComposeMapPresentationHost.metal(
+  ComposeMapPresentationHost.macosMetal(
     description = "my Metal window",
     gpuContext = gpuContext,
     runOnGpuThread = runOnGpuThread,

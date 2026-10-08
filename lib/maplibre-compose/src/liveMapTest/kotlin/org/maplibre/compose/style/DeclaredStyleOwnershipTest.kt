@@ -5,7 +5,6 @@ import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.dp
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -55,7 +54,7 @@ class DeclaredStyleOwnershipTest {
         JsonPrimitive("circle"),
         assertNotNull(fixture.state.style.layers["points"]).getProperty("type"),
       )
-      assertFailsWith<StyleHandleException> { original.getFeatureState("0") }
+      assertNull(original.getFeatureState("0"))
     }
   }
 
@@ -89,11 +88,11 @@ class DeclaredStyleOwnershipTest {
         }
         val cluster = fixture.state.queryRenderedFeatures(area).first(handle::isCluster)
         assertTrue(assertNotNull(handle.getClusterExpansionZoom(cluster)) > 0.0)
-        assertTrue(handle.getClusterChildren(cluster).features.isNotEmpty())
-        assertEquals(3, handle.getClusterLeaves(cluster, 10, 0).features.size)
+        assertTrue(assertNotNull(handle.getClusterChildren(cluster)).features.isNotEmpty())
+        assertEquals(3, assertNotNull(handle.getClusterLeaves(cluster, 10, 0)).features.size)
 
         fixture.loadStyle(BaseStyle.Empty)
-        assertFailsWith<StyleHandleException> { handle.getFeatureState("0") }
+        assertNull(handle.getFeatureState("0"))
       }
     }
 

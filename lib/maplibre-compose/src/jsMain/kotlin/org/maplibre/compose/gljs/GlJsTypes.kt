@@ -83,6 +83,8 @@ internal external interface SourceSpecification
 internal external interface RequestParameters {
   val url: String
   val headers: Any?
+  /** How MapLibre GL JS reads the response, such as `arrayBuffer` or `image`. */
+  val type: String?
 }
 
 internal external interface ProtocolResponse {
@@ -113,15 +115,20 @@ internal external interface SourceHandle {
 internal external interface GlJsGeoJsonSource : SourceHandle {
   fun setData(data: GeoJsonSourceData)
 
-  fun getClusterExpansionZoom(clusterId: Double): Promise<Double>
+  /** False while a data update is waiting or being processed, including the first load. */
+  fun loaded(): Boolean
 
-  fun getClusterChildren(clusterId: Double): Promise<Array<GeoJsonFeature>>
+  // The cluster queries resolve null for a source that does not cluster, although GL JS's
+  // declarations omit it.
+  fun getClusterExpansionZoom(clusterId: Double): Promise<Double?>
+
+  fun getClusterChildren(clusterId: Double): Promise<Array<GeoJsonFeature>?>
 
   fun getClusterLeaves(
     clusterId: Double,
     limit: Double,
     offset: Double,
-  ): Promise<Array<GeoJsonFeature>>
+  ): Promise<Array<GeoJsonFeature>?>
 }
 
 internal external interface CanonicalTileId {

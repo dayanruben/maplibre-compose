@@ -17,21 +17,16 @@ import org.maplibre.spatialk.geojson.BoundingBox
 
 class RuntimeBoundOfflineStorageTest {
   @Test
-  fun unsupported_backend_rejects_every_operation() = runTest {
-    val pack = RecordingOfflineStorage().pack
-    val runtime = runtime(UnsupportedOfflineStorage)
-    val storage = runtime.offlineStorage
+  fun runtime_without_storage_fails() = runTest {
+    val runtime =
+      MapRuntime(
+        platformContext = null,
+        closeResources = {},
+        logger = null,
+        mainDispatcher = TestMainDispatcher(),
+      )
 
-    assertEquals(emptySet(), (storage.state.value as OfflineStorageState.Ready).packs)
-    assertFailsWith<UnsupportedOperationException> { storage.create(definition) }
-    assertFailsWith<UnsupportedOperationException> { storage.resume(pack) }
-    assertFailsWith<UnsupportedOperationException> { storage.pause(pack) }
-    assertFailsWith<UnsupportedOperationException> { storage.delete(pack) }
-    assertFailsWith<UnsupportedOperationException> { storage.invalidate(pack) }
-    assertFailsWith<UnsupportedOperationException> { storage.mergeDatabase(databaseFile) }
-    assertFailsWith<UnsupportedOperationException> { storage.invalidateAmbientCache() }
-    assertFailsWith<UnsupportedOperationException> { storage.clearAmbientCache() }
-    assertFailsWith<UnsupportedOperationException> { storage.setMaximumAmbientCacheSize(1) }
+    assertFailsWith<IllegalStateException> { runtime.offlineStorage }
     runtime.close()
     runtime.awaitClosed()
   }
@@ -133,7 +128,7 @@ class RuntimeBoundOfflineStorageTest {
       platformContext = null,
       closeResources = closeResources,
       logger = null,
-      offlineStorageBackend = backend,
+      createOfflineStorage = { RuntimeBoundOfflineStorage(backend, it) },
       mainDispatcher = TestMainDispatcher(),
     )
 

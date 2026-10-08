@@ -20,7 +20,6 @@ import org.maplibre.compose.style.StyleHandleException
 import org.maplibre.compose.style.StyleImageDefinition
 import org.maplibre.compose.style.StyleMutationException
 import org.maplibre.compose.style.StyleSnapshot
-import org.maplibre.compose.style.checkStyleHandle
 
 /**
  * One ordered commit boundary for declarations, resource commands, and their published handles.
@@ -32,8 +31,8 @@ import org.maplibre.compose.style.checkStyleHandle
 internal class StyleResourceCommands(
   private val style: MapStyleState,
   private val scope: CoroutineScope,
-  private val commitSources: suspend (StyleBinding, mutate: () -> Unit) -> Unit,
-  private val rejected: (String, Throwable) -> Unit,
+  /** Returns false, with nothing published, when the loaded style changed first. */
+  private val commitSources: suspend (StyleBinding, mutate: () -> Unit) -> Boolean,
 ) {
   private val mutex = Mutex()
   private val lock = reentrantLock()
@@ -88,74 +87,88 @@ internal class StyleResourceCommands(
   fun requireNoConflicts(snapshot: StyleSnapshot) = lock.withLock {
     snapshot.sources
       .firstOrNull { currentSource(it.id) != null }
-      ?.let {
-        throw StyleHandleException("Source ID '${it.id}' is owned by an imperative addition")
-      }
+      ?.let { error("Source ID '${it.id}' is owned by an imperative addition") }
+    // An image the missing-image resolver supplied is not a claim: its ID can match a generated
+    // one.
     snapshot.images
-      .firstOrNull { it.id in images }
-      ?.let {
-        throw StyleHandleException("Image ID '${it.id}' is owned by an imperative addition")
-      }
+      .firstOrNull { images[it.id] == false }
+      ?.let { error("Image ID '${it.id}' is owned by an imperative addition") }
   }
 
   /**
    * Admits the addition in call order, then suspends until it has run. A rejection reaches the
    * caller instead of the log.
+   *
+   * @return null, after logging, when no style is ready or the loaded style changes before the
+   *   handle is published.
    */
-  suspend fun add(source: Source): MutableSourceHandle {
-    val binding = requireBinding()
+  suspend fun add(source: Source): MutableSourceHandle? {
+    val target = "add source '${source.id}'"
     requireSourceWritable(source.id)
+    val binding = readyBinding(target) ?: return null
     val definition = source.definition()
     val completion = CompletableDeferred<Unit>()
-    submit(binding, "add source '${source.id}'", completion = completion) {
+    var ran = false
+    var added = false
+    submit(binding, target, completion = completion) {
+      ran = true
       requireSourceWritable(source.id)
       // Record before the owner task so metadata capture can use this definition. A failed
       // addition takes the record back.
       lock.withLock {
-        checkStyleHandle(currentSource(source.id) == null) {
-          "Source ID '${source.id}' already exists"
-        }
+        check(currentSource(source.id) == null) { "Source ID '${source.id}' already exists" }
         sources[source.id] = OwnedSource(binding, definition)
       }
+      var inserted = false
       try {
-        commitSources(binding) {
-          checkStyleHandle(binding.sourceExists(source.id) != true) {
-            "Source ID '${source.id}' already exists"
+        val committed =
+          commitSources(binding) {
+            check(binding.sourceExists(source.id) != true) {
+              "Source ID '${source.id}' already exists"
+            }
+            // False means the style unloaded first, and nothing was added.
+            inserted = binding.addSource(definition)
           }
-          checkStyleHandle(binding.addSource(definition)) {
-            "The loaded style changed during source insertion"
-          }
-        }
-      } catch (error: Exception) {
-        forgetSource(source.id, binding)
-        throw error
+        added = committed && inserted
+      } finally {
+        if (!added) forgetSource(source.id, binding)
       }
     }
     completion.await()
-    return style.sourceHandle(source.id)?.takeIf { style.isCurrentLoadedStyle(binding) }?.asMutable
-      ?: throw StyleHandleException(
-        "Could not add source '${source.id}': the loaded style changed after it was added"
-      )
+    val handle =
+      if (added) style.sourceHandle(source.id)?.takeIf { style.owner.isCurrent(binding) }?.asMutable
+      else null
+    // A command that never ran has logged that already.
+    if (handle == null && ran) skipped(target, StyleChanged)
+    return handle
   }
 
-  fun removeSource(id: String, binding: StyleBinding, identity: Any) {
-    validateSource(id, binding, identity)
-    submit(binding, "remove source '$id'") {
-      validateSource(id, binding, identity)
-      commitSources(binding) {
-        // Null means the engine cannot tell; attempt removal rather than untrack a live source.
-        if (binding.sourceExists(id) != false) binding.removeSource(id)
-        if (style.isCurrentLoadedStyle(binding)) {
-          forgetSource(id, binding)
-          binding.identity.sources.remove(id)
-        }
+  /** The handle checked [identity] before this call; the command checks it again when it runs. */
+  /** [onRemoved] runs once this command has removed the source. */
+  fun removeSource(id: String, binding: StyleBinding, identity: Any, onRemoved: () -> Unit) {
+    val target = "remove source '$id'"
+    submit(binding, target) {
+      requireSourceWritable(id)
+      if (!binding.identity.sources.isCurrent(id, identity)) {
+        skipped(target, ResourceChanged)
+        return@submit
       }
+      val committed =
+        commitSources(binding) {
+          // Null means the engine cannot tell; attempt removal rather than untrack a live source.
+          if (binding.sourceExists(id) != false) binding.removeSource(id)
+          if (style.isCurrentLoadedStyle(binding)) {
+            forgetSource(id, binding)
+            binding.identity.sources.remove(id)
+          }
+        }
+      if (committed) onRemoved() else skipped(target, StyleChanged)
     }
   }
 
   fun set(images: Map<String, ResolvedStyleImage>) {
-    val binding = requireBinding()
     images.keys.forEach(::requireImageWritable)
+    val binding = readyBinding("set style images") ?: return
     // Snapshot the caller's collection; prepared images already own their immutable pixels.
     val definitions = images.mapValues { (id, image) ->
       StyleImageDefinition(id, image.image, image.sdf, image.stretch)
@@ -170,37 +183,45 @@ internal class StyleResourceCommands(
     }
   }
 
-  fun removeImage(id: String, binding: StyleBinding = requireBinding(), identity: Any? = null) {
-    if (identity == null) {
-      requireImageWritable(id)
-      val sequence = enqueueImageWrites(mapOf(id to null))
-      submit(
-        binding,
-        "remove image '$id'",
-        discarded = { releaseImageWrites(setOf(id), sequence) },
-      ) {
-        applyImageWrites(binding, takeImageWrites(setOf(id), sequence))
-      }
-      return
+  fun removeImage(id: String) {
+    requireImageWritable(id)
+    val target = "remove image '$id'"
+    val binding = readyBinding(target) ?: return
+    val sequence = enqueueImageWrites(mapOf(id to null))
+    submit(binding, target, discarded = { releaseImageWrites(setOf(id), sequence) }) {
+      applyImageWrites(binding, takeImageWrites(setOf(id), sequence))
     }
-    validateImage(id, binding, identity)
+  }
+
+  /** The handle checked [identity] before this call; the command checks it again when it runs. */
+  /**
+   * [onRemoved] runs once this command has removed the image, not when a later write replaced it.
+   */
+  fun removeImage(id: String, binding: StyleBinding, identity: Any, onRemoved: () -> Unit) {
     // A handle's removal is conditional on its identity, so it never discards an earlier write: a
     // pending replacement expires the handle first. It applies a later write in its place.
     val sequence = lock.withLock { ++imageSequence }
-    submit(binding, "remove image '$id'") {
+    val target = "remove image '$id'"
+    submit(binding, target) {
       val later = takeImageWrites(setOf(id), sequence)
-      if (later.isEmpty()) validateImage(id, binding, identity)
-      applyImageWrites(binding, later.ifEmpty { mapOf(id to null) })
+      if (later.isEmpty()) {
+        requireImageWritable(id)
+        if (!binding.identity.images.isCurrent(id, identity)) {
+          skipped(target, ResourceChanged)
+          return@submit
+        }
+      }
+      val applied = applyImageWrites(binding, later.ifEmpty { mapOf(id to null) })
+      if (later.isEmpty() && id in applied) onRemoved()
     }
   }
 
   suspend fun image(id: String): StyleImageHandle? {
+    style.owner.requireOpen()
     val binding = style.readyLoadedStyle() ?: return null
     return withCommit {
-      if (style.readyLoadedStyle() !== binding) return@withCommit null
-      val exists = binding.awaitOwner { binding.imageExists(id) == true } == true
-      if (exists && style.readyLoadedStyle() === binding) StyleImageHandleImpl(id, style, binding)
-      else null
+      val exists = style.visit(binding) { binding.imageExists(id) == true } == true
+      if (exists) StyleImageHandleImpl(id, style, binding) else null
     }
   }
 
@@ -257,19 +278,27 @@ internal class StyleResourceCommands(
   }
 
   /** Each write succeeds or fails independently; a failed write keeps the previous image. */
+  /** @return the IDs whose writes the engine applied. */
   private suspend fun applyImageWrites(
     binding: StyleBinding,
     writes: Map<String, StyleImageDefinition?>,
-  ) {
-    if (writes.isEmpty()) return
+  ): Set<String> {
+    if (writes.isEmpty()) return emptySet()
     writes.keys.forEach(::requireImageWritable)
     val definitions = writes.values.filterNotNull()
     val removals = writes.filterValues { it == null }.keys
-    val results = binding.onOwner {
-      definitions.map { runCatching { binding.setImage(it) } } +
-        removals.map { runCatching<Unit> { binding.removeImage(it) } }
+    // Each write fails on its own; a style that unloads during the batch drops all of it.
+    val results =
+      style.visit(binding) {
+        definitions.map { runCatching { binding.setImage(it) } } +
+          removals.map { runCatching<Unit> { binding.removeImage(it) } }
+      }
+    if (results == null) {
+      skipped("write style images ${writes.keys}", StyleChanged)
+      return emptySet()
     }
-    if (!style.isCurrentLoadedStyle(binding)) return
+    if (!style.isCurrentLoadedStyle(binding)) return emptySet()
+    val applied = mutableSetOf<String>()
     (definitions.map { it.id } + removals).zip(results).forEach { (id, result) ->
       result.fold(
         onSuccess = {
@@ -277,6 +306,7 @@ internal class StyleResourceCommands(
             if (id in removals) images.remove(id) else images[id] = false
           }
           binding.identity.images.remove(id)
+          applied += id
         },
         onFailure = { error ->
           if (error !is Exception) throw error
@@ -284,12 +314,14 @@ internal class StyleResourceCommands(
         },
       )
     }
+    return applied
   }
 
   /**
-   * [discarded] runs instead of [block] when the command is dropped or its scope is cancelled. A
-   * [completion] receives the outcome for a caller that waits: a failure then goes to it rather
-   * than to [rejected].
+   * [discarded] runs instead of [block] when the command is dropped or its scope is cancelled; a
+   * command dropped because the loaded style changed is logged. A [completion] receives the outcome
+   * for a caller that waits: it completes normally when the command is dropped, and a failure goes
+   * to it rather than to [rejected].
    */
   private fun submit(
     binding: StyleBinding,
@@ -303,14 +335,18 @@ internal class StyleResourceCommands(
       var started = false
       try {
         withCommit {
-          if (!style.isCurrentLoadedStyle(binding)) return@withCommit
+          if (!style.owner.isCurrent(binding)) {
+            skipped(target, StyleChanged)
+            return@withCommit
+          }
           // Start work through the owner's dispatcher: UNDISPATCHED admission may still be on an
           // arbitrary caller, and withContext alone would run the command inline there.
           withContext(NonCancellable) {
             async {
               try {
-                checkStyleHandle(style.readyLoadedStyle() === binding) {
-                  "Style command belongs to an unready loaded-style identity"
+                if (!style.owner.isCurrent(binding)) {
+                  skipped(target, StyleChanged)
+                  return@async
                 }
                 started = true
                 block()
@@ -337,23 +373,36 @@ internal class StyleResourceCommands(
       } finally {
         if (!started) {
           discarded()
-          completion?.completeExceptionally(
-            StyleHandleException("Could not $target: the loaded style changed first")
-          )
+          completion?.complete(Unit)
         }
       }
     }
   }
 
-  /** Runs [action] on the map owner; a dropped task fails the command. */
-  private suspend fun <T> StyleBinding.onOwner(action: () -> T): T =
-    awaitOwner(action)
-      ?: throw StyleHandleException("The loaded style changed before the command ran")
-
-  private fun requireBinding(): StyleBinding =
-    (style.readyLoadedStyle() ?: throw StyleHandleException("No ready loaded style")).also {
-      style.operationGuard(it).run {}
+  /**
+   * Returns the ready loaded style for a new command, or null after logging that [target] was
+   * skipped.
+   *
+   * @throws IllegalStateException once the map state or snapshotter has closed, or off the thread
+   *   that it requires.
+   */
+  private fun readyBinding(target: String): StyleBinding? {
+    style.owner.requireOpen()
+    val binding = style.readyLoadedStyle()
+    if (binding == null) {
+      skipped(target, "no style is ready")
+      return null
     }
+    return binding
+  }
+
+  private fun skipped(target: String, reason: String) {
+    style.owner.logger?.w { "Skipped the command to $target: $reason" }
+  }
+
+  private fun rejected(target: String, error: Throwable) {
+    style.owner.logger?.w(error) { "Could not $target" }
+  }
 
   private fun requireSourceWritable(id: String) {
     require(id.isNotBlank()) { "Source ID must not be blank" }
@@ -365,19 +414,8 @@ internal class StyleResourceCommands(
     style.requireImageWritable(id)
   }
 
-  private fun validateSource(id: String, binding: StyleBinding, identity: Any) =
-    style.operationGuard(binding).run {
-      requireSourceWritable(id)
-      checkStyleHandle(binding.identity.sources.isCurrent(id, identity)) {
-        "Source '$id' has been removed or replaced"
-      }
-    }
-
-  private fun validateImage(id: String, binding: StyleBinding, identity: Any) =
-    style.operationGuard(binding).run {
-      requireImageWritable(id)
-      checkStyleHandle(binding.identity.images.isCurrent(id, identity)) {
-        "Image '$id' has been removed or replaced"
-      }
-    }
+  private companion object {
+    const val StyleChanged = "the loaded style changed first"
+    const val ResourceChanged = "the resource was removed or replaced first"
+  }
 }

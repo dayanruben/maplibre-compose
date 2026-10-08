@@ -80,6 +80,8 @@ import org.maplibre.spatialk.geojson.Position
 internal class GlJsStyleBinding(
   private val map: MaplibreMap,
   override val logger: MapLog?,
+  /** Receives the exception of a failed custom source provider call. */
+  private val customTileFailed: (Throwable) -> Unit = {},
   private val getScale: () -> Float,
 ) : StyleBinding {
 
@@ -156,7 +158,11 @@ internal class GlJsStyleBinding(
     if (map.getSource<GlJsVectorSource>(sourceId) == null || map.isSourceLoaded(sourceId) != true)
       return
     pendingCustomSourceReloads.remove(sourceId)
-    postWrite("Custom source '$sourceId'") { reloadCustomSource(sourceId) }
+    try {
+      reloadCustomSource(sourceId)
+    } catch (error: StyleMutationException) {
+      reportRejectedWrite("Custom source '$sourceId'", null, error)
+    }
   }
 
   // GL JS serializes only JSON layers when recovering a lost context. Retain custom layer
@@ -388,7 +394,8 @@ internal class GlJsStyleBinding(
     provider: GeometryTileProvider,
   ): Boolean {
     requireCurrent()
-    val attachment = GlJsCustomGeometryAttachment(sourceId, options, provider, logger)
+    val attachment =
+      GlJsCustomGeometryAttachment(sourceId, options, provider, logger, customTileFailed)
     val added =
       try {
         addSource(
@@ -470,6 +477,7 @@ internal class GlJsStyleBinding(
             // MapLibre reports the tile error as an `error` event with the message alone; this
             // record carries the exception.
             logger?.w(error) { "Custom vector tile source '$sourceId' failed to load $tile" }
+            customTileFailed(error)
             throw error
           }
         },
@@ -588,7 +596,9 @@ internal class GlJsStyleBinding(
     feature: Feature<*, JsonObject?>,
   ): Double? =
     queryCluster(sourceId, feature) { query ->
-      query.source.getClusterExpansionZoom(query.clusterId).await()
+      // geojson-vt derives the zoom from the ID without checking that the cluster exists, and an
+      // unknown ID can give 0 or less. A cluster always expands at zoom 1 or higher.
+      query.source.getClusterExpansionZoom(query.clusterId).await()?.takeIf { it > 0.0 }
     }
 
   override suspend fun clusterChildren(
@@ -596,43 +606,60 @@ internal class GlJsStyleBinding(
     feature: Feature<*, JsonObject?>,
   ): FeatureCollection<Geometry, JsonObject?>? =
     queryCluster(sourceId, feature) { query ->
-      query.source.getClusterChildren(query.clusterId).await().toFeatureCollection()
+      query.source.getClusterChildren(query.clusterId).await()?.toFeatureCollection()
     }
 
   override suspend fun clusterLeaves(
     sourceId: String,
     feature: Feature<*, JsonObject?>,
-    limit: Long,
-    offset: Long,
+    limit: Int,
+    offset: Int,
   ): FeatureCollection<Geometry, JsonObject?>? =
     queryCluster(sourceId, feature) { query ->
       query.source
         .getClusterLeaves(
           query.clusterId,
-          limit.coerceAtLeast(0).toDouble(),
-          offset.coerceAtLeast(0).toDouble(),
+          limit.toDouble(),
+          offset.toDouble(),
         )
         .await()
-        .toFeatureCollection()
+        ?.toFeatureCollection()
     }
 
-  private suspend fun <T> queryCluster(
+  /**
+   * Runs one cluster query. Returns null when the feature carries no cluster ID, the source is
+   * unavailable, the query answers null, the engine reports no cluster, or the query fails while
+   * the source is loading data.
+   *
+   * @throws StyleHandleException wrapping any other engine failure.
+   */
+  private suspend fun <T : Any> queryCluster(
     sourceId: String,
     feature: Feature<*, JsonObject?>,
-    action: suspend (ClusterQuery) -> T,
+    action: suspend (ClusterQuery) -> T?,
   ): T? {
     val query = clusterQuery(sourceId, feature) ?: return null
+    // Until the worker indexes the source's first data, it fails every cluster query with a
+    // TypeError. A query sent during a later update still answers from the previous data.
+    val loading = !query.source.loaded()
     return try {
       action(query)
     } catch (error: Throwable) {
-      // The worker transfers the missing-cluster error as an ordinary JavaScript Error.
-      if (
-        error is CancellationException ||
-          error.message != "No cluster with the specified id: ${query.clusterId}"
+      if (error is CancellationException) throw error
+      if (loading) {
+        logger?.w { "Cluster query failed while source '$sourceId' was loading: ${error.message}" }
+        return null
+      }
+      // The worker transfers the missing-cluster error as an ordinary JavaScript Error, so only its
+      // message identifies it.
+      if (error.message == "No cluster with the specified id: ${query.clusterId}") {
+        logger?.w { "Cluster query matched no cluster in source '$sourceId'" }
+        return null
+      }
+      throw StyleHandleException(
+        "Cluster query failed in source '$sourceId': ${error.message}",
+        error,
       )
-        throw error
-      logger?.w { "Cluster query matched no cluster in source '$sourceId'" }
-      null
     }
   }
 

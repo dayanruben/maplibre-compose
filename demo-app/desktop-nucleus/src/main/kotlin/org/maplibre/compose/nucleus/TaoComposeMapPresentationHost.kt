@@ -10,8 +10,10 @@ import org.maplibre.compose.desktop.ComposeMapPresentationHost
 import org.maplibre.compose.desktop.MetalComposeGpuContext
 import org.maplibre.compose.desktop.OpenGlComposeGpuContext
 import org.maplibre.compose.mlnffi.NativeHandle
+import org.maplibre.compose.util.ExperimentalMaplibreComposeApi
 
 /** Adapts the current Tao context to the corresponding typed window integration. */
+@OptIn(ExperimentalMaplibreComposeApi::class)
 private fun taoComposeMapPresentationHost(
   renderContext: TaoGpuRenderContext
 ): ComposeMapPresentationHost {
@@ -20,7 +22,7 @@ private fun taoComposeMapPresentationHost(
   }
   return when (renderContext) {
     is TaoMetalRenderContext ->
-      ComposeMapPresentationHost.metal(
+      ComposeMapPresentationHost.macosMetal(
         description = "the Nucleus Tao Metal host",
         gpuContext = {
           MetalComposeGpuContext(
@@ -44,9 +46,9 @@ private fun taoComposeMapPresentationHost(
         )
       }
       if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
-        ComposeMapPresentationHost.angleD3D11(description, gpuContext, runOnGpuThread)
+        ComposeMapPresentationHost.windowsAngle(description, gpuContext, runOnGpuThread)
       } else {
-        ComposeMapPresentationHost.openGl(description, gpuContext, runOnGpuThread)
+        ComposeMapPresentationHost.linuxOpenGl(description, gpuContext, runOnGpuThread)
       }
     }
     // Tao has a private intermediate type; public callers receive the two leaves above.

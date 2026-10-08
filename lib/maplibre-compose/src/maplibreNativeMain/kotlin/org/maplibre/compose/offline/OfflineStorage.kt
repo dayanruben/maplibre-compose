@@ -1,11 +1,20 @@
 package org.maplibre.compose.offline
 
 import androidx.compose.runtime.Immutable
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.io.files.Path
+import org.maplibre.compose.map.MapRuntime
 import org.maplibre.compose.util.formatToString
+
+/** The offline packs and ambient cache that belong to this runtime. */
+public val MapRuntime.offlineStorage: OfflineStorage
+  // Every runtime that callers can reach on MapLibre Native has storage. The IDE preview's
+  // runtime has none, but rememberMapState keeps it internal.
+  get() =
+    checkNotNull(boundOfflineStorage as OfflineStorage?) {
+      "This map runtime has no offline storage"
+    }
 
 /** Manages the offline packs and ambient cache that belong to one map runtime. */
 public sealed interface OfflineStorage {
@@ -16,7 +25,6 @@ public sealed interface OfflineStorage {
   /**
    * Creates a paused offline pack for [definition]. Call [resume] to start its download.
    *
-   * @throws UnsupportedOperationException if the runtime does not support offline packs.
    * @throws OfflineStorageException if the operation failed.
    */
   public suspend fun create(
@@ -24,24 +32,15 @@ public sealed interface OfflineStorage {
     metadata: ByteArray = ByteArray(0),
   ): OfflinePack
 
-  /**
-   * Resumes the download of [pack].
-   *
-   * @throws UnsupportedOperationException if the runtime does not support offline packs.
-   */
+  /** Resumes the download of [pack]. */
   public fun resume(pack: OfflinePack)
 
-  /**
-   * Pauses the download of [pack].
-   *
-   * @throws UnsupportedOperationException if the runtime does not support offline packs.
-   */
+  /** Pauses the download of [pack]. */
   public fun pause(pack: OfflinePack)
 
   /**
    * Unregisters [pack] and permits the cache to remove resources that no remaining pack needs.
    *
-   * @throws UnsupportedOperationException if the runtime does not support offline packs.
    * @throws OfflineStorageException if the operation failed.
    */
   public suspend fun delete(pack: OfflinePack)
@@ -49,7 +48,6 @@ public sealed interface OfflineStorage {
   /**
    * Checks the resources in [pack] against the server and downloads changed resources.
    *
-   * @throws UnsupportedOperationException if the runtime does not support offline packs.
    * @throws OfflineStorageException if the operation failed.
    */
   public suspend fun invalidate(pack: OfflinePack)
@@ -65,7 +63,6 @@ public sealed interface OfflineStorage {
    * pack when the source contains the same definition and metadata. Imported packs can be
    * incomplete when the source database does not contain every required resource.
    *
-   * @throws UnsupportedOperationException if the runtime does not support offline packs.
    * @throws OfflineStorageException if the operation failed.
    */
   public suspend fun mergeDatabase(databaseFile: Path): Set<OfflinePack>
@@ -73,7 +70,6 @@ public sealed interface OfflineStorage {
   /**
    * Checks ambient-cache resources against the server and downloads changed resources.
    *
-   * @throws UnsupportedOperationException if the runtime does not support ambient-cache management.
    * @throws OfflineStorageException if the operation failed.
    */
   public suspend fun invalidateAmbientCache()
@@ -81,7 +77,6 @@ public sealed interface OfflineStorage {
   /**
    * Deletes ambient-cache resources that no offline pack needs.
    *
-   * @throws UnsupportedOperationException if the runtime does not support ambient-cache management.
    * @throws OfflineStorageException if the operation failed.
    */
   public suspend fun clearAmbientCache()
@@ -96,7 +91,6 @@ public sealed interface OfflineStorage {
    * @param sizeBytes The maximum ambient-cache size in bytes. Zero keeps no ambient-cache
    *   resources. Must not be negative.
    * @throws IllegalArgumentException if [sizeBytes] is negative.
-   * @throws UnsupportedOperationException if the runtime does not support ambient-cache management.
    * @throws OfflineStorageException if the operation failed.
    */
   public suspend fun setMaximumAmbientCacheSize(sizeBytes: Long)
@@ -155,13 +149,16 @@ internal interface OfflineStorageBackend : OfflineStorage, AutoCloseable {
   fun bindToRuntime(requireRuntimeOpen: () -> Unit)
 }
 
+/** Checks that the runtime is open before each operation. The runtime closes it. */
 internal class RuntimeBoundOfflineStorage(
   private val delegate: OfflineStorageBackend,
   private val requireRuntimeOpen: () -> Unit,
-) : OfflineStorage {
+) : OfflineStorage, AutoCloseable {
   init {
     delegate.bindToRuntime(requireRuntimeOpen)
   }
+
+  override fun close() = delegate.close()
 
   override val state: StateFlow<OfflineStorageState>
     get() = delegate.state
@@ -225,44 +222,4 @@ internal class RuntimeBoundOfflineStorage(
         formatToString("OfflineStorage", "state" to "Failed", "cause" to current.cause)
       UnspecifiedOfflineStorageState -> formatToString("OfflineStorage", "state" to current)
     }
-}
-
-internal object UnsupportedOfflineStorage : OfflineStorageBackend {
-  override fun close() = Unit
-
-  override val state: StateFlow<OfflineStorageState> =
-    MutableStateFlow(OfflineStorageState.Ready(emptySet()))
-
-  override fun bindToRuntime(requireRuntimeOpen: () -> Unit) {}
-
-  override suspend fun create(
-    definition: OfflinePackDefinition,
-    metadata: ByteArray,
-  ): OfflinePack = unsupportedOfflinePacks()
-
-  override fun resume(pack: OfflinePack): Unit = unsupportedOfflinePacks()
-
-  override fun pause(pack: OfflinePack): Unit = unsupportedOfflinePacks()
-
-  override suspend fun delete(pack: OfflinePack): Unit = unsupportedOfflinePacks()
-
-  override suspend fun invalidate(pack: OfflinePack): Unit = unsupportedOfflinePacks()
-
-  override suspend fun mergeDatabase(databaseFile: Path): Set<OfflinePack> =
-    unsupportedOfflinePacks()
-
-  override suspend fun invalidateAmbientCache(): Unit = unsupportedAmbientCacheManagement()
-
-  override suspend fun clearAmbientCache(): Unit = unsupportedAmbientCacheManagement()
-
-  override suspend fun setMaximumAmbientCacheSize(sizeBytes: Long): Unit =
-    unsupportedAmbientCacheManagement()
-
-  private fun unsupportedOfflinePacks(): Nothing =
-    throw UnsupportedOperationException("This map runtime does not support offline packs")
-
-  private fun unsupportedAmbientCacheManagement(): Nothing =
-    throw UnsupportedOperationException(
-      "This map runtime does not support ambient-cache management"
-    )
 }

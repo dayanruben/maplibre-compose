@@ -9,10 +9,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.concurrent.Volatile
 import kotlin.coroutines.resume
-import kotlin.math.pow
-import kotlin.math.sqrt
 import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -51,8 +50,9 @@ import org.maplibre.compose.style.StyleReconciler
 import org.maplibre.compose.style.StyleRequestId
 import org.maplibre.compose.style.StyleSnapshot
 import org.maplibre.compose.style.UnspecifiedBaseStyle
+import org.maplibre.compose.util.DelicateMaplibreComposeApi
 import org.maplibre.compose.util.DpPadding
-import org.maplibre.compose.util.mercatorPixelDistance
+import org.maplibre.compose.util.ExperimentalMaplibreComposeApi
 import org.maplibre.compose.util.metersPerDpAtLatitude
 import org.maplibre.compose.util.renderedQueryOptions
 import org.maplibre.compose.util.toCameraOptions
@@ -93,12 +93,6 @@ private const val MinPitchDegrees = 0.0
 
 /** MapLibre rejects a pitch beyond this, so the drag is clamped rather than throwing. */
 private const val MaxPitchDegrees = 60.0
-
-/** `util::MAX_ZOOM`, the zoom MapLibre Native clamps to when the map has no maximum. */
-private const val MaxNativeZoom = 25.5
-
-/** The zoom curve of a flight, `rho` in `Transform::flyTo`. */
-private const val FlightCurve = 1.42
 
 /** The events [MlnFfiMapSession.handleEvent] consumes. */
 private val HandledMapEvents: RuntimeEventMask =
@@ -907,43 +901,8 @@ internal class MlnFfiMapSession(
   ) {
     when (animation) {
       is CameraAnimation.Ease -> easeTo(camera, options)
-      is CameraAnimation.Fly ->
-        flyTo(camera, options.copy { minZoom = flightMinZoom(camera, animation.minZoom) })
+      is CameraAnimation.Fly -> flyTo(camera, options)
     }
-  }
-
-  /**
-   * The minimum zoom to pass to `flyTo`, or null to leave the flight path alone.
-   *
-   * MapLibre GL JS fits the flight curve to the higher of the requested minimum and the map's
-   * minimum zoom, and only when the natural path would pass below it. MapLibre Native fits the
-   * curve to the requested minimum whenever one is given, zooming out to reach it, and otherwise
-   * ignores the map's minimum until it clamps each frame. This mirrors the GL JS decision, using
-   * the setup of `Transform::flyTo`.
-   */
-  private fun MapHandle.flightMinZoom(camera: CameraOptions, minZoom: Double?): Double? {
-    val current = this.camera
-    val size = size
-    val padding = camera.padding ?: current.padding ?: EdgeInsets(0.0, 0.0, 0.0, 0.0)
-    val startZoom = current.zoom ?: return null
-    val start = current.center ?: return null
-    val end = camera.center ?: start
-    val mapMinZoom = bounds.minZoom ?: 0.0
-    val zoomRange = mapMinZoom..(bounds.maxZoom ?: MaxNativeZoom)
-    val zoom = (camera.zoom ?: startZoom).coerceIn(zoomRange)
-    val floor = maxOf(minZoom ?: mapMinZoom, mapMinZoom)
-    val peakZoom = minOf(floor, startZoom, zoom).coerceIn(zoomRange)
-    val pathLength =
-      mercatorPixelDistance(startZoom, start.toPosition(), end.toPosition()).takeIf { it > 0.0 }
-        ?: return null
-    // Screenfuls in pixels at the start scale: the visible span now and at the peak.
-    val startSpan =
-      maxOf(
-        size.width - padding.left - padding.right,
-        size.height - padding.top - padding.bottom,
-      )
-    val peakSpan = startSpan / 2.0.pow(peakZoom - startZoom)
-    return floor.takeIf { sqrt(peakSpan / pathLength * 2.0) < FlightCurve }
   }
 
   private fun CameraAnimation.toAnimationOptions(): AnimationOptions =
@@ -953,7 +912,8 @@ internal class MlnFfiMapSession(
         is CameraAnimation.Ease -> it.durationMs = duration.inWholeMilliseconds.toDouble()
         is CameraAnimation.Fly -> {
           it.durationMs = duration?.inWholeMilliseconds?.toDouble()
-          it.velocity = speed ?: CameraAnimation.Fly.DefaultSpeed
+          it.velocity = speed
+          it.minZoom = minZoom
         }
       }
     }
@@ -1049,6 +1009,7 @@ internal class MlnFfiMapSession(
   internal suspend fun ensureEngine(): EngineMapIdentity = lifecycle.ensureEngine()
 
   /** Runs [block] on the owner thread of [engine], the engine that [ensureEngine] returned. */
+  @OptIn(DelicateMaplibreComposeApi::class, ExperimentalMaplibreComposeApi::class)
   internal suspend fun <T> withPlatformMap(
     engine: EngineMapIdentity,
     block: PlatformMapScope.() -> T,
@@ -1113,17 +1074,22 @@ internal class MlnFfiMapSession(
   override suspend fun queryRenderedFeaturesByLayer(
     offset: DpOffset,
     hitPadding: Map<String, Dp>,
-  ): Map<String, List<Feature<Geometry, JsonObject?>>> =
-    awaitRenderSession { session ->
-      hitPadding.mapValues { (id, padding) ->
-        val geometry =
-          if (padding == 0.dp) RenderedQueryGeometry.Point(offset.toScreenPoint())
-          else
-            DpRect(offset.x - padding, offset.y - padding, offset.x + padding, offset.y + padding)
-              .toQueryGeometry()
-        session.query(geometry, setOf(id), null)
-      }
-    } ?: hitPadding.mapValues { emptyList() }
+  ): Map<String, List<Feature<Geometry, JsonObject?>>> {
+    val results =
+      awaitRenderSession { session ->
+        hitPadding.mapValues { (id, padding) ->
+          val geometry =
+            if (padding == 0.dp) RenderedQueryGeometry.Point(offset.toScreenPoint())
+            else
+              DpRect(offset.x - padding, offset.y - padding, offset.x + padding, offset.y + padding)
+                .toQueryGeometry()
+          session.queryRenderedFeatures(geometry, renderedQueryOptions(setOf(id), null))
+        }
+      } ?: return hitPadding.mapValues { emptyList() }
+    return withContext(Dispatchers.Default) {
+      results.mapValues { (_, features) -> features.toGeoJsonFeatures().asReversed() }
+    }
+  }
 
   private fun DpRect.toQueryGeometry(): RenderedQueryGeometry =
     RenderedQueryGeometry.Box(
@@ -1138,19 +1104,17 @@ internal class MlnFfiMapSession(
     geometry: RenderedQueryGeometry,
     layerIds: Set<String>?,
     predicate: CompiledExpression<BooleanValue>?,
-  ): List<Feature<Geometry, JsonObject?>> =
-    awaitRenderSession { session -> session.query(geometry, layerIds, predicate) } ?: emptyList()
-
-  private fun RenderSessionHandle.query(
-    geometry: RenderedQueryGeometry,
-    layerIds: Set<String>?,
-    predicate: CompiledExpression<BooleanValue>?,
-  ): List<Feature<Geometry, JsonObject?>> =
-    queryRenderedFeatures(geometry, renderedQueryOptions(layerIds, predicate))
-      .toGeoJsonFeatures()
+  ): List<Feature<Geometry, JsonObject?>> {
+    val result =
+      awaitRenderSession { session ->
+        session.queryRenderedFeatures(geometry, renderedQueryOptions(layerIds, predicate))
+      } ?: return emptyList()
+    return withContext(Dispatchers.Default) {
       // Native walks style layers from the bottom. MapState and GL JS put the feature in front
       // first.
-      .asReversed()
+      result.toGeoJsonFeatures().asReversed()
+    }
+  }
 
   override fun getVisibleBounds() = viewport.getVisibleBounds()
 

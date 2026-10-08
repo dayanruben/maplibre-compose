@@ -73,10 +73,6 @@ import org.maplibre.compose.layers.LayerHandle
 import org.maplibre.compose.layers.LayerSummary
 import org.maplibre.compose.layers.layerHandle
 import org.maplibre.compose.logging.MapLog
-import org.maplibre.compose.offline.OfflineStorage
-import org.maplibre.compose.offline.OfflineStorageBackend
-import org.maplibre.compose.offline.RuntimeBoundOfflineStorage
-import org.maplibre.compose.offline.UnsupportedOfflineStorage
 import org.maplibre.compose.resource.MapResourceConfig
 import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.SourceHandle
@@ -88,12 +84,10 @@ import org.maplibre.compose.style.Projection
 import org.maplibre.compose.style.Sky
 import org.maplibre.compose.style.SourceDefinition
 import org.maplibre.compose.style.StyleBinding
-import org.maplibre.compose.style.StyleHandleException
 import org.maplibre.compose.style.StyleHandleOperationGuard
+import org.maplibre.compose.style.StyleMutationException
 import org.maplibre.compose.style.StyleSnapshot
 import org.maplibre.compose.style.TransitionOptions
-import org.maplibre.compose.style.checkStyleHandle
-import org.maplibre.compose.style.postWrite
 import org.maplibre.compose.style.scaledBy
 import org.maplibre.compose.style.summary
 import org.maplibre.compose.style.systemAnimatorDurationScale
@@ -114,8 +108,8 @@ import org.maplibre.spatialk.geojson.Position
  * Configuration for one [MapRuntime].
  *
  * Every platform accepts a request interceptor and a resource provider, fixed for the lifetime of
- * the runtime. They apply to its maps, snapshotters, and supported offline operations. The MapLibre
- * Native platforms also accept a cache file and a cache size limit.
+ * the runtime. They apply to its maps, snapshotters, and, on MapLibre Native platforms, offline
+ * operations. The MapLibre Native platforms also accept a cache file and a cache size limit.
  */
 public expect class MapRuntimeOptions
 
@@ -157,7 +151,11 @@ internal constructor(
   internal val platformContext: Any?,
   private val closeResources: suspend () -> Unit,
   internal val logger: MapLog?,
-  private val offlineStorageBackend: OfflineStorageBackend = UnsupportedOfflineStorage,
+  /**
+   * Creates the offline storage from the runtime's open check. Only MapLibre Native passes one; its
+   * `offlineStorage` extension exposes the result.
+   */
+  createOfflineStorage: ((requireRuntimeOpen: () -> Unit) -> AutoCloseable)? = null,
   internal val physicalScope: CoroutineScope =
     CoroutineScope(SupervisorJob() + Dispatchers.Default),
   /** The one thread that uses map states. Engine callbacks are posted to it. */
@@ -170,18 +168,15 @@ internal constructor(
   internal val styleEvaluator: StyleCompositionEvaluator = DefaultStyleCompositionEvaluator,
   internal val resourceConfig: MapResourceConfig = MapResourceConfig(),
 ) {
-  /** The offline packs and ambient cache managed by this runtime. */
-  public val offlineStorage: OfflineStorage =
-    RuntimeBoundOfflineStorage(
-      delegate = offlineStorageBackend,
-      requireRuntimeOpen = ::requireOpen,
-    )
   private val lock = reentrantLock()
   private val children = linkedSetOf<MapState>()
   private val snapshotters = linkedSetOf<MapSnapshotterImplementation>()
   private val closure = CompletableDeferred<Result<Unit>>()
   private var closed = false
   private var closedState: Boolean by mutableStateOf(false)
+
+  /** The storage from [createOfflineStorage], or null where the runtime has none. */
+  internal val boundOfflineStorage: AutoCloseable? = createOfflineStorage?.invoke(::requireOpen)
 
   /**
    * Creates a logical map with [baseStyle] and the sources, layers, and images that [content]
@@ -231,7 +226,7 @@ internal constructor(
       children.toList() to snapshotters.toList()
     }
     val (closingStates, closingSnapshotters) = closingChildren
-    val offlineCloseFailure = runCatching { offlineStorageBackend.close() }.exceptionOrNull()
+    val offlineCloseFailure = runCatching { boundOfflineStorage?.close() }.exceptionOrNull()
     closingStates.forEach(MapState::close)
     closingSnapshotters.forEach(MapSnapshotterImplementation::close)
     physicalScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -318,12 +313,33 @@ internal interface MapStyleStateOwner {
 
   val resourceCommands: StyleResourceCommands
 
-  fun readyLoadedStyle(): StyleBinding?
+  /** Receives skipped commands and engine rejections nothing waits for. */
+  val logger: MapLog?
 
-  fun <T> runStyleHandleOperation(binding: StyleBinding, action: () -> T): T
+  /**
+   * Checks a call before it starts.
+   *
+   * @throws IllegalStateException once the map state or snapshotter has closed, or off the thread
+   *   that it requires.
+   */
+  fun requireOpen()
+
+  /**
+   * Returns true while [binding] is the ready loaded style and the owner is open. Every check after
+   * a call starts uses this, so a close during the call reads like a style change.
+   */
+  fun isCurrent(binding: StyleBinding): Boolean
+
+  fun readyLoadedStyle(): StyleBinding?
 }
 
-/** Desired and applied style state for one logical map or snapshotter. */
+/**
+ * Desired and applied style state for one logical map or snapshotter.
+ *
+ * Once the map state or snapshotter has closed, starting a style command, write, or read throws
+ * [IllegalStateException]. A close while a call runs is treated like a style change: the command or
+ * write does nothing and logs a warning, and the read returns null.
+ */
 public class MapStyleState internal constructor(baseStyle: BaseStyle) {
   /**
    * Waits for resource commands accepted before this call. Callers wait on the resource instead:
@@ -361,14 +377,11 @@ public class MapStyleState internal constructor(baseStyle: BaseStyle) {
   internal fun requireImageWritable(id: String) = requireWritable("Image", id, isImageWritable(id))
 
   private fun requireWritable(kind: String, id: String, writable: Boolean) {
-    if (!writable) throw StyleHandleException("$kind ID '$id' is declared by the style content")
+    check(writable) { "$kind ID '$id' is declared by the style content" }
   }
 
-  internal fun requireReadyBinding(binding: StyleBinding) {
-    checkStyleHandle(loadState == StyleLoadState.Ready && isCurrentLoadedStyle(binding)) {
-      "Style operation belongs to a stale or unready loaded-style identity"
-    }
-  }
+  internal fun isReadyBinding(binding: StyleBinding): Boolean =
+    loadState == StyleLoadState.Ready && isCurrentLoadedStyle(binding)
 
   private val loadedStyle = AtomicReference<StyleBinding?>(null)
   private var sourcesState: Map<String, SourceHandle> by
@@ -487,20 +500,111 @@ public class MapStyleState internal constructor(baseStyle: BaseStyle) {
    * while the engine answers also reads as null: the value belongs to a generation that is gone.
    */
   private suspend fun <T> readStyle(read: (StyleBinding) -> T?): T? {
+    owner.requireOpen()
     val current = readyLoadedStyle() ?: return null
-    operationGuard(current).run {}
-    val result = current.awaitOwner { read(current) }
-    return result.takeIf { readyLoadedStyle() === current }
+    return visit(current) { read(current) }
   }
 
-  /** Posts a write to the ready loaded style. The engine reports a rejection through the logger. */
+  /**
+   * Runs the engine work of a style command or read on the owner of [binding]. Every command and
+   * read reaches the engine through here.
+   *
+   * @return null, discarding what [action] did, when the owner closed or [binding] stopped being
+   *   the ready loaded style before or while [action] ran, including when [action] fails because
+   *   the style unloaded. Callers log a skipped command.
+   */
+  internal suspend fun <T> visit(binding: StyleBinding, action: () -> T?): T? {
+    val result = binding.awaitOwner {
+      if (!isLive(binding)) return@awaitOwner null
+      try {
+        action()
+      } catch (error: Exception) {
+        if (isLive(binding)) throw error
+        null
+      }
+    }
+    return result.takeIf { isLive(binding) }
+  }
+
+  /**
+   * Runs a handle read, such as one that queries the renderer, that may suspend anywhere. Every
+   * handle read goes through here.
+   *
+   * @return null when the owner closed, [binding] stopped being the ready loaded style, or
+   *   [isResourceCurrent] turned false before or while [action] ran, including when [action] fails
+   *   because of it.
+   */
+  internal suspend fun <T> read(
+    binding: StyleBinding,
+    isResourceCurrent: () -> Boolean = { true },
+    action: suspend () -> T?,
+  ): T? {
+    fun live() = isLive(binding) && isResourceCurrent()
+    if (!live()) return null
+    val result =
+      try {
+        action()
+      } catch (error: CancellationException) {
+        throw error
+      } catch (error: Exception) {
+        if (live()) throw error
+        return null
+      }
+    return result.takeIf { live() }
+  }
+
+  /**
+   * Posts a style write to the owner of [binding]. Every write reaches the engine through here. A
+   * write that the owner's close, a style change, or the replacement of its resource
+   * ([isResourceCurrent]) overtakes, before or while it runs, does nothing and logs one warning; an
+   * engine rejection is logged and keeps the previous value.
+   */
+  internal fun post(
+    binding: StyleBinding,
+    target: String,
+    value: JsonElement? = null,
+    isResourceCurrent: () -> Boolean = { true },
+    action: () -> Unit,
+  ) {
+    val dropped: () -> Unit = {
+      owner.logger?.w { "$target was not written: the loaded style changed first" }
+    }
+    binding.postOwner(onDropped = dropped) {
+      if (!isLive(binding)) return@postOwner dropped()
+      if (!isResourceCurrent()) {
+        owner.logger?.w { "$target was not written: it was removed or replaced first" }
+        return@postOwner
+      }
+      try {
+        action()
+      } catch (error: Exception) {
+        when {
+          !isLive(binding) -> dropped()
+          error is StyleMutationException -> binding.reportRejectedWrite(target, value, error)
+          else -> throw error
+        }
+      }
+    }
+  }
+
+  private fun isLive(binding: StyleBinding): Boolean = binding.isLoaded && owner.isCurrent(binding)
+
+  /**
+   * Posts a write to the ready loaded style. Without one, the write is skipped and logged. The
+   * engine reports a rejection through the logger.
+   */
   private fun mutateStyle(
     target: String,
     value: JsonElement? = null,
     mutate: (StyleBinding) -> Unit,
   ) {
-    val current = readyLoadedStyle() ?: throw StyleHandleException("No ready loaded style")
-    operationGuard(current).run { current.postWrite(target, value) { mutate(current) } }
+    owner.requireOpen()
+    val current = readyLoadedStyle()
+    if (current == null) {
+      owner.logger?.w { "$target was not written: no style is ready" }
+      return
+    }
+    post(current, target, value) { mutate(current) }
   }
 
   internal fun sourceHandle(id: String): SourceHandle? {
@@ -633,14 +737,31 @@ public class MapStyleState internal constructor(baseStyle: BaseStyle) {
 
   internal fun operationGuard(style: StyleBinding): StyleHandleOperationGuard =
     object : StyleHandleOperationGuard {
-      override fun <T> run(action: () -> T): T = owner.runStyleHandleOperation(style, action)
+      override fun requireOpen() = owner.requireOpen()
+
+      override fun isReady(): Boolean = owner.isCurrent(style)
+
+      override fun post(target: String, isResourceCurrent: () -> Boolean, action: () -> Unit) =
+        this@MapStyleState.post(
+          style,
+          target,
+          isResourceCurrent = isResourceCurrent,
+          action = action,
+        )
+
+      override suspend fun <T> read(
+        isResourceCurrent: () -> Boolean,
+        action: suspend () -> T?,
+      ): T? = this@MapStyleState.read(style, isResourceCurrent, action)
+
+      override suspend fun <T> visit(action: () -> T?): T? = this@MapStyleState.visit(style, action)
 
       override fun isSourceWritable(id: String): Boolean = this@MapStyleState.isSourceWritable(id)
 
       override fun isLayerWritable(id: String): Boolean = this@MapStyleState.isLayerWritable(id)
 
-      override fun removeSource(id: String, identity: Any) =
-        owner.resourceCommands.removeSource(id, style, identity)
+      override fun removeSource(id: String, identity: Any, onRemoved: () -> Unit) =
+        owner.resourceCommands.removeSource(id, style, identity, onRemoved)
 
       override fun requireSourceWritable(id: String) = this@MapStyleState.requireSourceWritable(id)
 

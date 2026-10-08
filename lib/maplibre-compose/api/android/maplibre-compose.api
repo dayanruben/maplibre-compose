@@ -50,19 +50,19 @@ public final class org/maplibre/compose/camera/CameraAnimation$Fly : org/maplibr
 	public static final field Companion Lorg/maplibre/compose/camera/CameraAnimation$Fly$Companion;
 	public static final field DefaultSpeed D
 	public fun <init> ()V
-	public synthetic fun <init> (Lkotlin/time/Duration;Ljava/lang/Double;Ljava/lang/Double;Lorg/maplibre/compose/camera/CubicBezier;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
-	public synthetic fun <init> (Lkotlin/time/Duration;Ljava/lang/Double;Ljava/lang/Double;Lorg/maplibre/compose/camera/CubicBezier;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlin/time/Duration;DLjava/lang/Double;Lorg/maplibre/compose/camera/CubicBezier;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Lkotlin/time/Duration;DLjava/lang/Double;Lorg/maplibre/compose/camera/CubicBezier;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1-FghU774 ()Lkotlin/time/Duration;
-	public final fun component2 ()Ljava/lang/Double;
+	public final fun component2 ()D
 	public final fun component3 ()Ljava/lang/Double;
 	public final fun component4 ()Lorg/maplibre/compose/camera/CubicBezier;
-	public final fun copy-5EIzBIU (Lkotlin/time/Duration;Ljava/lang/Double;Ljava/lang/Double;Lorg/maplibre/compose/camera/CubicBezier;)Lorg/maplibre/compose/camera/CameraAnimation$Fly;
-	public static synthetic fun copy-5EIzBIU$default (Lorg/maplibre/compose/camera/CameraAnimation$Fly;Lkotlin/time/Duration;Ljava/lang/Double;Ljava/lang/Double;Lorg/maplibre/compose/camera/CubicBezier;ILjava/lang/Object;)Lorg/maplibre/compose/camera/CameraAnimation$Fly;
+	public final fun copy-5EIzBIU (Lkotlin/time/Duration;DLjava/lang/Double;Lorg/maplibre/compose/camera/CubicBezier;)Lorg/maplibre/compose/camera/CameraAnimation$Fly;
+	public static synthetic fun copy-5EIzBIU$default (Lorg/maplibre/compose/camera/CameraAnimation$Fly;Lkotlin/time/Duration;DLjava/lang/Double;Lorg/maplibre/compose/camera/CubicBezier;ILjava/lang/Object;)Lorg/maplibre/compose/camera/CameraAnimation$Fly;
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getDuration-FghU774 ()Lkotlin/time/Duration;
 	public fun getEasing ()Lorg/maplibre/compose/camera/CubicBezier;
 	public final fun getMinZoom ()Ljava/lang/Double;
-	public final fun getSpeed ()Ljava/lang/Double;
+	public final fun getSpeed ()D
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
 }
@@ -2417,7 +2417,6 @@ public final class org/maplibre/compose/map/MapRuntime {
 	public static synthetic fun createMapState$default (Lorg/maplibre/compose/map/MapRuntime;Lorg/maplibre/compose/style/BaseStyle;Lorg/maplibre/compose/camera/CameraPosition;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapState;
 	public final fun createSnapshotter (Lorg/maplibre/compose/style/BaseStyle;Lkotlin/jvm/functions/Function2;)Lorg/maplibre/compose/map/MapSnapshotter;
 	public static synthetic fun createSnapshotter$default (Lorg/maplibre/compose/map/MapRuntime;Lorg/maplibre/compose/style/BaseStyle;Lkotlin/jvm/functions/Function2;ILjava/lang/Object;)Lorg/maplibre/compose/map/MapSnapshotter;
-	public final fun getOfflineStorage ()Lorg/maplibre/compose/offline/OfflineStorage;
 	public final fun isClosed ()Z
 	public fun toString ()Ljava/lang/String;
 }
@@ -2821,6 +2820,7 @@ public abstract class org/maplibre/compose/map/TileLodAlgorithm {
 
 public final class org/maplibre/compose/map/TileLodAlgorithm$CameraDistance : org/maplibre/compose/map/TileLodAlgorithm {
 	public static final field $stable I
+	public static final field Companion Lorg/maplibre/compose/map/TileLodAlgorithm$CameraDistance$Companion;
 	public fun <init> (Lorg/maplibre/compose/map/TileLodAlgorithm$CameraDistance;Lkotlin/jvm/functions/Function1;)V
 	public synthetic fun <init> (Lorg/maplibre/compose/map/TileLodAlgorithm$CameraDistance;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()D
@@ -2844,8 +2844,13 @@ public final class org/maplibre/compose/map/TileLodAlgorithm$CameraDistance$Buil
 	public final fun setZoomShift (D)V
 }
 
+public final class org/maplibre/compose/map/TileLodAlgorithm$CameraDistance$Companion {
+	public final fun getStandard ()Lorg/maplibre/compose/map/TileLodAlgorithm$CameraDistance;
+}
+
 public final class org/maplibre/compose/map/TileLodAlgorithm$ScreenCenter : org/maplibre/compose/map/TileLodAlgorithm {
 	public static final field $stable I
+	public static final field Companion Lorg/maplibre/compose/map/TileLodAlgorithm$ScreenCenter$Companion;
 	public fun <init> (Lorg/maplibre/compose/map/TileLodAlgorithm$ScreenCenter;Lkotlin/jvm/functions/Function1;)V
 	public synthetic fun <init> (Lorg/maplibre/compose/map/TileLodAlgorithm$ScreenCenter;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun component1 ()D
@@ -2871,6 +2876,10 @@ public final class org/maplibre/compose/map/TileLodAlgorithm$ScreenCenter$Builde
 	public final fun setPitchThreshold (D)V
 	public final fun setScale (D)V
 	public final fun setZoomShift (D)V
+}
+
+public final class org/maplibre/compose/map/TileLodAlgorithm$ScreenCenter$Companion {
+	public final fun getStandard ()Lorg/maplibre/compose/map/TileLodAlgorithm$ScreenCenter;
 }
 
 public final class org/maplibre/compose/map/TileLodOptions {
@@ -3071,8 +3080,10 @@ public final class org/maplibre/compose/offline/OfflineStorage$DefaultImpls {
 
 public final class org/maplibre/compose/offline/OfflineStorageException : java/lang/RuntimeException {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class org/maplibre/compose/offline/OfflineStorageKt {
+	public static final fun getOfflineStorage (Lorg/maplibre/compose/map/MapRuntime;)Lorg/maplibre/compose/offline/OfflineStorage;
 }
 
 public abstract interface class org/maplibre/compose/offline/OfflineStorageState {
@@ -3388,6 +3399,40 @@ public final class org/maplibre/compose/overlay/ZoomButtonsStyle {
 	public final fun getShape ()Landroidx/compose/ui/graphics/Shape;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class org/maplibre/compose/resource/ConnectivityMode {
+}
+
+public final class org/maplibre/compose/resource/ConnectivityMode$Automatic : org/maplibre/compose/resource/ConnectivityMode {
+	public static final field $stable I
+	public static final field INSTANCE Lorg/maplibre/compose/resource/ConnectivityMode$Automatic;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class org/maplibre/compose/resource/ConnectivityMode$ForceOffline : org/maplibre/compose/resource/ConnectivityMode {
+	public static final field $stable I
+	public static final field INSTANCE Lorg/maplibre/compose/resource/ConnectivityMode$ForceOffline;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class org/maplibre/compose/resource/ConnectivityMode$ForceOnline : org/maplibre/compose/resource/ConnectivityMode {
+	public static final field $stable I
+	public static final field INSTANCE Lorg/maplibre/compose/resource/ConnectivityMode$ForceOnline;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class org/maplibre/compose/resource/MapConnectivity {
+	public static final field $stable I
+	public static final field INSTANCE Lorg/maplibre/compose/resource/MapConnectivity;
+	public final fun getMode ()Lorg/maplibre/compose/resource/ConnectivityMode;
+	public final fun setMode (Lorg/maplibre/compose/resource/ConnectivityMode;)V
 }
 
 public abstract interface class org/maplibre/compose/resource/MapRequestInterceptor {
@@ -3771,6 +3816,7 @@ public final class org/maplibre/compose/sources/GeoJsonOptions$ClusterPropertyAg
 public final class org/maplibre/compose/sources/GeoJsonSource : org/maplibre/compose/sources/VectorSource {
 	public static final field $stable I
 	public fun <init> (Ljava/lang/String;Lorg/maplibre/compose/sources/GeoJsonData;Lorg/maplibre/compose/sources/GeoJsonOptions;)V
+	public synthetic fun <init> (Ljava/lang/String;Lorg/maplibre/compose/sources/GeoJsonData;Lorg/maplibre/compose/sources/GeoJsonOptions;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun isCluster (Lorg/maplibre/spatialk/geojson/Feature;)Z
 }
 
@@ -3779,7 +3825,7 @@ public abstract interface class org/maplibre/compose/sources/GeoJsonSourceHandle
 	public synthetic fun getAsMutable ()Lorg/maplibre/compose/sources/MutableSourceHandle;
 	public abstract fun getClusterChildren (Lorg/maplibre/spatialk/geojson/Feature;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getClusterExpansionZoom (Lorg/maplibre/spatialk/geojson/Feature;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
-	public abstract fun getClusterLeaves (Lorg/maplibre/spatialk/geojson/Feature;JJLkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public abstract fun getClusterLeaves (Lorg/maplibre/spatialk/geojson/Feature;IILkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun getFeatureState (Ljava/lang/String;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public abstract fun isCluster (Lorg/maplibre/spatialk/geojson/Feature;)Z
 	public abstract fun removeFeatureState (Ljava/lang/String;Ljava/lang/String;)V
@@ -4005,6 +4051,7 @@ public final class org/maplibre/compose/sources/VectorTileSource : org/maplibre/
 	public static final field $stable I
 	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
 	public fun <init> (Ljava/lang/String;Ljava/util/List;Lorg/maplibre/compose/sources/TileSetOptions;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/util/List;Lorg/maplibre/compose/sources/TileSetOptions;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
 
 public abstract interface class org/maplibre/compose/sources/VectorTileSourceHandle : org/maplibre/compose/sources/SourceHandle {
@@ -4160,10 +4207,8 @@ public final class org/maplibre/compose/style/Sky {
 	public fun toString ()Ljava/lang/String;
 }
 
-public final class org/maplibre/compose/style/StyleHandleException : java/lang/IllegalStateException {
+public final class org/maplibre/compose/style/StyleHandleException : java/lang/RuntimeException {
 	public static final field $stable I
-	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 }
 
 public final class org/maplibre/compose/style/TransitionOptions {
@@ -4217,6 +4262,9 @@ public final class org/maplibre/compose/util/DpPadding$Companion {
 
 public final class org/maplibre/compose/util/DpPaddingKt {
 	public static final fun toDpPadding (Landroidx/compose/foundation/layout/PaddingValues;Landroidx/compose/ui/unit/LayoutDirection;)Lorg/maplibre/compose/util/DpPadding;
+}
+
+public abstract interface annotation class org/maplibre/compose/util/ExperimentalMaplibreComposeApi : java/lang/annotation/Annotation {
 }
 
 public abstract class org/maplibre/compose/util/ImageStretch {
