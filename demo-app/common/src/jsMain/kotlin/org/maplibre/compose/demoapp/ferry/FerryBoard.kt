@@ -1,4 +1,7 @@
-@file:OptIn(kotlin.time.ExperimentalTime::class)
+@file:OptIn(
+  kotlin.time.ExperimentalTime::class,
+  org.maplibre.compose.util.ExperimentalMaplibreComposeApi::class,
+)
 
 package org.maplibre.compose.demoapp.ferry
 
@@ -35,11 +38,11 @@ import org.jetbrains.compose.web.dom.Section
 import org.jetbrains.compose.web.dom.Select
 import org.jetbrains.compose.web.dom.Text
 import org.maplibre.compose.camera.CameraAnimation
+import org.maplibre.compose.camera.CameraFit
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.demoapp.Protomaps
 import org.maplibre.compose.demoapp.demos.FerryMapContent
 import org.maplibre.compose.demoapp.demos.FerrySchedule
-import org.maplibre.compose.map.MapRuntimeOptions
 import org.maplibre.compose.map.WebMapPresentation
 import org.maplibre.compose.map.createMapRuntime
 import org.maplibre.compose.util.DpPadding
@@ -55,11 +58,11 @@ internal fun FerryBoard() {
   var departures by remember { mutableStateOf<FerrySchedule.RouteDepartures?>(null) }
   var now by remember { mutableStateOf(Clock.System.now()) }
   var showMap by remember { mutableStateOf(true) }
-  val runtime = remember { createMapRuntime(MapRuntimeOptions()) }
+  val runtime = remember { createMapRuntime() }
   val map = remember {
     runtime.createMapState(
       baseStyle = Protomaps.Light.base,
-      cameraPosition = CameraPosition(target = Position(-122.7, 48.0), zoom = 7.2),
+      cameraPosition = CameraPosition(center = Position(-122.7, 48.0), zoom = 7.2),
     ) {
       network?.let { FerryMapContent(it, selectedId, Protomaps.Light) }
     }
@@ -97,13 +100,16 @@ internal fun FerryBoard() {
   }
   fun animation() =
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches)
-      CameraAnimation.Ease(Duration.ZERO)
-    else CameraAnimation.Ease()
+      CameraAnimation.Ease { duration = Duration.ZERO }
+    else CameraAnimation.Ease.Standard
   LaunchedEffect(selectedId) {
     selected?.let {
       map.animateCameraToBounds(
         boundingBox = it.bounds,
-        fitPadding = DpPadding(left = 80.dp, top = 48.dp, right = 80.dp, bottom = 48.dp),
+        fit =
+          CameraFit(
+            fitPadding = DpPadding(left = 80.dp, top = 48.dp, right = 80.dp, bottom = 48.dp)
+          ),
         animation = animation(),
       )
     }

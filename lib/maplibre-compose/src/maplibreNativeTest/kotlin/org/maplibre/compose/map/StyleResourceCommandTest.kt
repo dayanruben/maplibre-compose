@@ -29,7 +29,6 @@ import org.maplibre.compose.mlnffi.FfiTestPlatform
 import org.maplibre.compose.mlnffi.MlnFfiRuntimeOptions
 import org.maplibre.compose.mlnffi.TestLatch
 import org.maplibre.compose.sources.GeoJsonData
-import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeoJsonSource
 import org.maplibre.compose.sources.ImageSource
 import org.maplibre.compose.sources.implementation
@@ -133,7 +132,6 @@ class StyleResourceCommandTest {
                 GeoJsonSource(
                   "points",
                   GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-                  GeoJsonOptions(),
                 )
               )
             }
@@ -170,7 +168,7 @@ class StyleResourceCommandTest {
     val parked = TestLatch(1)
     val release = TestLatch(1)
     try {
-      snapshotter.capture(MapSnapshotRequest(DpSize(8.dp, 8.dp)))
+      snapshotter.capture(DpSize(8.dp, 8.dp))
       val binding = snapshotter.style.readyLoadedStyle() as MlnFfiStyleBinding
       val imageSource =
         checkNotNull(snapshotter.style.sources.add(ImageSource("image", Quad, image(OpaqueRed))))

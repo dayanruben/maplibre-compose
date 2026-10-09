@@ -34,11 +34,11 @@ import org.maplibre.compose.style.BaseStyle
 class DesktopDensityPresentationTest {
   @Test
   fun pixel_density_round_trip_replaces_engines_and_font_scale_keeps_the_attachment() {
-    val cacheFile = FfiTestPlatform.createCacheFile()
+    val cache = FfiTestPlatform.createCacheFile()
     try {
       runFfiComposeUiTest {
-        val options = MapRuntimeOptions(cacheFile = cacheFile)
-        val runtime = createMapRuntime(options)
+        val options = MapRuntimeOptions { cacheFile = cache }
+        val runtime = createMapRuntime(from = options)
         var density by mutableStateOf(Density(2f))
         val frames = AtomicInteger()
         val observedDensity = AtomicReference<Density>()
@@ -90,8 +90,8 @@ class DesktopDensityPresentationTest {
           assertEquals(camera.bearing, retainedCamera.bearing, 1e-4)
           assertEquals(camera.pitch, retainedCamera.pitch, 1e-4)
           assertEquals(camera.zoom, retainedCamera.zoom, 1e-4)
-          assertEquals(camera.target.longitude, retainedCamera.target.longitude, 1e-4)
-          assertEquals(camera.target.latitude, retainedCamera.target.latitude, 1e-4)
+          assertEquals(camera.center.longitude, retainedCamera.center.longitude, 1e-4)
+          assertEquals(camera.center.latitude, retainedCamera.center.latitude, 1e-4)
           waitUntil(timeoutMillis = 10_000) {
             "density-1.0-1.0" in (replacement.adapter as MlnFfiMapSession).currentStyleLayerIds()
           }
@@ -143,7 +143,7 @@ class DesktopDensityPresentationTest {
         }
       }
     } finally {
-      FfiTestPlatform.deleteCacheFile(cacheFile)
+      FfiTestPlatform.deleteCacheFile(cache)
     }
   }
 }

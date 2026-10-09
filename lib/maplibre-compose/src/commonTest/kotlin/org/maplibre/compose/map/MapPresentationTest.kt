@@ -58,11 +58,9 @@ import org.maplibre.compose.layers.TestLayer
 import org.maplibre.compose.layers.asLayerProperty
 import org.maplibre.compose.overlay.attributions
 import org.maplibre.compose.sources.GeoJsonData
-import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeoJsonSource
 import org.maplibre.compose.sources.GeoJsonSourceHandle
 import org.maplibre.compose.sources.ImageSource
-import org.maplibre.compose.sources.TileSetOptions
 import org.maplibre.compose.sources.VectorTileSource
 import org.maplibre.compose.sources.VectorTileSourceHandle
 import org.maplibre.compose.style.BaseStyle
@@ -236,7 +234,6 @@ class MapPresentationTest {
         GeoJsonSource(
           "puck",
           GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-          GeoJsonOptions(),
         )
       val layer = TestLayer("animated", "background")
       val original =
@@ -261,7 +258,6 @@ class MapPresentationTest {
             GeoJsonData.JsonString(
               """{"type":"Feature","geometry":{"type":"Point","coordinates":[0,0]},"properties":{"opacity":$opacity}}"""
             ),
-            GeoJsonOptions(),
           )
         val definition =
           layer.definition().let {
@@ -322,7 +318,6 @@ class MapPresentationTest {
           GeoJsonSource(
             "points",
             GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-            GeoJsonOptions(),
           )
         val layer = TestLayer("background", "background")
         val original =
@@ -349,8 +344,9 @@ class MapPresentationTest {
                 GeoJsonSource(
                     "points",
                     GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-                    GeoJsonOptions(cluster = true),
-                  )
+                  ) {
+                    cluster = true
+                  }
                   .definition()
               )
             else original.sources,
@@ -786,7 +782,7 @@ class MapPresentationTest {
     }
     state.publishPresentation(token, adapter)
     val presentation = requireNotNull(state.currentMapAttachment)
-    val position = CameraPosition(target = Position(12.0, 34.0), zoom = 8.0)
+    val position = CameraPosition(center = Position(12.0, 34.0), zoom = 8.0)
     adapter.releaseOnNextCameraSet = true
 
     state.setCameraPosition(position)
@@ -820,7 +816,7 @@ class MapPresentationTest {
   fun a_camera_set_while_detached_applies_to_the_next_attachment() {
     val fixture = presentationFixture()
     fixture.state.releasePresentation(fixture.token, fixture.adapter)
-    val position = CameraPosition(target = Position(12.0, 34.0), zoom = 8.0)
+    val position = CameraPosition(center = Position(12.0, 34.0), zoom = 8.0)
     fixture.state.setCameraPosition(position)
     val replacement = PresentationTestAdapter()
     val token = fixture.state.reservePresentation()
@@ -901,7 +897,6 @@ class MapPresentationTest {
             GeoJsonSource(
               id = "points",
               data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-              options = GeoJsonOptions(),
             )
           )
       )
@@ -928,7 +923,6 @@ class MapPresentationTest {
             GeoJsonSource(
               id = "points",
               data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-              options = GeoJsonOptions(),
             )
           )
       )
@@ -947,7 +941,6 @@ class MapPresentationTest {
       GeoJsonSource(
         id = "shared",
         data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-        options = GeoJsonOptions(),
       )
     val declaredRevision =
       StyleSnapshot(
@@ -1031,7 +1024,6 @@ class MapPresentationTest {
             GeoJsonSource(
               id = "points",
               data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-              options = GeoJsonOptions(),
             )
           )
       )
@@ -1062,8 +1054,9 @@ class MapPresentationTest {
             GeoJsonSource(
               id = "points",
               data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-              options = GeoJsonOptions(cluster = true),
-            )
+            ) {
+              cluster = true
+            }
           )
       )
     fixture.state.durableStyleCallbacks().onStyleChanged(fixture.adapter, loadedStyle)
@@ -1096,7 +1089,6 @@ class MapPresentationTest {
             GeoJsonSource(
               id = "points",
               data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-              options = GeoJsonOptions(),
             )
           )
       )
@@ -2494,7 +2486,7 @@ class MapPresentationTest {
   @Test
   fun publication_happens_after_the_adapter_accepts_initial_map_state() {
     val runtime = mapRuntimeForTest()
-    val initialCamera = CameraPosition(target = Position(12.0, 34.0), zoom = 8.0)
+    val initialCamera = CameraPosition(center = Position(12.0, 34.0), zoom = 8.0)
     val state =
       runtime.createMapState(
         baseStyle = BaseStyle.Demo,
@@ -2553,7 +2545,7 @@ class MapPresentationTest {
     state.publishPresentation(token, adapter)
     assertNull(state.currentMapAttachment?.viewport)
 
-    val rendered = CameraPosition(target = Position(12.0, 34.0), zoom = 5.0)
+    val rendered = CameraPosition(center = Position(12.0, 34.0), zoom = 5.0)
     val viewport = testViewport().copy(cameraPosition = rendered)
     adapter.currentViewport = viewport
     adapter.lastCameraPosition = rendered
@@ -2791,14 +2783,14 @@ class MapPresentationTest {
     val first = async {
       fixture.state.animateCamera(
         CameraPosition(zoom = 2.0).toCameraUpdate(),
-        CameraAnimation.Fly(1.seconds),
+        CameraAnimation.Fly { duration = 1.seconds },
       )
     }
     fixture.adapter.animationStarted.await()
     val second = async {
       fixture.state.animateCamera(
         CameraPosition(zoom = 3.0).toCameraUpdate(),
-        CameraAnimation.Fly(1.seconds),
+        CameraAnimation.Fly { duration = 1.seconds },
       )
     }
     testScheduler.runCurrent()
@@ -2849,14 +2841,14 @@ class MapPresentationTest {
     val superseded = async {
       state.animateCamera(
         CameraPosition(zoom = 2.0).toCameraUpdate(),
-        CameraAnimation.Fly(1.seconds),
+        CameraAnimation.Fly { duration = 1.seconds },
       )
     }
     testScheduler.runCurrent()
     val animation = async {
       state.animateCamera(
         CameraPosition(zoom = 4.0).toCameraUpdate(),
-        CameraAnimation.Fly(1.seconds),
+        CameraAnimation.Fly { duration = 1.seconds },
       )
     }
     testScheduler.runCurrent()
@@ -3060,7 +3052,7 @@ class MapPresentationTest {
       val animation = async {
         state.animateCamera(
           CameraPosition(zoom = 4.0).toCameraUpdate(),
-          CameraAnimation.Fly(1.seconds),
+          CameraAnimation.Fly { duration = 1.seconds },
         )
       }
       testScheduler.runCurrent()
@@ -3081,8 +3073,9 @@ private fun attributedVectorSource(id: String, attribution: String): VectorTileS
   VectorTileSource(
     id = id,
     tiles = listOf("https://example.com/{z}/{x}/{y}.pbf"),
-    options = TileSetOptions(attributionHtml = attribution),
-  )
+  ) {
+    attributionHtml = attribution
+  }
 
 private val ImageQuad =
   PositionQuad(
@@ -3319,7 +3312,7 @@ internal open class PresentationTestAdapter(
 
   override fun getCameraPosition(): CameraPosition = lastCameraPosition
 
-  override fun getCameraConstraints(): CameraConstraints = CameraConstraints()
+  override fun getCameraConstraints(): CameraConstraints = CameraConstraints.Standard
 
   override fun setCameraPosition(cameraPosition: CameraPosition, guard: CameraCommandGuard?) {
     presentationWasVisibleWhileConfiguring =
@@ -3415,5 +3408,5 @@ private fun testViewport(): Viewport =
         nearLeft = Position(-1.0, -1.0),
         nearRight = Position(1.0, -1.0),
       ),
-    metersPerDpAtTarget = 1.0,
+    metersPerDpAtCenter = 1.0,
   )

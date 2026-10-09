@@ -16,7 +16,6 @@ import kotlin.test.assertTrue
 import org.maplibre.compose.map.DefaultMapRuntime
 import org.maplibre.compose.map.MapAdapter
 import org.maplibre.compose.map.MapRuntime
-import org.maplibre.compose.map.MapRuntimeOptions
 import org.maplibre.compose.map.MapState
 import org.maplibre.compose.map.MaplibreMap
 import org.maplibre.compose.map.StyleLoadState
@@ -32,8 +31,8 @@ class AndroidMapStateRecreationTest {
 
   @Test
   fun camera_position_survives_activity_recreation() {
-    val cacheFile = FfiTestPlatform.createCacheFile()
-    DefaultMapRuntime.configure(MapRuntimeOptions(cacheFile = cacheFile))
+    val cache = FfiTestPlatform.createCacheFile()
+    DefaultMapRuntime.configure { cacheFile = cache }
 
     try {
       runAndroidComposeUiTest<MapStateRecreationActivity> {
@@ -74,7 +73,7 @@ class AndroidMapStateRecreationTest {
       }
     } finally {
       DefaultMapRuntime.resetForTest()
-      FfiTestPlatform.deleteCacheFile(cacheFile)
+      FfiTestPlatform.deleteCacheFile(cache)
     }
   }
 
@@ -85,7 +84,7 @@ class AndroidMapStateRecreationTest {
     val ExpectedCamera =
       CameraPosition(
         bearing = 37.0,
-        target = Position(longitude = 11.5761, latitude = 48.1371),
+        center = Position(longitude = 11.5761, latitude = 48.1371),
         pitch = 42.0,
         zoom = 8.5,
         padding = DpPadding(left = 12.dp, top = 24.dp, right = 36.dp, bottom = 48.dp),
@@ -103,8 +102,8 @@ class AndroidMapStateRecreationTest {
 
     fun cameraMatches(expected: CameraPosition, actual: CameraPosition): Boolean =
       near(expected.bearing, actual.bearing) &&
-        near(expected.target.longitude, actual.target.longitude) &&
-        near(expected.target.latitude, actual.target.latitude) &&
+        near(expected.center.longitude, actual.center.longitude) &&
+        near(expected.center.latitude, actual.center.latitude) &&
         near(expected.pitch, actual.pitch) &&
         near(expected.zoom, actual.zoom) &&
         expected.padding == actual.padding

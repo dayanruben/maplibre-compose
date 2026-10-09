@@ -2,7 +2,7 @@ package org.maplibre.compose.camera
 
 import androidx.compose.runtime.Immutable
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
+import org.maplibre.compose.map.MapOptionsDsl
 
 /**
  * How the camera moves from its current position to a new one.
@@ -10,11 +10,10 @@ import kotlin.time.Duration.Companion.milliseconds
  * Values may be added in minor releases; use an `else` branch when matching.
  *
  * [Ease] travels directly. [Fly] zooms out, travels, and zooms back in. MapLibre Native and
- * MapLibre GL JS each implement both transitions with the same controls. Their paths and timing are
- * engine-dependent.
+ * MapLibre GL JS each implement both transitions. Their paths and timing are engine-dependent.
  */
 @Immutable
-public sealed interface CameraAnimation {
+public expect sealed interface CameraAnimation {
   /** The timing curve of the transition. */
   public val easing: CubicBezier
 
@@ -23,12 +22,39 @@ public sealed interface CameraAnimation {
    * interpolates straight to its target, so the transition never zooms out on the way, and an ease
    * between distant positions crosses the ground quickly at the current zoom. Use it for short
    * moves, such as following a location or changing zoom in place.
+   *
+   * [Standard] takes 300 milliseconds and uses [CubicBezier.Default].
    */
   @Immutable
-  public data class Ease(
-    val duration: Duration = 300.milliseconds,
-    override val easing: CubicBezier = CubicBezier.Default,
-  ) : CameraAnimation
+  public class Ease : CameraAnimation {
+    public val duration: Duration
+    override val easing: CubicBezier
+
+    /** Edits [from]; omitted settings inherit. */
+    public constructor(
+      from: Ease = Standard,
+      block: Builder.() -> Unit,
+    )
+
+    override fun equals(other: Any?): Boolean
+
+    override fun hashCode(): Int
+
+    override fun toString(): String
+
+    @MapOptionsDsl
+    public class Builder internal constructor(from: Ease?) {
+      /** See [Ease.duration]. */
+      public var duration: Duration
+      /** See [Ease.easing]. */
+      public var easing: CubicBezier
+    }
+
+    public companion object {
+      /** The default direct camera transition. */
+      public val Standard: Ease
+    }
+  }
 
   /**
    * Follows a flight path: the camera zooms out, crosses the ground, and zooms back in, so the map
@@ -37,28 +63,46 @@ public sealed interface CameraAnimation {
    * The flight takes [duration] when one is given. Otherwise its duration follows from the length
    * of the path and [speed]. When both are given, [duration] takes precedence.
    *
-   * @param duration The total time of the flight. Null derives it from [speed].
-   * @param speed The average speed in screenfuls per second, where a screenful is the visible span
-   *   of the map. Defaults to [DefaultSpeed]. Must be positive. Ignored when [duration] is set.
-   * @param minZoom Approximate lowest zoom used to shape the flight, not a hard limit. Native fits
-   *   the path toward this value, even if it would naturally stay above it. GL JS only limits
-   *   zooming out and also uses the map's minimum zoom to shape the path. Both engines apply the
-   *   map's zoom constraints to the displayed camera. Null uses the engine's default path.
+   * @property duration The total time of the flight. Null derives it from [speed].
+   * @property speed The average speed in screenfuls per second, where a screenful is the visible
+   *   span of the map. Defaults to [DefaultSpeed]. Must be positive. Ignored when [duration] is
+   *   set.
+   * @throws IllegalArgumentException if [speed] is not positive.
    */
   @Immutable
-  public data class Fly(
-    val duration: Duration? = null,
-    val speed: Double = DefaultSpeed,
-    val minZoom: Double? = null,
-    override val easing: CubicBezier = CubicBezier.Default,
-  ) : CameraAnimation {
-    init {
-      require(speed > 0.0) { "Flight speed must be positive: $speed" }
+  public class Fly : CameraAnimation {
+    public val duration: Duration?
+    public val speed: Double
+    override val easing: CubicBezier
+
+    /** Edits [from]; omitted settings inherit. */
+    public constructor(
+      from: Fly = Standard,
+      block: Builder.() -> Unit,
+    )
+
+    override fun equals(other: Any?): Boolean
+
+    override fun hashCode(): Int
+
+    override fun toString(): String
+
+    @MapOptionsDsl
+    public class Builder internal constructor(from: Fly?) {
+      /** See [Fly.duration]. */
+      public var duration: Duration?
+      /** See [Fly.speed]. */
+      public var speed: Double
+      /** See [Fly.easing]. */
+      public var easing: CubicBezier
     }
 
     public companion object {
       /** The default flight speed, in screenfuls per second. */
-      public const val DefaultSpeed: Double = 1.2 * 1.42
+      public val DefaultSpeed: Double
+
+      /** The default flight transition. */
+      public val Standard: Fly
     }
   }
 }

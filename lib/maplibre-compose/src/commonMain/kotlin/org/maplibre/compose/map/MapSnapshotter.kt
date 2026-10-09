@@ -46,26 +46,45 @@ import org.maplibre.compose.style.StyleSnapshot
 import org.maplibre.compose.util.MaplibreComposable
 import org.maplibre.compose.util.formatToString
 
-/** Immutable inputs for one snapshot capture. */
+/**
+ * Immutable inputs for one snapshot capture.
+ *
+ * @property size Size of the captured map. Both dimensions must be finite and positive. MapLibre
+ *   lays out maps in whole dp, so each dimension is rounded to the nearest whole dp, and to at
+ *   least 1 dp. Each image dimension in pixels is the rounded size multiplied by [density], rounded
+ *   up.
+ * @property cameraPosition Camera position used for this capture.
+ * @property density Pixel density for rendering and font scale for style composition.
+ * @property layoutDirection Layout direction used while evaluating the style composition.
+ * @property transparent Whether to preserve framebuffer alpha. When false, transparent pixels
+ *   composite onto white.
+ */
 @Immutable
-public data class MapSnapshotRequest(
-  /**
-   * Size of the captured map. Both dimensions must be finite and positive.
-   *
-   * MapLibre lays out maps in whole dp, so each dimension is rounded to the nearest whole dp, and
-   * to at least 1 dp. Each image dimension in pixels is the rounded size multiplied by [density],
-   * rounded up.
-   */
+public data class MapSnapshotRequest
+private constructor(
   public val size: DpSize,
-  /** Camera position used for this capture. */
-  public val cameraPosition: CameraPosition = CameraPosition(),
-  /** Pixel density for rendering and font scale for style composition. */
-  public val density: Density = Density(1f),
-  /** Layout direction used while evaluating the style composition. */
-  public val layoutDirection: LayoutDirection = LayoutDirection.Ltr,
-  /** Whether to preserve framebuffer alpha. When false, transparent pixels composite onto white. */
-  public val transparent: Boolean = false,
+  public val cameraPosition: CameraPosition,
+  public val density: Density,
+  public val layoutDirection: LayoutDirection,
+  public val transparent: Boolean,
 ) {
+  private constructor(
+    size: DpSize,
+    builder: Builder,
+  ) : this(
+    size,
+    builder.cameraPosition,
+    builder.density,
+    builder.layoutDirection,
+    builder.transparent,
+  )
+
+  /** Creates a request for [size] with the settings in [block]. */
+  public constructor(
+    size: DpSize,
+    block: Builder.() -> Unit = {},
+  ) : this(size, Builder().apply(block))
+
   init {
     require(size.width.value.isFinite() && size.width > 0.dp) {
       "Snapshot width must be finite and positive, was ${size.width}"
@@ -79,6 +98,18 @@ public data class MapSnapshotRequest(
     require(density.fontScale.isFinite() && density.fontScale > 0f) {
       "Snapshot font scale must be finite and positive, was ${density.fontScale}"
     }
+  }
+
+  @MapOptionsDsl
+  public class Builder internal constructor() {
+    /** See [MapSnapshotRequest.cameraPosition]. */
+    public var cameraPosition: CameraPosition = CameraPosition()
+    /** See [MapSnapshotRequest.density]. */
+    public var density: Density = Density(1f)
+    /** See [MapSnapshotRequest.layoutDirection]. */
+    public var layoutDirection: LayoutDirection = LayoutDirection.Ltr
+    /** See [MapSnapshotRequest.transparent]. */
+    public var transparent: Boolean = false
   }
 }
 
@@ -238,7 +269,8 @@ public sealed interface MapSnapshotter {
   public val style: MapStyleState
 
   /**
-   * Captures one image with [request]. Concurrent calls execute in submission order.
+   * Captures one image at [size] with the settings in [block]. Concurrent calls execute in
+   * submission order.
    *
    * Cancelling the caller removes a queued request or abandons an active result. After active
    * cancellation, the next request waits until platform rendering and terminal cleanup end.
@@ -257,7 +289,10 @@ public sealed interface MapSnapshotter {
    *   [VectorTileProvider] call failed, the cause is its exception, wrapped in an
    *   [IllegalStateException] when it is a cancellation that the provider caused itself.
    */
-  public suspend fun capture(request: MapSnapshotRequest): ImageBitmap
+  public suspend fun capture(
+    size: DpSize,
+    block: MapSnapshotRequest.Builder.() -> Unit = {},
+  ): ImageBitmap
 
   /**
    * Refuses new captures, clears queued captures, abandons an active result, and starts cleanup.
@@ -307,7 +342,12 @@ internal class MapSnapshotterImplementation(
 
   // Runs on the physical scope, not under a Mutex in the caller, so a canceled caller returns at
   // once while runQueue() holds the next capture until cleanup ends.
-  override suspend fun capture(request: MapSnapshotRequest): ImageBitmap =
+  override suspend fun capture(
+    size: DpSize,
+    block: MapSnapshotRequest.Builder.() -> Unit,
+  ): ImageBitmap = captureRequest(MapSnapshotRequest(size, block))
+
+  private suspend fun captureRequest(request: MapSnapshotRequest): ImageBitmap =
     suspendCancellableCoroutine { continuation ->
       val capture = Capture(request, continuation)
       val accepted = lock.withLock {

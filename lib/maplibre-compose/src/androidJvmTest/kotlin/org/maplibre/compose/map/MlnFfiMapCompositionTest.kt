@@ -95,16 +95,18 @@ import org.maplibre.spatialk.geojson.Position
 @OptIn(ExperimentalTestApi::class)
 class MlnFfiMapCompositionTest {
 
-  private val cacheFile = FfiTestPlatform.createCacheFile()
+  private val cache = FfiTestPlatform.createCacheFile()
 
-  private val runtimeOptions = MapRuntimeOptions(cacheFile = cacheFile)
+  private val runtimeOptions = MapRuntimeOptions {
+    cacheFile = cache
+  }
 
   /** Camera round trips lose a little precision through the projection. */
   private val PositionTolerance = 1e-4
 
   @AfterTest
   fun cleanUp() {
-    FfiTestPlatform.deleteCacheFile(cacheFile)
+    FfiTestPlatform.deleteCacheFile(cache)
   }
 
   @Test
@@ -197,7 +199,7 @@ class MlnFfiMapCompositionTest {
           moveBy(point(40f, 0f))
           release()
         }
-        waitUntil(timeoutMillis = 5_000L) { state.cameraPosition.target != before.target }
+        waitUntil(timeoutMillis = 5_000L) { state.cameraPosition.center != before.center }
         assertEquals(1, placements)
         val zoomBefore = state.cameraPosition.zoom
         performMouseInputOnUiThread(onNodeWithTag("map")) { exit() }
@@ -400,7 +402,7 @@ class MlnFfiMapCompositionTest {
   fun a_pitched_pan_continues_in_its_release_direction_without_changing_the_camera_pose() =
     runFfiComposeUiTest {
       withTestRuntime(runtimeOptions) { runtime ->
-        val start = CameraPosition(target = Position(0.0, 0.0), zoom = 12.0, pitch = 60.0)
+        val start = CameraPosition(center = Position(0.0, 0.0), zoom = 12.0, pitch = 60.0)
         val state = runtime.createMapState(baseStyle = BaseStyle.Empty, cameraPosition = start)
         var configuration by mutableStateOf(MapInteractions.Standard)
         var uiOptions by mutableStateOf(MapUiOptions.None)
@@ -445,8 +447,8 @@ class MlnFfiMapCompositionTest {
           }
           waitUntil(timeoutMillis = RenderTimeoutMillis) {
             val camera = state.cameraPosition
-            abs(camera.target.latitude) < 1e-8 &&
-              abs(camera.target.longitude) < 1e-8 &&
+            abs(camera.center.latitude) < 1e-8 &&
+              abs(camera.center.longitude) < 1e-8 &&
               !state.isCameraMoving &&
               state.cameraMoveReason == CameraMoveReason.Programmatic
           }
@@ -462,7 +464,7 @@ class MlnFfiMapCompositionTest {
           assertEquals(start.zoom, camera.zoom, 1e-6)
           assertEquals(start.bearing, camera.bearing, 1e-6)
           assertEquals(start.pitch, camera.pitch, 1e-6)
-          return checkNotNull(state.screenLocationFromPosition(start.target)).y.value
+          return checkNotNull(state.screenLocationFromPosition(start.center)).y.value
         }
 
         for (direction in listOf(-1f, 1f)) {
@@ -537,15 +539,19 @@ class MlnFfiMapCompositionTest {
           cameraPosition = CameraPosition(zoom = 1.0),
           baseStyle = BaseStyle.Empty,
         )
-      var constraints by mutableStateOf(CameraConstraints())
+      var constraints by mutableStateOf(CameraConstraints.Standard)
 
       setFfiTestMapContent(runtimeOptions) {
         MaplibreMap(state = state, cameraConstraints = constraints)
       }
       waitUntil(timeoutMillis = RenderTimeoutMillis) { state.currentMapAttachment != null }
       val session = requireNotNull(state.currentMapAttachment).adapter
-      val updated =
-        CameraConstraints(minZoom = 2.0, maxZoom = 18.0, minPitch = 3.0, maxPitch = 45.0)
+      val updated = CameraConstraints {
+        minZoom = 2.0
+        maxZoom = 18.0
+        minPitch = 3.0
+        maxPitch = 45.0
+      }
 
       constraints = updated
       waitUntil(timeoutMillis = RenderTimeoutMillis) {
@@ -645,7 +651,7 @@ class MlnFfiMapCompositionTest {
             evaluatorIdentities.size == 1
         }
         val snapshotter = runtime.createSnapshotter(BaseStyle.Empty, content)
-        val image = snapshotter.capture(MapSnapshotRequest(DpSize(16.dp, 16.dp)))
+        val image = snapshotter.capture(DpSize(16.dp, 16.dp))
 
         assertEquals(16, image.width)
         assertEquals(16, image.height)
@@ -737,7 +743,7 @@ class MlnFfiMapCompositionTest {
   @Test
   fun a_map_state_retains_its_native_map_between_presentations() = runFfiComposeUiTest {
     withTestRuntime(runtimeOptions) { runtime ->
-      val camera = CameraPosition(target = Position(longitude = 11.0, latitude = 47.0), zoom = 6.0)
+      val camera = CameraPosition(center = Position(longitude = 11.0, latitude = 47.0), zoom = 6.0)
       val state = runtime.createMapState(cameraPosition = camera, baseStyle = BaseStyle.Empty)
       var presented by mutableStateOf(true)
 
@@ -867,7 +873,7 @@ class MlnFfiMapCompositionTest {
     runFfiComposeUiTest {
       withTestRuntime(runtimeOptions) { runtime ->
         val camera =
-          CameraPosition(target = Position(longitude = -122.4, latitude = 37.8), zoom = 10.0)
+          CameraPosition(center = Position(longitude = -122.4, latitude = 37.8), zoom = 10.0)
         val state =
           runtime.createMapState(
             cameraPosition = camera,
@@ -912,12 +918,12 @@ class MlnFfiMapCompositionTest {
   private fun assertCameraEquals(expected: CameraPosition, actual: CameraPosition) {
     assertEquals(expected.bearing, actual.bearing, PositionTolerance, "bearing")
     assertEquals(
-      expected.target.longitude,
-      actual.target.longitude,
+      expected.center.longitude,
+      actual.center.longitude,
       PositionTolerance,
       "longitude",
     )
-    assertEquals(expected.target.latitude, actual.target.latitude, PositionTolerance, "latitude")
+    assertEquals(expected.center.latitude, actual.center.latitude, PositionTolerance, "latitude")
     assertEquals(expected.pitch, actual.pitch, PositionTolerance, "pitch")
     assertEquals(expected.zoom, actual.zoom, PositionTolerance, "zoom")
   }
@@ -1006,7 +1012,7 @@ class MlnFfiMapCompositionTest {
     )
     assertTrue(errors.any { it.startsWith("mapLoadFailed") }, "The load was not reported: $errors")
 
-    val before = mapState.cameraPosition.target
+    val before = mapState.cameraPosition.center
     val dragStep = Offset(30f * density.density, 0f)
     performTouchInputOnUiThread(onNodeWithTag(MapLoadPlaceholderTag)) { down(center) }
     runOnUiThread { baseStyle = BaseStyle.Empty }
@@ -1022,13 +1028,13 @@ class MlnFfiMapCompositionTest {
       up()
     }
     waitForIdle()
-    assertEquals(before, mapState.cameraPosition.target, "a loading contact became a map drag")
+    assertEquals(before, mapState.cameraPosition.center, "a loading contact became a map drag")
     performTouchInputOnUiThread(onNodeWithContentDescription("Map")) {
       down(center)
       repeat(2) { moveBy(dragStep) }
       up()
     }
-    waitUntil(timeoutMillis = RenderTimeoutMillis) { mapState.cameraPosition.target != before }
+    waitUntil(timeoutMillis = RenderTimeoutMillis) { mapState.cameraPosition.center != before }
   }
 
   @Test
@@ -1063,7 +1069,7 @@ class MlnFfiMapCompositionTest {
   fun the_first_camera_position_reaches_the_map() {
     val firstPosition =
       CameraPosition(
-        target = Position(longitude = -122.4194, latitude = 37.7749),
+        center = Position(longitude = -122.4194, latitude = 37.7749),
         zoom = 11.0,
         pitch = 35.0,
       )
@@ -1075,14 +1081,14 @@ class MlnFfiMapCompositionTest {
           requireNotNull(mapState.currentMapAttachment?.adapter) { "The map never published" }
         val actual = map.getCameraPosition()
         assertEquals(
-          firstPosition.target.longitude,
-          actual.target.longitude,
+          firstPosition.center.longitude,
+          actual.center.longitude,
           PositionTolerance,
           "longitude",
         )
         assertEquals(
-          firstPosition.target.latitude,
-          actual.target.latitude,
+          firstPosition.center.latitude,
+          actual.center.latitude,
           PositionTolerance,
           "latitude",
         )
@@ -1134,7 +1140,7 @@ class MlnFfiMapCompositionTest {
       TestMap(
         modifier = Modifier.width(mapWidth.value).height(256.dp),
         baseStyle = BaseStyle.Empty,
-        initialCameraPosition = CameraPosition(target = target, zoom = 3.0),
+        initialCameraPosition = CameraPosition(center = target, zoom = 3.0),
         onMapLoadFailed = { errors += "mapLoadFailed: $it" },
         onFrame = { onFrame() },
         overlay =

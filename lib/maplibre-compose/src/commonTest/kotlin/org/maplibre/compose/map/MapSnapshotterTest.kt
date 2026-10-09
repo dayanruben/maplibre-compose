@@ -31,10 +31,8 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import org.maplibre.compose.layers.TestLayer
 import org.maplibre.compose.sources.GeoJsonData
-import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeoJsonSource
 import org.maplibre.compose.sources.GeoJsonSourceHandle
-import org.maplibre.compose.sources.TileSetOptions
 import org.maplibre.compose.sources.VectorTileSource
 import org.maplibre.compose.sources.VectorTileSourceHandle
 import org.maplibre.compose.style.BaseStyle
@@ -50,10 +48,10 @@ class MapSnapshotterTest {
   fun snapshot_requests_reject_invalid_pixel_density_and_font_scale() {
     for (value in listOf(0f, -1f, Float.NaN, Float.POSITIVE_INFINITY)) {
       assertFailsWith<IllegalArgumentException> {
-        MapSnapshotRequest(DpSize(1.dp, 1.dp), density = Density(value))
+        MapSnapshotRequest(DpSize(1.dp, 1.dp)) { density = Density(value) }
       }
       assertFailsWith<IllegalArgumentException> {
-        MapSnapshotRequest(DpSize(1.dp, 1.dp), density = Density(1f, fontScale = value))
+        MapSnapshotRequest(DpSize(1.dp, 1.dp)) { density = Density(1f, fontScale = value) }
       }
     }
   }
@@ -72,7 +70,7 @@ class MapSnapshotterTest {
 
   @Test
   fun snapshot_requests_lay_out_the_map_in_whole_dp() {
-    val extent = MapSnapshotRequest(DpSize(31.4.dp, 0.3.dp), density = Density(2f)).extent()
+    val extent = MapSnapshotRequest(DpSize(31.4.dp, 0.3.dp)) { density = Density(2f) }.extent()
 
     assertEquals(31, extent.width)
     assertEquals(1, extent.height)
@@ -104,13 +102,13 @@ class MapSnapshotterTest {
     val firstRequest = MapSnapshotRequest(DpSize(20.dp, 10.dp))
     val secondRequest = MapSnapshotRequest(DpSize(40.dp, 30.dp))
 
-    val first = async { snapshotter.capture(firstRequest) }
-    val second = async { snapshotter.capture(secondRequest) }
+    val first = async { snapshotter.capture(firstRequest.size) }
+    val second = async { snapshotter.capture(secondRequest.size) }
 
-    assertSame(firstRequest, started.receive())
+    assertEquals(firstRequest, started.receive())
     assertFalse(started.tryReceive().isSuccess)
     finish.send(Unit)
-    assertSame(secondRequest, started.receive())
+    assertEquals(secondRequest, started.receive())
     finish.send(Unit)
     assertSame(firstImage, first.await())
     assertSame(secondImage, second.await())
@@ -141,7 +139,7 @@ class MapSnapshotterTest {
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
 
     withContext(CoroutineName("caller")) {
-      snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+      snapshotter.capture(DpSize(1.dp, 1.dp))
     }
 
     assertEquals("physical", captureContext)
@@ -161,11 +159,10 @@ class MapSnapshotterTest {
       GeoJsonSource(
         id = "imperative",
         data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-        options = GeoJsonOptions(),
       )
 
     withContext(Dispatchers.Unconfined) {
-      snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+      snapshotter.capture(DpSize(1.dp, 1.dp))
       val sourceHandle = checkNotNull(snapshotter.style.sources.add(source))
       assertEquals("imperative", sourceHandle.id)
       assertTrue(snapshotter.style.sources["imperative"] is GeoJsonSourceHandle)
@@ -202,7 +199,7 @@ class MapSnapshotterTest {
         styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+    snapshotter.capture(DpSize(1.dp, 1.dp))
     val handle = checkNotNull(snapshotter.style.sources.add(attributedVectorSource("imperative")))
 
     // The loaded style stays installed until cleanup finishes, but the snapshotter is closed.
@@ -234,7 +231,6 @@ class MapSnapshotterTest {
       GeoJsonSource(
         id = "base-source",
         data = GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-        options = GeoJsonOptions(),
       )
     val binding =
       RecordingStyleBinding(
@@ -248,11 +244,11 @@ class MapSnapshotterTest {
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
     val request = MapSnapshotRequest(DpSize(1.dp, 1.dp))
-    snapshotter.capture(request)
+    snapshotter.capture(request.size)
     val sourceHandle = checkNotNull(snapshotter.style.sources["base-source"])
     val layerHandle = checkNotNull(snapshotter.style.layers["base-layer"])
 
-    snapshotter.capture(request)
+    snapshotter.capture(request.size)
 
     assertSame(sourceHandle, snapshotter.style.sources["base-source"])
     assertSame(layerHandle, snapshotter.style.layers["base-layer"])
@@ -290,11 +286,11 @@ class MapSnapshotterTest {
       )
     snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
     val request = MapSnapshotRequest(DpSize(1.dp, 1.dp))
-    snapshotter.capture(request)
+    snapshotter.capture(request.size)
     val stale = assertIs<VectorTileSourceHandle>(snapshotter.style.sources["shared"])
 
     desired = StyleSnapshot(listOf(replacement.definition()), emptyList(), emptyList())
-    snapshotter.capture(request)
+    snapshotter.capture(request.size)
 
     stale.resetFeatureStates("layer")
     // The reused style publishes its handles before it renders.
@@ -326,10 +322,10 @@ class MapSnapshotterTest {
         styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+    snapshotter.capture(DpSize(1.dp, 1.dp))
     val handle = checkNotNull(snapshotter.style.sources.add(attributedVectorSource("imperative")))
     blockCapture = true
-    val capture = async { snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp))) }
+    val capture = async { snapshotter.capture(DpSize(1.dp, 1.dp)) }
     captureStarted.await()
 
     // The capture reuses the loaded style, so it stays ready and takes writes.
@@ -372,15 +368,15 @@ class MapSnapshotterTest {
     val removedRequest = MapSnapshotRequest(DpSize(20.dp, 20.dp))
     val thirdRequest = MapSnapshotRequest(DpSize(30.dp, 30.dp))
 
-    val first = async { snapshotter.capture(firstRequest) }
-    val removed = async { snapshotter.capture(removedRequest) }
-    val third = async { snapshotter.capture(thirdRequest) }
-    assertSame(firstRequest, started.receive())
+    val first = async { snapshotter.capture(firstRequest.size) }
+    val removed = async { snapshotter.capture(removedRequest.size) }
+    val third = async { snapshotter.capture(thirdRequest.size) }
+    assertEquals(firstRequest, started.receive())
 
     removed.cancelAndJoin()
     finish.send(Unit)
 
-    assertSame(thirdRequest, started.receive())
+    assertEquals(thirdRequest, started.receive())
     finish.send(Unit)
     first.await()
     third.await()
@@ -425,17 +421,17 @@ class MapSnapshotterTest {
       val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
       val activeRequest = MapSnapshotRequest(DpSize(1.dp, 1.dp))
       val nextRequest = MapSnapshotRequest(DpSize(2.dp, 2.dp))
-      val active = async { snapshotter.capture(activeRequest) }
-      val next = async { snapshotter.capture(nextRequest) }
+      val active = async { snapshotter.capture(activeRequest.size) }
+      val next = async { snapshotter.capture(nextRequest.size) }
       try {
-        assertSame(activeRequest, started.receive())
+        assertEquals(activeRequest, started.receive())
         active.cancelAndJoin()
         cleanupStarted.await()
         runCurrent()
 
         assertFalse(started.tryReceive().isSuccess)
         releaseCleanup.complete(Unit)
-        assertSame(nextRequest, started.receive())
+        assertEquals(nextRequest, started.receive())
         assertSame(image, next.await())
       } finally {
         releaseCleanup.complete(Unit)
@@ -475,9 +471,9 @@ class MapSnapshotterTest {
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
 
-    snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+    snapshotter.capture(DpSize(1.dp, 1.dp))
     assertEquals(StyleLoadState.Ready, snapshotter.style.loadState)
-    val active = async { snapshotter.capture(MapSnapshotRequest(DpSize(2.dp, 2.dp))) }
+    val active = async { snapshotter.capture(DpSize(2.dp, 2.dp)) }
     captureStarted.await()
 
     active.cancelAndJoin()
@@ -485,7 +481,7 @@ class MapSnapshotterTest {
 
     assertFalse(initialBinding.isLoaded)
     assertEquals(StyleLoadState.Pending, snapshotter.style.loadState)
-    snapshotter.capture(MapSnapshotRequest(DpSize(3.dp, 3.dp)))
+    snapshotter.capture(DpSize(3.dp, 3.dp))
     assertEquals(StyleLoadState.Ready, snapshotter.style.loadState)
     close(snapshotter, runtime)
   }
@@ -521,7 +517,7 @@ class MapSnapshotterTest {
         styleEvaluator = StyleCompositionEvaluator { _, _, _, _, _, _ -> StyleSnapshot.Empty },
       )
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    val active = async { snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp))) }
+    val active = async { snapshotter.capture(DpSize(1.dp, 1.dp)) }
     captureStarted.await()
 
     active.cancelAndJoin()
@@ -555,7 +551,7 @@ class MapSnapshotterTest {
     val replacementStyle = BaseStyle.Json("""{"version":8,"sources":{},"layers":[] }""")
     val snapshotter = runtime.createSnapshotter(initialStyle)
     val staleResult = async {
-      runCatching { snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp))) }
+      runCatching { snapshotter.capture(DpSize(1.dp, 1.dp)) }
     }
     prepareStarted.await()
 
@@ -564,7 +560,7 @@ class MapSnapshotterTest {
     assertTrue(staleResult.await().isFailure)
     assertEquals(StyleLoadState.Pending, snapshotter.style.loadState)
 
-    snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+    snapshotter.capture(DpSize(1.dp, 1.dp))
     assertEquals(listOf<BaseStyle>(initialStyle, replacementStyle), requestedStyles)
     assertEquals(StyleLoadState.Ready, snapshotter.style.loadState)
     close(snapshotter, runtime)
@@ -590,7 +586,7 @@ class MapSnapshotterTest {
 
       val failure =
         assertFailsWith<MapSnapshotException> {
-          snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+          snapshotter.capture(DpSize(1.dp, 1.dp))
         }
 
       assertTrue(generateSequence(failure as Throwable?) { it.cause }.any { it === cause })
@@ -604,7 +600,7 @@ class MapSnapshotterTest {
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
 
     assertFailsWith<MapSnapshotException> {
-      snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+      snapshotter.capture(DpSize(1.dp, 1.dp))
     }
 
     close(snapshotter, runtime)
@@ -619,7 +615,7 @@ class MapSnapshotterTest {
 
     val failure =
       assertFailsWith<FatalSnapshotError> {
-        snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+        snapshotter.capture(DpSize(1.dp, 1.dp))
       }
 
     assertSame(cause, failure)
@@ -632,7 +628,7 @@ class MapSnapshotterTest {
     val binding = RecordingStyleBinding(onInvalidate = { throw cause })
     val runtime = runtimeWith(FakeSnapshotterAdapter(prepare = { _, _ -> binding }))
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+    snapshotter.capture(DpSize(1.dp, 1.dp))
 
     snapshotter.close()
     val reported = assertFailsWith<MapCleanupException> { snapshotter.awaitClosed() }
@@ -662,8 +658,8 @@ class MapSnapshotterTest {
       )
     val runtime = runtimeWith(adapter)
     val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-    val active = async { snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp))) }
-    val next = async { snapshotter.capture(MapSnapshotRequest(DpSize(2.dp, 2.dp))) }
+    val active = async { snapshotter.capture(DpSize(1.dp, 1.dp)) }
+    val next = async { snapshotter.capture(DpSize(2.dp, 2.dp)) }
     firstStarted.await()
 
     active.cancelAndJoin()
@@ -705,11 +701,11 @@ class MapSnapshotterTest {
         )
       val runtime = runtimeWith(adapter)
       val snapshotter = runtime.createSnapshotter(BaseStyle.Empty)
-      snapshotter.capture(MapSnapshotRequest(DpSize(1.dp, 1.dp)))
+      snapshotter.capture(DpSize(1.dp, 1.dp))
       val active =
         async(Dispatchers.Unconfined) {
           try {
-            snapshotter.capture(MapSnapshotRequest(DpSize(2.dp, 2.dp)))
+            snapshotter.capture(DpSize(2.dp, 2.dp))
           } catch (error: CancellationException) {
             callerCancelled = true
             throw error
@@ -717,7 +713,7 @@ class MapSnapshotterTest {
         }
       val queued =
         async(Dispatchers.Unconfined) {
-          snapshotter.capture(MapSnapshotRequest(DpSize(3.dp, 3.dp)))
+          snapshotter.capture(DpSize(3.dp, 3.dp))
         }
       started.await()
 
@@ -727,7 +723,7 @@ class MapSnapshotterTest {
       assertFailsWith<CancellationException> { queued.await() }
       assertFailsWith<CancellationException> { active.await() }
       assertFailsWith<IllegalStateException> {
-        snapshotter.capture(MapSnapshotRequest(DpSize(3.dp, 3.dp)))
+        snapshotter.capture(DpSize(3.dp, 3.dp))
       }
       assertFalse(closure.isCompleted)
       releaseCleanup.complete(Unit)
@@ -760,8 +756,9 @@ class MapSnapshotterTest {
     VectorTileSource(
       id = "shared",
       tiles = listOf("https://example.com/{z}/{x}/{y}.pbf"),
-      options = TileSetOptions(attributionHtml = attribution),
-    )
+    ) {
+      attributionHtml = attribution
+    }
 
   private class FatalSnapshotError : Error("fatal snapshot failure")
 }

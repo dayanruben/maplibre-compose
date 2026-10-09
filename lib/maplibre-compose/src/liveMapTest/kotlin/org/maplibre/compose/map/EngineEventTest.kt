@@ -70,7 +70,7 @@ class EngineEventTest {
       fixture.awaitWhileRendering("the camera animation to finish") {
         fixture.session.animateCamera(
           Destination.toCameraUpdate(),
-          CameraAnimation.Fly(AnimationDuration),
+          CameraAnimation.Fly { duration = AnimationDuration },
         )
       }
 
@@ -99,7 +99,7 @@ class EngineEventTest {
         MapLibreFlavor.Native -> "https://example.invalid/style.json"
       }
 
-    val Destination = CameraPosition(target = Position(10.0, 10.0), zoom = 4.0)
+    val Destination = CameraPosition(center = Position(10.0, 10.0), zoom = 4.0)
 
     val AnimationDuration = 1.seconds
   }

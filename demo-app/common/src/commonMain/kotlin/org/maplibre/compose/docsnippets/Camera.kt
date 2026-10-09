@@ -11,6 +11,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import org.maplibre.compose.camera.CameraAnchor
 import org.maplibre.compose.camera.CameraAnimation
+import org.maplibre.compose.camera.CameraFit
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraUpdate
 import org.maplibre.compose.map.MaplibreMap
@@ -25,7 +26,7 @@ fun Camera() {
   val mapState =
     rememberMapState(
       initialCameraPosition =
-        CameraPosition(target = Position(latitude = 45.521, longitude = -122.675), zoom = 13.0)
+        CameraPosition(center = Position(latitude = 45.521, longitude = -122.675), zoom = 13.0)
     )
   MaplibreMap(state = mapState)
   // #endregion first-position
@@ -33,7 +34,7 @@ fun Camera() {
   // #region animate
   LaunchedEffect(mapState) {
     mapState.animateCamera(
-      update = CameraUpdate(target = Position(latitude = 47.607, longitude = -122.342))
+      update = CameraUpdate(center = Position(latitude = 47.607, longitude = -122.342))
     )
   }
   // #endregion animate
@@ -41,8 +42,11 @@ fun Camera() {
   // #region animate-fly
   LaunchedEffect(mapState) {
     mapState.animateCamera(
-      update = CameraUpdate(target = Position(latitude = 40.713, longitude = -74.006), zoom = 12.0),
-      animation = CameraAnimation.Fly(duration = 3.seconds, minZoom = 4.0),
+      update = CameraUpdate(center = Position(latitude = 40.713, longitude = -74.006), zoom = 12.0),
+      animation =
+        CameraAnimation.Fly {
+          duration = 3.seconds
+        },
     )
   }
   // #endregion animate-fly
@@ -51,7 +55,7 @@ fun Camera() {
   LaunchedEffect(mapState) {
     mapState.animateCamera(
       update = CameraUpdate(zoom = mapState.cameraPosition.zoom + 1.0),
-      animation = CameraAnimation.Ease(duration = 500.milliseconds),
+      animation = CameraAnimation.Ease { duration = 500.milliseconds },
     )
   }
   // #endregion animate-ease
@@ -62,7 +66,7 @@ fun Camera() {
       anchor = CameraAnchor.Screen(DpOffset(120.dp, 200.dp)),
       zoom = 16.0,
       bearing = 90.0,
-      animation = CameraAnimation.Ease(500.milliseconds),
+      animation = CameraAnimation.Ease { duration = 500.milliseconds },
     )
   }
   // #endregion animate-around
@@ -71,7 +75,8 @@ fun Camera() {
   LaunchedEffect(mapState) {
     mapState.animateCameraToBounds(
       boundingBox = BoundingBox(west = -123.0, south = 47.0, east = -122.0, north = 48.0),
-      fitPadding = DpPadding(left = 32.dp, top = 32.dp, right = 32.dp, bottom = 32.dp),
+      fit =
+        CameraFit(fitPadding = DpPadding(left = 32.dp, top = 32.dp, right = 32.dp, bottom = 32.dp)),
     )
   }
   // #endregion fit-bounds
@@ -81,7 +86,10 @@ fun Camera() {
     val camera =
       mapState.cameraForBounds(
         boundingBox = BoundingBox(west = -123.0, south = 47.0, east = -122.0, north = 48.0),
-        fitPadding = DpPadding(left = 32.dp, top = 32.dp, right = 32.dp, bottom = 32.dp),
+        fit =
+          CameraFit(
+            fitPadding = DpPadding(left = 32.dp, top = 32.dp, right = 32.dp, bottom = 32.dp)
+          ),
       )
     mapState.animateCamera(camera.copy(zoom = minOf(camera.zoom, 12.0)).toCameraUpdate())
   }
@@ -95,7 +103,7 @@ fun Camera() {
   // #endregion viewport
 
   // #region convert
-  val screenOffset = mapState.screenLocationFromPosition(mapState.cameraPosition.target)
+  val screenOffset = mapState.screenLocationFromPosition(mapState.cameraPosition.center)
   val geoPosition = mapState.positionFromScreenLocation(DpOffset(x = 100.dp, y = 150.dp))
   // #endregion convert
 }

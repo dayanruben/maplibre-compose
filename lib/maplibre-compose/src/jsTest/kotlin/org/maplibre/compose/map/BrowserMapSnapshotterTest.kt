@@ -31,7 +31,6 @@ import org.maplibre.compose.gljs.waitUntilMap
 import org.maplibre.compose.layers.CircleLayer
 import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.sources.GeoJsonData
-import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeoJsonSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.testing.RgbaPixel
@@ -51,23 +50,20 @@ class BrowserMapSnapshotterTest {
   @Test
   fun composed_content_renders_in_a_private_target_that_cleanup_removes(): Promise<*> =
     runBrowserMapTest {
-      val runtime = createMapRuntime(MapRuntimeOptions())
+      val runtime = createMapRuntime()
       val snapshotter = runtime.createSnapshotter(BackgroundStyle, PointStyle)
       try {
         assertEquals(0, snapshotTargets().size)
 
         val image =
-          snapshotter.capture(
-            MapSnapshotRequest(
-              size = DpSize(Size.dp, Size.dp),
-              cameraPosition =
-                CameraPosition(
-                  target = Position(longitude = 0.0, latitude = 0.0),
-                  zoom = 2.0,
-                  padding = DpPadding(left = 24.dp, bottom = 16.dp),
-                ),
-            )
-          )
+          snapshotter.capture(DpSize(Size.dp, Size.dp)) {
+            cameraPosition =
+              CameraPosition(
+                center = Position(longitude = 0.0, latitude = 0.0),
+                zoom = 2.0,
+                padding = DpPadding(left = 24.dp, bottom = 16.dp),
+              )
+          }
 
         assertEquals(Size, image.width)
         assertEquals(Size, image.height)
@@ -97,7 +93,7 @@ class BrowserMapSnapshotterTest {
         }
         PointStyle()
       }
-      val runtime = createMapRuntime(MapRuntimeOptions())
+      val runtime = createMapRuntime()
       val state = runtime.createMapState(baseStyle = BackgroundStyle, content = content)
       val snapshotter = runtime.createSnapshotter(BackgroundStyle, content)
       try {
@@ -110,13 +106,10 @@ class BrowserMapSnapshotterTest {
         val interactiveEngine = assertNotNull(session.engineMapForTest())
 
         val image =
-          snapshotter.capture(
-            MapSnapshotRequest(
-              size = DpSize(Size.dp, Size.dp),
-              cameraPosition =
-                CameraPosition(target = Position(longitude = 0.0, latitude = 0.0), zoom = 2.0),
-            )
-          )
+          snapshotter.capture(DpSize(Size.dp, Size.dp)) {
+            cameraPosition =
+              CameraPosition(center = Position(longitude = 0.0, latitude = 0.0), zoom = 2.0)
+          }
 
         assertEquals(Green, image.readPixel(Size / 2, Size / 2))
         assertEquals(2, evaluatorIdentities.size)
@@ -139,19 +132,19 @@ class BrowserMapSnapshotterTest {
 
   @Test
   fun consecutive_captures_honor_size_and_density(): Promise<*> = runBrowserMapTest {
-    val runtime = createMapRuntime(MapRuntimeOptions())
+    val runtime = createMapRuntime()
     val snapshotter = runtime.createSnapshotter(BackgroundStyle)
     try {
       for ((request, size) in
         listOf(
           MapSnapshotRequest(DpSize(32.dp, 24.dp)) to (32 to 24),
-          MapSnapshotRequest(DpSize(96.dp, 64.dp), density = Density(2f)) to (192 to 128),
-          MapSnapshotRequest(DpSize(1.dp, 1.dp), density = Density(3f)) to (3 to 3),
-          MapSnapshotRequest(DpSize(31.dp, 23.dp), density = Density(1.25f)) to (39 to 29),
-          MapSnapshotRequest(DpSize(33.dp, 25.dp), density = Density(1.25f)) to (42 to 32),
-          MapSnapshotRequest(DpSize(1.dp, 1.dp), density = Density(0.5f)) to (1 to 1),
+          MapSnapshotRequest(DpSize(96.dp, 64.dp)) { density = Density(2f) } to (192 to 128),
+          MapSnapshotRequest(DpSize(1.dp, 1.dp)) { density = Density(3f) } to (3 to 3),
+          MapSnapshotRequest(DpSize(31.dp, 23.dp)) { density = Density(1.25f) } to (39 to 29),
+          MapSnapshotRequest(DpSize(33.dp, 25.dp)) { density = Density(1.25f) } to (42 to 32),
+          MapSnapshotRequest(DpSize(1.dp, 1.dp)) { density = Density(0.5f) } to (1 to 1),
         )) {
-        val captured = snapshotter.capture(request)
+        val captured = snapshotter.capture(request.size) { density = request.density }
         assertEquals(size.first, captured.width, "width for $request")
         assertEquals(size.second, captured.height, "height for $request")
         assertEquals(Background, captured.readPixel(0, 0))
@@ -167,27 +160,21 @@ class BrowserMapSnapshotterTest {
 
   @Test
   fun camera_position_is_a_per_capture_value(): Promise<*> = runBrowserMapTest {
-    val runtime = createMapRuntime(MapRuntimeOptions())
+    val runtime = createMapRuntime()
     val snapshotter = runtime.createSnapshotter(BackgroundStyle, PointStyle)
     try {
       val centered =
-        snapshotter.capture(
-          MapSnapshotRequest(
-            size = DpSize(Size.dp, Size.dp),
-            cameraPosition = CameraPosition(zoom = 2.0),
-          )
-        )
+        snapshotter.capture(DpSize(Size.dp, Size.dp)) {
+          cameraPosition = CameraPosition(zoom = 2.0)
+        }
       val shifted =
-        snapshotter.capture(
-          MapSnapshotRequest(
-            size = DpSize(Size.dp, Size.dp),
-            cameraPosition =
-              CameraPosition(
-                target = Position(longitude = 90.0, latitude = 0.0),
-                zoom = 2.0,
-              ),
-          )
-        )
+        snapshotter.capture(DpSize(Size.dp, Size.dp)) {
+          cameraPosition =
+            CameraPosition(
+              center = Position(longitude = 90.0, latitude = 0.0),
+              zoom = 2.0,
+            )
+        }
 
       assertEquals(Green, centered.readPixel(Size / 2, Size / 2))
       assertEquals(Background, shifted.readPixel(Size / 2, Size / 2))
@@ -206,10 +193,10 @@ class BrowserMapSnapshotterTest {
       "[data-maplibre-compose-snapshotter] { " +
         "box-sizing: border-box; border: 7px solid; padding: 11px; }"
     document.body?.appendChild(pageStyle.asDynamic())
-    val runtime = createMapRuntime(MapRuntimeOptions())
+    val runtime = createMapRuntime()
     val snapshotter = runtime.createSnapshotter(BackgroundStyle)
     try {
-      val captured = snapshotter.capture(MapSnapshotRequest(DpSize(31.dp, 23.dp)))
+      val captured = snapshotter.capture(DpSize(31.dp, 23.dp))
       val target = assertNotNull(snapshotTargets().singleOrNull())
 
       assertEquals(31, captured.width)
@@ -228,12 +215,12 @@ class BrowserMapSnapshotterTest {
   @Test
   fun a_request_above_the_web_canvas_limit_fails_before_map_creation(): Promise<*> =
     runBrowserMapTest {
-      val runtime = createMapRuntime(MapRuntimeOptions())
+      val runtime = createMapRuntime()
       val snapshotter = runtime.createSnapshotter(BackgroundStyle)
       try {
         val error =
           assertFailsWith<IllegalArgumentException> {
-            snapshotter.capture(MapSnapshotRequest(DpSize(2_049.dp, 1.dp), density = Density(2f)))
+            snapshotter.capture(DpSize(2_049.dp, 1.dp)) { density = Density(2f) }
           }
 
         assertTrue(error.message.orEmpty().contains("4096px canvas limit"))
@@ -249,16 +236,19 @@ class BrowserMapSnapshotterTest {
   @Test
   fun a_density_change_reapplies_an_unchanged_style_image(): Promise<*> = runBrowserMapTest {
     val icon = IntArray(8 * 8) { 0xff00ff00.toInt() }.toImageBitmap(8, 8)
-    val runtime = createMapRuntime(MapRuntimeOptions())
+    val runtime = createMapRuntime()
     val snapshotter = runtime.createSnapshotter(BackgroundStyle, pointIconStyle(icon))
     val request =
-      MapSnapshotRequest(
-        size = DpSize(Size.dp, Size.dp),
-        cameraPosition = CameraPosition(zoom = 2.0),
-      )
+      MapSnapshotRequest(DpSize(Size.dp, Size.dp)) { cameraPosition = CameraPosition(zoom = 2.0) }
     try {
-      val first = snapshotter.capture(request)
-      val second = snapshotter.capture(request.copy(density = Density(2f)))
+      val first = snapshotter.capture(request.size) { cameraPosition = request.cameraPosition }
+      val second =
+        snapshotter.capture(request.size) {
+          cameraPosition = request.cameraPosition
+          density = Density(2f)
+          layoutDirection = request.layoutDirection
+          transparent = request.transparent
+        }
 
       assertEquals(Size, first.width)
       assertEquals(Size, first.height)
@@ -278,17 +268,11 @@ class BrowserMapSnapshotterTest {
 
   @Test
   fun output_transparency_is_a_per_capture_value(): Promise<*> = runBrowserMapTest {
-    val runtime = createMapRuntime(MapRuntimeOptions())
+    val runtime = createMapRuntime()
     val snapshotter = runtime.createSnapshotter(EmptyStyle)
     try {
-      val opaque = snapshotter.capture(MapSnapshotRequest(DpSize(8.dp, 8.dp)))
-      val transparent =
-        snapshotter.capture(
-          MapSnapshotRequest(
-            size = DpSize(8.dp, 8.dp),
-            transparent = true,
-          )
-        )
+      val opaque = snapshotter.capture(DpSize(8.dp, 8.dp))
+      val transparent = snapshotter.capture(DpSize(8.dp, 8.dp)) { transparent = true }
 
       assertEquals(White, opaque.readPixel(0, 0))
       assertEquals(Transparent, transparent.readPixel(0, 0))
@@ -315,11 +299,11 @@ class BrowserMapSnapshotterTest {
           originalFetch.call(global, input, init)
         }
       }
-      val runtime = createMapRuntime(MapRuntimeOptions())
+      val runtime = createMapRuntime()
       val snapshotter = runtime.createSnapshotter(BaseStyle.Uri(BlockedStyleUri), PointStyle)
       try {
         coroutineScope {
-          val capture = async { snapshotter.capture(MapSnapshotRequest(DpSize(Size.dp, Size.dp))) }
+          val capture = async { snapshotter.capture(DpSize(Size.dp, Size.dp)) }
           waitUntilMap("the snapshot style request to start") {
             styleRequested && snapshotTargets().size == 1
           }
@@ -332,12 +316,9 @@ class BrowserMapSnapshotterTest {
         }
         snapshotter.style.asMutable!!.baseStyle = BackgroundStyle
         val image =
-          snapshotter.capture(
-            MapSnapshotRequest(
-              size = DpSize(Size.dp, Size.dp),
-              cameraPosition = CameraPosition(zoom = 2.0),
-            )
-          )
+          snapshotter.capture(DpSize(Size.dp, Size.dp)) {
+            cameraPosition = CameraPosition(zoom = 2.0)
+          }
         assertEquals(Green, image.readPixel(Size / 2, Size / 2))
         assertEquals(1, snapshotTargets().size)
       } finally {
@@ -364,7 +345,6 @@ class BrowserMapSnapshotterTest {
               addFeature(geometry = Point(Position(longitude = 0.0, latitude = 0.0)))
             }
           ),
-        options = GeoJsonOptions(),
       )
     SymbolLayer(
       id = "composed-icon",
@@ -416,7 +396,6 @@ class BrowserMapSnapshotterTest {
                 addFeature(geometry = Point(Position(longitude = 0.0, latitude = 0.0)))
               }
             ),
-          options = GeoJsonOptions(),
         )
       CircleLayer(
         id = "composed-circle",

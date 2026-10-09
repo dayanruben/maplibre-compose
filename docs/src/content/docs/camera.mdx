@@ -9,7 +9,7 @@ import { region } from "../../snippets";
 
 import camera from "../../../../demo-app/common/src/commonMain/kotlin/org/maplibre/compose/docsnippets/Camera.kt?raw";
 
-The camera defines the visible part of the map: a target position, a zoom
+The camera defines the visible part of the map: a center position, a zoom
 level, a bearing, and a pitch. <Api of="rememberMapState" /> creates a
 <Api of="MapState" /> with a read-only camera position. Pass an
 initial <Api of="CameraPosition" /> to set the camera at startup:
@@ -31,15 +31,13 @@ again.
 
 ### Choose the transition
 
-The `animation` parameter selects one of two transitions. Each platform
-implements both with the same controls.
+The `animation` parameter selects one of two transitions.
 
 <Api of="CameraAnimation.Fly" /> follows a flight path. The camera zooms out, crosses
 the ground, and zooms back in, so the map stays legible over any distance.
 Without a duration, the flight takes as long as its path length and speed
 require. Set `duration` for a fixed time, `speed` in screenfuls per second for a
-constant pace, and `minZoom` to shape how far the flight zooms out. The exact
-path depends on the engine:
+constant pace. The exact path and additional flight settings depend on the engine:
 
 <Code code={region(camera, "animate-fly")} lang="kotlin" title="App.kt" />
 
@@ -64,7 +62,7 @@ coordinates in dp from the full map's top-left corner:
 Use <Api of="CameraAnchor.Geographic" /> to keep a selected geographic location
 at its current screen point. The anchor is resolved when the animation starts
 and must be visible on the map. This operation supports easing; it does not
-accept a flight or a target center because the center moves to keep the anchor
+accept a flight or a center because the center moves to keep the anchor
 fixed.
 
 Persistent camera padding participates in projection. Changing viewport insets,
@@ -77,8 +75,8 @@ terrain.
 ## Fit a bounding box
 
 <Api of="MapState.animateCameraToBounds" /> fits a `BoundingBox` in the current
-viewport with the same `animation` choices. Fit padding adds space around the box
-inside the viewport insets and camera padding:
+viewport with the same `animation` choices. Set `fitPadding` in `CameraFit` to add
+space around the box inside the viewport insets and camera padding:
 
 <Code code={region(camera, "fit-bounds")} lang="kotlin" title="App.kt" />
 

@@ -33,14 +33,17 @@ class GeoJsonClusterTest {
   fun cluster_queries_resolve_features_and_report_missing_clusters(): MapTestResult = runMapTest {
     createMapFixture().use { fixture ->
       fixture.loadStyle(BaseStyle.Empty)
-      fixture.state.setCameraPosition(CameraPosition(target = Position(0.0, 0.0), zoom = Zoom))
+      fixture.state.setCameraPosition(CameraPosition(center = Position(0.0, 0.0), zoom = Zoom))
       val binding = checkNotNull(fixture.style)
       val source =
         GeoJsonSource(
           id = "points",
           data = GeoJsonData.Features(nearbyPoints()),
-          options = GeoJsonOptions(cluster = true, clusterRadius = 200, clusterMaxZoom = 14),
-        )
+        ) {
+          cluster = true
+          clusterRadius = 200
+          clusterMaxZoom = 14
+        }
       fixture.state.style.sources.add(source)
       binding.install(TestLayer("clusters", "circle", source))
       val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.sources["points"])
@@ -87,9 +90,13 @@ class GeoJsonClusterTest {
   fun cluster_queries_return_null_for_a_source_without_clustering(): MapTestResult = runMapTest {
     createMapFixture().use { fixture ->
       fixture.loadStyle(BaseStyle.Empty)
-      fixture.state.setCameraPosition(CameraPosition(target = Position(0.0, 0.0), zoom = Zoom))
+      fixture.state.setCameraPosition(CameraPosition(center = Position(0.0, 0.0), zoom = Zoom))
       val binding = checkNotNull(fixture.style)
-      val source = GeoJsonSource("points", GeoJsonData.Features(nearbyPoints()), GeoJsonOptions())
+      val source =
+        GeoJsonSource(
+          "points",
+          GeoJsonData.Features(nearbyPoints()),
+        )
       fixture.state.style.sources.add(source)
       binding.install(TestLayer("points", "circle", source))
       val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.sources["points"])
@@ -125,8 +132,9 @@ class GeoJsonClusterTest {
         GeoJsonSource(
           id = "points",
           data = GeoJsonData.Features(nearbyPoints()),
-          options = GeoJsonOptions(cluster = true),
-        )
+        ) {
+          cluster = true
+        }
       fixture.state.style.sources.add(source)
       val handle = assertIs<GeoJsonSourceHandle>(fixture.state.style.sources["points"])
       val cluster =

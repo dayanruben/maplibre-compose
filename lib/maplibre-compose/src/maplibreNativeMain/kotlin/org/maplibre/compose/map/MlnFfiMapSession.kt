@@ -956,7 +956,8 @@ internal class MlnFfiMapSession(
     guard?.dispatched()
   }
 
-  override fun getCameraConstraints(): CameraConstraints = cameraConstraints ?: CameraConstraints()
+  override fun getCameraConstraints(): CameraConstraints =
+    cameraConstraints ?: CameraConstraints.Standard
 
   override fun setCameraConstraints(value: CameraConstraints) {
     if (value == cameraConstraints) return
@@ -1386,6 +1387,7 @@ internal class MlnFfiMapSession(
 
 private fun TileLodOptions.toFfi(): TileOptions = algorithm.toFfi()
 
+@OptIn(ExperimentalMaplibreComposeApi::class)
 private fun CameraProjection.toFfi(): ProjectionModeOptions =
   ProjectionModeOptions().also { options ->
     when (this) {

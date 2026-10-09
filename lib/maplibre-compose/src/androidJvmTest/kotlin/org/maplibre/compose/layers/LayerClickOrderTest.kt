@@ -44,9 +44,9 @@ import org.maplibre.spatialk.geojson.Position
 @OptIn(ExperimentalTestApi::class)
 class LayerClickOrderTest {
 
-  private val cacheFile = FfiTestPlatform.createCacheFile()
+  private val cache = FfiTestPlatform.createCacheFile()
 
-  private val runtimeOptions = MapRuntimeOptions(cacheFile = cacheFile)
+  private val runtimeOptions = MapRuntimeOptions { cacheFile = cache }
 
   /** Which layers were offered the event, in the order the map offered them. */
   private val clicked = mutableListOf<String>()
@@ -54,7 +54,7 @@ class LayerClickOrderTest {
 
   @AfterTest
   fun cleanUp() {
-    FfiTestPlatform.deleteCacheFile(cacheFile)
+    FfiTestPlatform.deleteCacheFile(cache)
   }
 
   @Test
@@ -140,7 +140,7 @@ class LayerClickOrderTest {
       scope = rememberCoroutineScope()
       mapState =
         rememberMapState(
-          initialCameraPosition = CameraPosition(target = Position(0.0, 0.0), zoom = StartZoom),
+          initialCameraPosition = CameraPosition(center = Position(0.0, 0.0), zoom = StartZoom),
           baseStyle = BaseStyle.Empty,
         ) {
           val source = rememberGeoJsonSource(data = GeoJsonData.JsonString(WorldPolygon))

@@ -40,6 +40,47 @@ import org.maplibre.spatialk.geojson.Position
 class BrowserCameraTransitionLifecycleTest {
 
   @Test
+  fun browser_flight_options_reach_fly_to(): MapTestResult = runMapTest {
+    createMapFixture().use { fixture ->
+      fixture.loadStyle(BaseStyle.Empty)
+      fixture.awaitMapReady()
+      val map = requireNotNull((fixture.session as GlJsMapSession).engineMapForTest())
+      val originalFlyTo = map.asDynamic().flyTo
+      var received: dynamic = null
+      val wrapFlyTo =
+        js(
+          """(function(original, record) {
+              return function(options) {
+                record(options);
+                return original.call(this, options);
+              };
+            })"""
+        )
+      map.asDynamic().flyTo = wrapFlyTo(originalFlyTo) { options: dynamic -> received = options }
+      try {
+        fixture.awaitWhileRendering("browser flight options") {
+          fixture.state.animateCamera(
+            CameraUpdate(center = Position(-74.006, 40.713), zoom = 4.0),
+            CameraAnimation.Fly {
+              duration = 0.milliseconds
+              minZoom = 2.0
+              curve = 2.0
+              screenSpeed = 3.0
+              maxDuration = 5.seconds
+            },
+          )
+        }
+        assertEquals(2.0, received.minZoom as Double)
+        assertEquals(2.0, received.curve as Double)
+        assertEquals(3.0, received.screenSpeed as Double)
+        assertEquals(5000.0, received.maxDuration as Double)
+      } finally {
+        map.asDynamic().flyTo = originalFlyTo
+      }
+    }
+  }
+
+  @Test
   fun a_partial_browser_update_stops_the_previous_animation_and_keeps_omitted_values():
     MapTestResult = runMapTest {
     createMapFixture().use { fixture ->
@@ -48,11 +89,17 @@ class BrowserCameraTransitionLifecycleTest {
       fixture.state.setCameraPosition(CameraPosition(zoom = 3.0))
       fixture.pump(frames = 2)
       val zoom = launch {
-        fixture.state.animateCamera(CameraUpdate(zoom = 8.0), CameraAnimation.Ease(4.seconds))
+        fixture.state.animateCamera(
+          CameraUpdate(zoom = 8.0),
+          CameraAnimation.Ease { duration = 4.seconds },
+        )
       }
       fixture.pumpUntil("zoom to start") { fixture.state.cameraPosition.zoom > 3.1 }
       val bearing = launch {
-        fixture.state.animateCamera(CameraUpdate(bearing = 90.0), CameraAnimation.Ease(1.seconds))
+        fixture.state.animateCamera(
+          CameraUpdate(bearing = 90.0),
+          CameraAnimation.Ease { duration = 1.seconds },
+        )
       }
       fixture.pumpUntil("the browser to supersede zoom") { zoom.isCompleted }
       assertFalse(zoom.isCancelled)
@@ -74,7 +121,7 @@ class BrowserCameraTransitionLifecycleTest {
         fixture ->
         fixture.loadStyle(BaseStyle.Empty)
         fixture.awaitMapReady()
-        fixture.session.setCameraConstraints(CameraConstraints(maxPitch = 85.0))
+        fixture.session.setCameraConstraints(CameraConstraints { maxPitch = 85.0 })
         fixture.state.setCameraPosition(CameraPosition(zoom = 1.0, pitch = 80.0))
         fixture.pumpUntil("the pitched camera to apply") {
           abs(fixture.session.getCameraPosition().pitch - 80.0) < 0.01
@@ -88,7 +135,7 @@ class BrowserCameraTransitionLifecycleTest {
         val location = requireNotNull(fixture.state.positionFromScreenLocation(point))
         val before = fixture.session.getCameraPosition()
         assertTrue(
-          abs(location.longitude - before.target.longitude) > 180.0,
+          abs(location.longitude - before.center.longitude) > 180.0,
           "the unprojected location must lie in a distant world copy: $location",
         )
         assertFailsWith<IllegalArgumentException> {
@@ -107,7 +154,10 @@ class BrowserCameraTransitionLifecycleTest {
         it.session.setBaseStyle(BaseStyle.Empty)
         val animation =
           launch(start = CoroutineStart.UNDISPATCHED) {
-            it.session.animateCamera(StaleCamera.toCameraUpdate(), CameraAnimation.Fly(60.seconds))
+            it.session.animateCamera(
+              StaleCamera.toCameraUpdate(),
+              CameraAnimation.Fly { duration = 60.seconds },
+            )
           }
 
         assertFalse(animation.isCompleted, "the animation should be queued before cancellation")
@@ -135,7 +185,7 @@ class BrowserCameraTransitionLifecycleTest {
             launch(start = CoroutineStart.UNDISPATCHED) {
               fixture.state.animateCamera(
                 StaleCamera.toCameraUpdate(),
-                CameraAnimation.Fly(60.seconds),
+                CameraAnimation.Fly { duration = 60.seconds },
               )
             }
           assertFalse(animation.isCompleted)
@@ -155,7 +205,10 @@ class BrowserCameraTransitionLifecycleTest {
       it.session.setBaseStyle(BaseStyle.Json("{ this is not json"))
       val animation =
         launch(start = CoroutineStart.UNDISPATCHED) {
-          it.session.animateCamera(StaleCamera.toCameraUpdate(), CameraAnimation.Fly(60.seconds))
+          it.session.animateCamera(
+            StaleCamera.toCameraUpdate(),
+            CameraAnimation.Fly { duration = 60.seconds },
+          )
         }
 
       assertFalse(animation.isCompleted, "the animation should wait for the initial style result")
@@ -170,7 +223,7 @@ class BrowserCameraTransitionLifecycleTest {
   @Test
   fun a_destroyed_web_map_cannot_move_the_logical_map_or_a_cached_presentation(): Promise<*> =
     runBrowserMapTest {
-      val runtime = createMapRuntime(MapRuntimeOptions())
+      val runtime = createMapRuntime()
       val state = runtime.createMapState(cameraPosition = CurrentCamera, baseStyle = Style)
       val presented = mutableStateOf(true)
 
@@ -206,11 +259,14 @@ class BrowserCameraTransitionLifecycleTest {
         fixture.state.animateCameraAround(
           CameraAnchor.Geographic(Position(0.0, 0.0)),
           zoom = 4.0,
-          animation = CameraAnimation.Ease(0.milliseconds),
+          animation = CameraAnimation.Ease { duration = 0.milliseconds },
         )
       }
       val bearing = launch {
-        fixture.state.animateCamera(CameraUpdate(bearing = 90.0), CameraAnimation.Ease(1.seconds))
+        fixture.state.animateCamera(
+          CameraUpdate(bearing = 90.0),
+          CameraAnimation.Ease { duration = 1.seconds },
+        )
       }
       fixture.pumpUntil("bearing to start") { fixture.state.cameraPosition.bearing > 1.0 }
       fixture.resize(MapExtent.fromLogical(width = 600, height = 400, scaleFactor = 1.0))
@@ -238,7 +294,7 @@ class BrowserCameraTransitionLifecycleTest {
                   launch(start = CoroutineStart.UNDISPATCHED) {
                     fixture.state.animateCamera(
                       CameraUpdate(bearing = 90.0),
-                      CameraAnimation.Ease(1.seconds),
+                      CameraAnimation.Ease { duration = 1.seconds },
                     )
                   }
               }
@@ -247,7 +303,7 @@ class BrowserCameraTransitionLifecycleTest {
         val first = launch {
           fixture.state.animateCamera(
             CameraUpdate(zoom = 4.0),
-            CameraAnimation.Ease(100.milliseconds),
+            CameraAnimation.Ease { duration = 100.milliseconds },
           )
         }
         fixture.pumpUntil("the callback movement to start") {
@@ -265,7 +321,7 @@ class BrowserCameraTransitionLifecycleTest {
 
   private companion object {
     val Style = BaseStyle.Json("""{"version":8,"sources":{},"layers":[]}""")
-    val CurrentCamera = CameraPosition(target = Position(11.0, 47.0), zoom = 8.0)
-    val StaleCamera = CameraPosition(target = Position(-122.4, 37.8), zoom = 12.0)
+    val CurrentCamera = CameraPosition(center = Position(11.0, 47.0), zoom = 8.0)
+    val StaleCamera = CameraPosition(center = Position(-122.4, 37.8), zoom = 12.0)
   }
 }

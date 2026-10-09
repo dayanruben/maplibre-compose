@@ -38,7 +38,7 @@ class FeatureStateTest {
   fun a_geojson_handle_updates_feature_state_and_the_rendered_style(): MapTestResult = runMapTest {
     createMapFixture().use { fixture ->
       fixture.loadStyle(BlackStyle)
-      fixture.state.setCameraPosition(CameraPosition(target = Position(0.0, 0.0), zoom = 1.0))
+      fixture.state.setCameraPosition(CameraPosition(center = Position(0.0, 0.0), zoom = 1.0))
       val binding = checkNotNull(fixture.style)
       val source =
         GeoJsonSource(
@@ -49,7 +49,6 @@ class FeatureStateTest {
                 addFeature(geometry = Point(Position(0.0, 0.0))) { setId(1) }
               }
             ),
-          options = GeoJsonOptions(),
         )
       fixture.state.style.sources.add(source)
       val layer = TestLayer("circles", "circle", source)

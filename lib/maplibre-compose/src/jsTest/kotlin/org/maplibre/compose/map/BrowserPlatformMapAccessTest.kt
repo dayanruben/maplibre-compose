@@ -16,7 +16,6 @@ import org.maplibre.compose.gljs.CustomLayerInterface
 import org.maplibre.compose.gljs.runBrowserMapTest
 import org.maplibre.compose.layers.BackgroundLayer
 import org.maplibre.compose.sources.GeoJsonData
-import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeoJsonSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.testing.GlJsMapFixture
@@ -26,7 +25,7 @@ import org.maplibre.compose.testing.declare
 class BrowserPlatformMapAccessTest {
   @Test
   fun web_access_requires_a_current_presentation() = runBrowserMapTest {
-    val runtime = createMapRuntime(MapRuntimeOptions())
+    val runtime = createMapRuntime()
     val state = runtime.createMapState(BaseStyle.Demo)
 
     val failure = assertFailsWith<IllegalStateException> { state.withPlatformMap { map.getZoom() } }
@@ -73,7 +72,6 @@ class BrowserPlatformMapAccessTest {
         GeoJsonSource(
           "points",
           GeoJsonData.JsonString("""{"type":"FeatureCollection","features":[]}"""),
-          GeoJsonOptions(),
         )
       )
       fixture.declare { BackgroundLayer("above", visible = true) }

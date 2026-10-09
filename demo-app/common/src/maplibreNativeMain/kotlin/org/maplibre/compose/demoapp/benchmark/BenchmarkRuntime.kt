@@ -1,3 +1,5 @@
+@file:OptIn(org.maplibre.compose.util.ExperimentalMaplibreComposeApi::class)
+
 package org.maplibre.compose.demoapp.benchmark
 
 import androidx.compose.runtime.Composable
@@ -10,7 +12,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import org.maplibre.compose.benchmark.*
-import org.maplibre.compose.map.MapRuntimeOptions
 import org.maplibre.compose.map.createMapRuntime
 import org.maplibre.compose.offline.OfflineStorageState
 import org.maplibre.compose.offline.offlineStorage
@@ -31,7 +32,6 @@ internal actual fun BenchmarkRuntime(config: BenchmarkConfig, onStatus: (String,
       for (suffix in listOf("", "-wal", "-shm")) {
         SystemFileSystem.delete(Path(file.toString() + suffix), mustExist = false)
       }
-      val options = MapRuntimeOptions(cacheFile = file, maximumCacheSizeBytes = 16L * 1024 * 1024)
       withFrameNanos {}
       val size = window.containerSize
       val host =
@@ -46,7 +46,12 @@ internal actual fun BenchmarkRuntime(config: BenchmarkConfig, onStatus: (String,
               (size.height / density).toDouble(),
               density.toDouble(),
             ),
-          create = { createMapRuntime(options) },
+          create = {
+            createMapRuntime {
+              cacheFile = file
+              maximumCacheSizeBytes = 16L * 1024 * 1024
+            }
+          },
           awaitReady = { runtime ->
             when (
               val state = runtime.offlineStorage.state.first { it !is OfflineStorageState.Loading }

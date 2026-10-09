@@ -239,19 +239,19 @@ class SharedMapRuntimeTest {
                     it is DownloadProgress.Healthy && it.status == DownloadStatus.Complete
                   }
                 }
-                val capture = async { snapshot.capture(MapSnapshotRequest(DpSize(32.dp, 32.dp))) }
+                val capture = async { snapshot.capture(DpSize(32.dp, 32.dp)) }
                 val firstAnimation =
                   async(start = CoroutineStart.UNDISPATCHED) {
                     first.state.animateCamera(
                       CameraUpdate(zoom = 3.0),
-                      CameraAnimation.Ease(300.milliseconds),
+                      CameraAnimation.Ease { duration = 300.milliseconds },
                     )
                   }
                 val secondAnimation =
                   async(start = CoroutineStart.UNDISPATCHED) {
                     second.state.animateCamera(
                       CameraUpdate(zoom = 5.0),
-                      CameraAnimation.Ease(300.milliseconds),
+                      CameraAnimation.Ease { duration = 300.milliseconds },
                     )
                   }
                 withTimeout(15_000) {
@@ -269,8 +269,8 @@ class SharedMapRuntimeTest {
                 }
                 assertEquals(3.0, first.state.cameraPosition.zoom, 0.001)
                 assertEquals(5.0, second.state.cameraPosition.zoom, 0.001)
-                val beforeGesture = first.state.cameraPosition.target
-                val otherTarget = second.state.cameraPosition.target
+                val beforeGesture = first.state.cameraPosition.center
+                val otherTarget = second.state.cameraPosition.center
                 val gesture = first.session.onGestureStarted()
                 assertTrue(
                   gesture.acceptsCommands,
@@ -278,7 +278,7 @@ class SharedMapRuntimeTest {
                 )
                 val gestureCapture =
                   async(start = CoroutineStart.UNDISPATCHED) {
-                    snapshot.capture(MapSnapshotRequest(DpSize(32.dp, 32.dp)))
+                    snapshot.capture(DpSize(32.dp, 32.dp))
                   }
                 val metadata =
                   async(start = CoroutineStart.UNDISPATCHED) {
@@ -290,12 +290,12 @@ class SharedMapRuntimeTest {
                   second.frame()
                   gestureCapture.isCompleted &&
                     metadata.isCompleted &&
-                    first.state.cameraPosition.target != beforeGesture &&
+                    first.state.cameraPosition.center != beforeGesture &&
                     !first.state.isCameraMoving
                 }
                 assertEquals(32, gestureCapture.await().width)
                 metadata.await()
-                assertEquals(otherTarget, second.state.cameraPosition.target)
+                assertEquals(otherTarget, second.state.cameraPosition.center)
                 first.state.close()
                 first.state.awaitClosed()
                 snapshot.close()

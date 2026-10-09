@@ -55,6 +55,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import org.maplibre.compose.camera.CameraAnchor
 import org.maplibre.compose.camera.CameraAnimation
+import org.maplibre.compose.camera.CameraFit
 import org.maplibre.compose.camera.CameraMoveReason
 import org.maplibre.compose.camera.CameraPosition
 import org.maplibre.compose.camera.CameraUpdate
@@ -73,7 +74,9 @@ import org.maplibre.compose.layers.LayerHandle
 import org.maplibre.compose.layers.LayerSummary
 import org.maplibre.compose.layers.layerHandle
 import org.maplibre.compose.logging.MapLog
+import org.maplibre.compose.resource.MapRequestInterceptor
 import org.maplibre.compose.resource.MapResourceConfig
+import org.maplibre.compose.resource.MapResourceProvider
 import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.SourceHandle
 import org.maplibre.compose.sources.sourceHandle
@@ -111,13 +114,53 @@ import org.maplibre.spatialk.geojson.Position
  * the runtime. They apply to its maps, snapshotters, and, on MapLibre Native platforms, offline
  * operations. The MapLibre Native platforms also accept a cache file and a cache size limit.
  */
-public expect class MapRuntimeOptions
+@Immutable
+public expect class MapRuntimeOptions {
+  /** Edits [from]; omitted settings inherit. */
+  public constructor(from: MapRuntimeOptions = Standard, block: Builder.() -> Unit)
 
-/** The options a runtime uses when nothing configures it. */
-internal expect fun defaultMapRuntimeOptions(): MapRuntimeOptions
+  /** Rewrites URLs and headers for this runtime, or null for no interceptor. */
+  public val requestInterceptor: MapRequestInterceptor?
 
-/** Creates a runtime from [options]. The caller must close the result. */
-public expect fun createMapRuntime(options: MapRuntimeOptions): MapRuntime
+  /** Serves bytes for accepted resource URLs, or null for no provider. */
+  public val resourceProvider: MapResourceProvider?
+
+  /**
+   * The dispatcher whose thread owns this runtime's map states and receives engine callbacks.
+   * Defaults to [Dispatchers.Main]. A [Dispatchers.Main] value uses its immediate dispatcher when
+   * the runtime is created. Runtime creation fails if no main dispatcher is installed. Pass another
+   * single-threaded dispatcher. [Dispatchers.Unconfined] is rejected.
+   */
+  public val mainDispatcher: CoroutineDispatcher
+
+  override fun equals(other: Any?): Boolean
+
+  override fun hashCode(): Int
+
+  /** Mutable settings for a runtime configuration. */
+  @MapOptionsDsl
+  public class Builder {
+    /** See [MapRuntimeOptions.requestInterceptor]. */
+    public var requestInterceptor: MapRequestInterceptor?
+
+    /** See [MapRuntimeOptions.resourceProvider]. */
+    public var resourceProvider: MapResourceProvider?
+
+    /** See [MapRuntimeOptions.mainDispatcher]. */
+    public var mainDispatcher: CoroutineDispatcher
+  }
+
+  public companion object {
+    /** No request hooks and the platform main dispatcher, with the Native default cache. */
+    public val Standard: MapRuntimeOptions
+  }
+}
+
+/** Creates a runtime by editing [from] with [block]. The caller must close the result. */
+public expect fun createMapRuntime(
+  from: MapRuntimeOptions = MapRuntimeOptions.Standard,
+  block: MapRuntimeOptions.Builder.() -> Unit = {},
+): MapRuntime
 
 /**
  * The main dispatcher, so engine callbacks reach map state on the thread that reads it. A platform
@@ -663,7 +706,7 @@ public class MapStyleState internal constructor(baseStyle: BaseStyle) {
         identity = current.identity.sources.get(id),
         kind = sourceKind(definition, source),
         attributionHtml = source?.attributionHtml.orEmpty(),
-        options = (definition as? SourceDefinition.GeoJson)?.options ?: GeoJsonOptions(),
+        options = (definition as? SourceDefinition.GeoJson)?.options ?: GeoJsonOptions.Standard,
         composed = definition != null,
       )
     }
@@ -864,7 +907,7 @@ internal constructor(
 
   suspend fun animateCamera(
     update: CameraUpdate,
-    animation: CameraAnimation = CameraAnimation.Ease(),
+    animation: CameraAnimation = CameraAnimation.Ease.Standard,
     guard: CameraCommandGuard? = null,
   ): Unit =
     afterCameraTurn(guard) { boundGuard ->
@@ -1212,8 +1255,7 @@ internal constructor(
    * Waits for a viewport, then calculates a camera for [boundingBox] without moving the map or
    * interrupting camera input or animations. Detaching the surface during the query cancels it.
    *
-   * [cameraPadding] sets the returned camera's padding; null retains the current padding.
-   * [fitPadding] adds a temporary margin inside the viewport insets and camera padding.
+   * [fit] sets the camera orientation and padding used for the fit.
    *
    * The result uses the current viewport size, insets, and camera constraints. Recalculate it if
    * those change before applying it.
@@ -1222,14 +1264,11 @@ internal constructor(
    */
   public suspend fun cameraForBounds(
     boundingBox: BoundingBox,
-    bearing: Double = 0.0,
-    pitch: Double = 0.0,
-    cameraPadding: DpPadding? = null,
-    fitPadding: DpPadding = DpPadding.Zero,
+    fit: CameraFit = CameraFit(),
   ): CameraPosition =
     attachmentAuthority
       .awaitAttachment()
-      .cameraForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)
+      .cameraForBounds(boundingBox, fit.bearing, fit.pitch, fit.cameraPadding, fit.fitPadding)
 
   /**
    * Waits for a viewport, then calculates a camera that fits every position of [geometry] without
@@ -1250,15 +1289,12 @@ internal constructor(
    */
   public suspend fun cameraForGeometry(
     geometry: Geometry,
-    bearing: Double = 0.0,
-    pitch: Double = 0.0,
-    cameraPadding: DpPadding? = null,
-    fitPadding: DpPadding = DpPadding.Zero,
+    fit: CameraFit = CameraFit(),
   ): CameraPosition {
     require(geometry.positions().any()) { "The geometry contains no positions" }
     return attachmentAuthority
       .awaitAttachment()
-      .cameraForGeometry(geometry, bearing, pitch, cameraPadding, fitPadding)
+      .cameraForGeometry(geometry, fit.bearing, fit.pitch, fit.cameraPadding, fit.fitPadding)
   }
 
   /**
@@ -1270,44 +1306,38 @@ internal constructor(
    */
   public suspend fun cameraForCoordinates(
     coordinates: Collection<Position>,
-    bearing: Double = 0.0,
-    pitch: Double = 0.0,
-    cameraPadding: DpPadding? = null,
-    fitPadding: DpPadding = DpPadding.Zero,
+    fit: CameraFit = CameraFit(),
   ): CameraPosition {
     require(coordinates.isNotEmpty()) { "The coordinates are empty" }
-    return cameraForGeometry(
-      MultiPoint(coordinates.toList()),
-      bearing,
-      pitch,
-      cameraPadding,
-      fitPadding,
-    )
+    return cameraForGeometry(MultiPoint(coordinates.toList()), fit)
   }
 
   /**
    * Waits for a viewport, then fits [boundingBox] without animation. A newer camera command,
-   * accepted input, or detaching cancels this call. See [cameraForBounds] for [fitPadding] and
-   * [cameraPadding].
+   * accepted input, or detaching cancels this call. See [cameraForBounds] for [fit].
    */
   public suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
-    bearing: Double = 0.0,
-    pitch: Double = 0.0,
-    cameraPadding: DpPadding? = null,
-    fitPadding: DpPadding = DpPadding.Zero,
+    fit: CameraFit = CameraFit(),
   ): Unit = coroutineScope {
     val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
     attachmentAuthority
       .awaitAttachment()
-      .fitCameraToBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding, guard)
+      .fitCameraToBounds(
+        boundingBox,
+        fit.bearing,
+        fit.pitch,
+        fit.cameraPadding,
+        fit.fitPadding,
+        guard,
+      )
   }
 
   /**
    * Animates the specified camera properties after a viewport becomes available.
    *
    * On native platforms, omitted properties keep their current animation and timing. A newer
-   * command replaces only its specified properties. Flight paths also own target and zoom together.
+   * command replaces only its specified properties. Flight paths also own center and zoom together.
    * On the browser, a new command stops the previous animation; omitted properties retain their
    * current values. Viewport-inset changes can also stop browser animations.
    *
@@ -1320,7 +1350,7 @@ internal constructor(
    */
   public suspend fun animateCamera(
     update: CameraUpdate,
-    animation: CameraAnimation = CameraAnimation.Ease(),
+    animation: CameraAnimation = CameraAnimation.Ease.Standard,
   ): Unit = coroutineScope {
     val guard =
       gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job], concurrent = true)
@@ -1332,8 +1362,8 @@ internal constructor(
   /**
    * Changes zoom, bearing, or pitch while keeping [anchor] at its screen location at animation
    * start. Null camera components are omitted and can animate independently on native platforms.
-   * The camera target moves to preserve the anchor; this operation does not accept a destination
-   * target or a flight animation.
+   * The camera center moves to preserve the anchor; this operation does not accept a destination
+   * center or a flight animation.
    *
    * Waits for an attached viewport. The anchor must resolve to a visible point on the map, or this
    * call throws [IllegalArgumentException]. Camera padding and viewport insets both affect the
@@ -1355,7 +1385,7 @@ internal constructor(
     zoom: Double? = null,
     bearing: Double? = null,
     pitch: Double? = null,
-    animation: CameraAnimation.Ease = CameraAnimation.Ease(),
+    animation: CameraAnimation.Ease = CameraAnimation.Ease.Standard,
   ): Unit = coroutineScope {
     require(zoom == null || zoom.isFinite()) { "Zoom must be finite, was $zoom" }
     require(bearing == null || bearing.isFinite()) { "Bearing must be finite, was $bearing" }
@@ -1372,7 +1402,9 @@ internal constructor(
         zoom,
         bearing,
         pitch,
-        animation.copy(duration = animation.duration.scaledBy(systemAnimatorDurationScale())),
+        CameraAnimation.Ease(from = animation) {
+          duration = animation.duration.scaledBy(systemAnimatorDurationScale())
+        },
         guard,
       )
   }
@@ -1381,28 +1413,25 @@ internal constructor(
    * Waits for a viewport, then moves the camera to fit [boundingBox] with [animation]. A newer
    * full-camera assignment or accepted input cancels this call. Further partial updates follow
    * [animateCamera]'s replacement and coroutine-cancellation behavior. See [cameraForBounds] for
-   * [fitPadding] and [cameraPadding]. Detaching cancels the call.
+   * [fit]. Detaching cancels the call.
    *
    * On Android, the system animator duration scale multiplies the duration of [animation]. A scale
    * of zero jumps to fit [boundingBox].
    */
   public suspend fun animateCameraToBounds(
     boundingBox: BoundingBox,
-    bearing: Double = 0.0,
-    pitch: Double = 0.0,
-    cameraPadding: DpPadding? = null,
-    fitPadding: DpPadding = DpPadding.Zero,
-    animation: CameraAnimation = CameraAnimation.Fly(),
+    fit: CameraFit = CameraFit(),
+    animation: CameraAnimation = CameraAnimation.Fly.Standard,
   ): Unit = coroutineScope {
     val guard = gestureAuthority.beginProgrammatic(currentCoroutineContext()[Job])
     attachmentAuthority
       .awaitAttachment()
       .animateCameraToBounds(
         boundingBox,
-        bearing,
-        pitch,
-        cameraPadding,
-        fitPadding,
+        fit.bearing,
+        fit.pitch,
+        fit.cameraPadding,
+        fit.fitPadding,
         animation.scaledBy(systemAnimatorDurationScale()),
         guard,
       )
@@ -1456,7 +1485,7 @@ internal constructor(
   /**
    * Projects [position] into a logical-pixel offset, or returns null without a viewport.
    *
-   * Longitudes equivalent modulo 360° project onto the world copy nearest the camera target.
+   * Longitudes equivalent modulo 360° project onto the world copy nearest the camera center.
    */
   public fun screenLocationFromPosition(position: Position): DpOffset? = withAttachmentRead {
     it.screenLocationFromPosition(position)
@@ -1608,8 +1637,8 @@ private fun mapStateSaver(
       with(state.cameraPosition) {
         listOf(
           bearing,
-          target.longitude,
-          target.latitude,
+          center.longitude,
+          center.latitude,
           pitch,
           zoom,
           padding.left.value.toDouble(),
@@ -1627,7 +1656,7 @@ private fun mapStateSaver(
           cameraPosition =
             CameraPosition(
               bearing = values[0],
-              target = Position(longitude = values[1], latitude = values[2]),
+              center = Position(longitude = values[1], latitude = values[2]),
               pitch = values[3],
               zoom = values[4],
               padding =

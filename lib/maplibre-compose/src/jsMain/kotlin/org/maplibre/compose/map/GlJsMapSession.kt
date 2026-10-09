@@ -899,8 +899,10 @@ internal class GlJsMapSession(
             applyUpdate(update)
             // A null property is not an absent one: GL JS reads `duration: null` as zero.
             animation.duration?.let { duration = it.inWholeMilliseconds.toDouble() }
-            screenSpeed = animation.speed
+            screenSpeed = animation.screenSpeed ?: animation.speed
             animation.minZoom?.let { minZoom = it }
+            curve = animation.curve
+            animation.maxDuration?.let { maxDuration = it.inWholeMilliseconds.toDouble() }
             easing = animation.easing.toEasingFunction()
           }
         )
@@ -953,7 +955,7 @@ internal class GlJsMapSession(
     fitted.setPadding(persistentPadding)
     fitted.setLocationAtPoint(camera.center, boundsCenterPoint)
     return destination.copy(
-      target = fitted.center.toPosition(),
+      center = fitted.center.toPosition(),
       zoom = camera.zoom.coerceIn(getMinZoom(), getMaxZoom()),
       bearing = camera.bearing,
       pitch = camera.pitch,
@@ -1002,7 +1004,7 @@ internal class GlJsMapSession(
         minZoom = minZoom,
         maxZoom = maxZoom,
       )
-    return destination.copy(bearing = bearing, target = fit.target, pitch = pitch, zoom = fit.zoom)
+    return destination.copy(bearing = bearing, center = fit.target, pitch = pitch, zoom = fit.zoom)
   }
 
   override fun setCameraConstraints(value: CameraConstraints) {
@@ -1011,7 +1013,8 @@ internal class GlJsMapSession(
     map?.let { applyCameraConstraints(it, value) }
   }
 
-  override fun getCameraConstraints(): CameraConstraints = cameraConstraints ?: CameraConstraints()
+  override fun getCameraConstraints(): CameraConstraints =
+    cameraConstraints ?: CameraConstraints.Standard
 
   private fun applyCameraConstraints(map: MaplibreMap, value: CameraConstraints) {
     if (map.getMaxBounds()?.toBoundingBox() != value.boundingBox) {
@@ -1458,7 +1461,7 @@ internal class GlJsMapSession(
 
   /** Sets the camera fields of an options object, with the persistent camera padding. */
   private fun PaddedCameraOptions.applyTarget(position: CameraPosition) {
-    center = position.target.toLngLat()
+    center = position.center.toLngLat()
     zoom = position.zoom
     bearing = position.bearing
     pitch = position.pitch
@@ -1466,7 +1469,7 @@ internal class GlJsMapSession(
   }
 
   private fun PaddedCameraOptions.applyUpdate(update: CameraUpdate) {
-    update.target?.let { center = it.toLngLat() }
+    update.center?.let { center = it.toLngLat() }
     update.zoom?.let { zoom = it }
     update.bearing?.let { bearing = it }
     update.pitch?.let { pitch = it }

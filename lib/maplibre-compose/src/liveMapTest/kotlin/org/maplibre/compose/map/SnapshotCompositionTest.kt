@@ -39,7 +39,6 @@ import org.maplibre.compose.layers.BackgroundLayer
 import org.maplibre.compose.layers.SymbolLayer
 import org.maplibre.compose.layers.TestLayer
 import org.maplibre.compose.sources.GeoJsonData
-import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeoJsonSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.RecordingStyleBinding
@@ -65,7 +64,10 @@ class SnapshotCompositionTest {
         }
       )
     val source =
-      GeoJsonSource("features", GeoJsonData.Features(featureCollectionOf()), GeoJsonOptions())
+      GeoJsonSource(
+        "features",
+        GeoJsonData.Features(featureCollectionOf()),
+      )
     val bitmap = ImageBitmap(1, 1)
     var declared by mutableStateOf(true)
     var visible by mutableStateOf(true)
@@ -75,7 +77,7 @@ class SnapshotCompositionTest {
           if (declared) SymbolLayer("pin", source, visible = visible, iconImage = image(bitmap))
         }
       val request = MapSnapshotRequest(DpSize(4.dp, 4.dp))
-      snapshotter.capture(request)
+      snapshotter.capture(request.size)
       val sourceHandle = assertNotNull(snapshotter.style.sources[source])
       val layerHandle = assertNotNull(snapshotter.style.layers["pin"])
       val imageId = binding.imageIds.single()
@@ -87,18 +89,18 @@ class SnapshotCompositionTest {
       assertFailsWith<IllegalStateException> { snapshotter.style.images.remove(imageId) }
       assertFailsWith<IllegalStateException> { snapshotter.style.setImage(imageId, bitmap) }
 
-      snapshotter.capture(request)
+      snapshotter.capture(request.size)
       assertSame(sourceHandle, snapshotter.style.sources[source])
       assertSame(layerHandle, snapshotter.style.layers["pin"])
       visible = false
-      snapshotter.capture(request)
+      snapshotter.capture(request.size)
       assertEquals(
         JsonPrimitive("none"),
         snapshotter.style.layers["pin"]?.getProperty("visibility"),
       )
 
       declared = false
-      snapshotter.capture(request)
+      snapshotter.capture(request.size)
       assertNull(snapshotter.style.sources[source])
       assertNull(snapshotter.style.layers["pin"])
       assertNull(snapshotter.style.images[imageId])
@@ -136,7 +138,7 @@ class SnapshotCompositionTest {
         }
       val thrown =
         assertFailsWith<MapSnapshotException> {
-          snapshotter.capture(MapSnapshotRequest(DpSize(4.dp, 4.dp)))
+          snapshotter.capture(DpSize(4.dp, 4.dp))
         }
       // Coroutines on the JVM can rethrow a copy that has the original exception as its cause.
       assertTrue(
@@ -176,7 +178,7 @@ class SnapshotCompositionTest {
             onDispose { job.cancel() }
           }
         }
-      snapshotter.capture(MapSnapshotRequest(DpSize(4.dp, 4.dp)))
+      snapshotter.capture(DpSize(4.dp, 4.dp))
       cleanup.await().getOrThrow()
     } finally {
       runtime.close()
@@ -200,7 +202,10 @@ class SnapshotCompositionTest {
       )
     val runtime = mapRuntimeForTest(createSnapshotterAdapter = { adapter })
     val source =
-      GeoJsonSource("features", GeoJsonData.Features(featureCollectionOf()), GeoJsonOptions())
+      GeoJsonSource(
+        "features",
+        GeoJsonData.Features(featureCollectionOf()),
+      )
     val painter = ColorPainter(Color.Red)
     try {
       val snapshotter =
@@ -211,7 +216,7 @@ class SnapshotCompositionTest {
             iconImage = image(painter, size = DpSize(4.dp, 4.dp)),
           )
         }
-      val bitmap = snapshotter.capture(MapSnapshotRequest(DpSize(4.dp, 4.dp)))
+      val bitmap = snapshotter.capture(DpSize(4.dp, 4.dp))
       val pixels = IntArray(16)
       bitmap.readPixels(pixels)
       assertEquals(List(16) { 0xffff0000.toInt() }, pixels.toList())
@@ -254,26 +259,20 @@ class SnapshotCompositionTest {
             )
           SideEffect { observed = evaluation }
         }
-      snapshotter.capture(
-        MapSnapshotRequest(
-          DpSize(30.dp, 20.dp),
-          density = Density(2f, 1.5f),
-          layoutDirection = LayoutDirection.Rtl,
-        )
-      )
+      snapshotter.capture(DpSize(30.dp, 20.dp)) {
+        density = Density(2f, 1.5f)
+        layoutDirection = LayoutDirection.Rtl
+      }
       assertEquals(
         Evaluation("first", DpSize(30.dp, 20.dp), Density(2f, 1.5f), LayoutDirection.Rtl),
         observed,
       )
 
       value = "second"
-      snapshotter.capture(
-        MapSnapshotRequest(
-          DpSize(10.dp, 40.dp),
-          density = Density(3f, 2f),
-          layoutDirection = LayoutDirection.Ltr,
-        )
-      )
+      snapshotter.capture(DpSize(10.dp, 40.dp)) {
+        density = Density(3f, 2f)
+        layoutDirection = LayoutDirection.Ltr
+      }
       assertEquals(
         Evaluation("second", DpSize(10.dp, 40.dp), Density(3f, 2f), LayoutDirection.Ltr),
         observed,

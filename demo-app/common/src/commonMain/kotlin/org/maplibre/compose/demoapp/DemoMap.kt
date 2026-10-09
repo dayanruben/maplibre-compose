@@ -58,6 +58,7 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.DrawableResource
 import org.jetbrains.compose.resources.vectorResource
 import org.maplibre.compose.camera.CameraAnimation
+import org.maplibre.compose.camera.CameraFit
 import org.maplibre.compose.demoapp.generated.Res
 import org.maplibre.compose.demoapp.generated.brightness_auto_24px
 import org.maplibre.compose.demoapp.generated.dark_mode_24px
@@ -106,7 +107,7 @@ internal suspend fun MapState.flyTo(destination: DemoDestination, animation: Cam
     is DemoDestination.FitBounds ->
       animateCameraToBounds(
         boundingBox = destination.bounds,
-        fitPadding = DemoBoundsPadding,
+        fit = CameraFit(fitPadding = DemoBoundsPadding),
         animation = animation,
       )
     DemoDestination.None -> Unit
@@ -137,7 +138,7 @@ internal fun demoMapControls(
     scale = {
       val mapState = checkNotNull(LocalMapState.current)
       val material3 = settings.useMaterial3Controls
-      val metersPerDp = { mapState.viewport?.metersPerDpAtTarget ?: 0.0 }
+      val metersPerDp = { mapState.viewport?.metersPerDpAtCenter ?: 0.0 }
       val zoom = { mapState.cameraPosition.zoom }
       if (material3) {
         MaterialDisappearingScaleBar(metersPerDp = metersPerDp, zoom = zoom)
@@ -456,7 +457,7 @@ private fun PointerPinDestinationOverlay(
     remember(destination, viewport) {
       when (destination) {
         is DemoDestination.ExactCamera ->
-          mapState.screenLocationFromPosition(destination.position.target)?.let(::listOf)
+          mapState.screenLocationFromPosition(destination.position.center)?.let(::listOf)
         is DemoDestination.FitBounds -> {
           val bounds = destination.bounds
           listOf(
@@ -628,8 +629,8 @@ private fun DiagnosticOverlays(state: DemoAppState, modifier: Modifier = Modifie
       val position = state.mapState.cameraPosition
       Text(
         text =
-          "lat ${position.target.latitude.format(4)} " +
-            "lng ${position.target.longitude.format(4)} " +
+          "lat ${position.center.latitude.format(4)} " +
+            "lng ${position.center.longitude.format(4)} " +
             "zoom ${position.zoom.format(1)} " +
             "bearing ${position.bearing.format(0)} " +
             "pitch ${position.pitch.format(0)}",

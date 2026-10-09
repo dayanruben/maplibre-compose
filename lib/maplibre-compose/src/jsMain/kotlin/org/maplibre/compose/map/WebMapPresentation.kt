@@ -23,6 +23,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.maplibre.compose.interaction.MapInteractions
+import org.maplibre.compose.util.ExperimentalMaplibreComposeApi
 import web.dom.document
 import web.html.HTMLElement
 
@@ -40,10 +41,12 @@ import web.html.HTMLElement
  * and supply attribution and loading UI in your framework. Standalone style content has density and
  * layout direction, but no UI composables or view-dependent composition locals.
  */
+// Exposes kotlin-wrappers HTMLElement, which is versioned by date.
+@ExperimentalMaplibreComposeApi
 public class WebMapPresentation(
   public val state: MapState,
   viewportInsets: PaddingValues = PaddingValues(0.dp),
-  cameraConstraints: CameraConstraints = CameraConstraints(),
+  cameraConstraints: CameraConstraints = CameraConstraints.Standard,
   renderOptions: RenderOptions = RenderOptions.Standard,
   interactions: MapInteractions = MapInteractions.Standard,
   layoutDirection: LayoutDirection = LayoutDirection.Ltr,
