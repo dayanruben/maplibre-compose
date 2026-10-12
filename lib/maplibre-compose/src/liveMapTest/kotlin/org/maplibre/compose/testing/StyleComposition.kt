@@ -68,13 +68,14 @@ internal suspend fun composeStyle(
         }
         val reconciler = StyleReconciler()
         var frame = 0L
-        suspend fun pumpFrames() {
+        suspend fun pumpFrames(afterRevision: StyleSnapshot? = null) {
           withTimeout(30.seconds) {
             do {
               if (frameClock.hasAwaiters) frameClock.sendFrame(frame++)
               delay(1)
             } while (
               recomposer.hasPendingWork ||
+                (afterRevision != null && revision === afterRevision) ||
                 revision?.let { !it.imagesPending && awaitRevision(it) } != true
             )
             recomposer.awaitIdle()
@@ -83,9 +84,10 @@ internal suspend fun composeStyle(
         pumpFrames()
         reconciler.apply(style, requireNotNull(revision))
         if (thenChange != null) {
+          val previousRevision = requireNotNull(revision)
           thenChange()
           Snapshot.sendApplyNotifications()
-          pumpFrames()
+          pumpFrames(afterRevision = previousRevision)
           reconciler.apply(style, requireNotNull(revision))
         }
       } finally {
