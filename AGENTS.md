@@ -35,7 +35,9 @@ setup outside mise and the demo checks CI cannot run. For work that mise does
 not cover, run one named Gradle task per invocation. `./gradlew build` builds
 every target, including iOS release frameworks, and can exhaust memory.
 
-- Static checks: `mise run check`; automatic fixes: `mise run fix`.
+- Static checks: `mise run check`; automatic fixes: `mise run fix`. `hk fix`
+  rewrites the working tree and does not stage; add `--stage` to stage the
+  fixes. The pre-commit hook still stages its own.
 - Android Lint: `mise run lint:android`.
 - Tests: `mise run test:android`, `test:android:device`, `test:ios`, `test:js`,
   `test:macos`, or `test:desktop`.
@@ -77,10 +79,10 @@ repository means the MapLibre Native backend used by desktop, Android, and iOS.
   checkouts. Release mode still requires an exact tag. Keep Git access in mise
   tasks and scripts.
 - CI jobs call mise tasks, so a job's command lives in its task. Workflows and
-  composite actions pin each third-party action to a commit SHA with a
-  `# version` comment, the same pin everywhere it is used;
-  `mise run ci:check-action-pins` checks this. Dependabot updates both
-  `.github/workflows` and `.github/actions/*`.
+  composite actions pin each third-party action to a commit SHA with a `#
+  version` comment, the same pin everywhere it is used; `mise run
+  ci:check-action-pins` checks this. Dependabot updates both `.github/workflows`
+  and `.github/actions/*`.
 
 ## Demo app
 
@@ -106,11 +108,10 @@ launcher reads `route`, `camera`, and `extent`:
 `mise run demo:desktop`, `demo:desktop-nucleus`, and `demo:android` take them as
 `--route`, `--camera`, and `--extent` flags. Without the tasks: desktop and
 macOS binaries take `--route=<route>` and friends on the command line, Android
-reads string extras
-(`adb shell am start -n
-org.maplibre.compose.demoapp/.MainActivity --es route demo/castello-plan`),
-iOS takes the same command-line form through `xcrun simctl launch`, and the
-browser reads the query string (`/?route=settings/input`).
+reads string extras (`adb shell am start -n
+org.maplibre.compose.demoapp/.MainActivity --es route demo/castello-plan`), iOS
+takes the same command-line form through `xcrun simctl launch`, and the browser
+reads the query string (`/?route=settings/input`).
 
 On Android, record animations with `adb shell screenrecord` and split the frames
 with ffmpeg; single screencaps miss a 300ms transition.
@@ -139,8 +140,8 @@ Each layer carries a different level of detail:
 Library users know Compose but often not MapLibre, and many read English as a
 second language, so say what the API does in literal terms.
 
-Site pages that show how to use the library import Kotlin examples from
-`// #region` blocks in
+Site pages that show how to use the library import Kotlin examples from `//
+#region` blocks in
 `demo-app/common/src/*/kotlin/org/maplibre/compose/docsnippets/`, which compile
 with the demo app, so examples stay correct as the API changes. Add or update a
 region for each Kotlin example.
@@ -190,10 +191,10 @@ simulator. The ARM64 jobs catch architecture-specific failures, so request the
 label for a change that could behave differently there: ABI or pointer layout,
 architecture-specific artifact selection, loading or linking, or toolchain and
 runner configuration. Shared Kotlin, existing FFI calls, and unrelated CI tasks
-are covered by the default tiers. When requesting it
-(`gh pr edit <number> --add-label 'ci:full'`), say in the PR which platform
-could fail and why. The label works on drafts, persists across pushes, and runs
-only the tiers the PR has not yet run.
+are covered by the default tiers. When requesting it (`gh pr edit <number>
+--add-label 'ci:full'`), say in the PR which platform could fail and why. The
+label works on drafts, persists across pushes, and runs only the tiers the PR
+has not yet run.
 
 ## Code review rules
 
