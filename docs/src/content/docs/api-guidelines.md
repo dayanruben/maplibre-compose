@@ -86,28 +86,53 @@ this guide.
 ```kotlin
 // Do
 class GeoJsonOptions
+
 class UiKitMapHost
+
 fun installMaplibreCompose()
+
 fun pi(): Expression<FloatValue>
+
 fun rememberMapState(): MapState
+
 val LocalViewport = staticCompositionLocalOf<Viewport> { error("No viewport") }
-enum class QuickZoomDirection { UpZoomsIn, DownZoomsIn }
-val pitch: Double                      // style spec term
+
+enum class QuickZoomDirection {
+  UpZoomsIn,
+  DownZoomsIn,
+}
+
+val pitch: Double // style spec term
+
 object LocationIndicatorDefaults
-@Composable fun BasicCompassButton()  // overlay
-@Composable fun CompassButton()       // material3
+
+@Composable fun BasicCompassButton() // overlay
+
+@Composable fun CompassButton() // material3
+
 // package org.maplibre.compose.layer
 // package org.maplibre.compose.layer.internal
 
 // Don't
 class GeoJSONOptions
+
 class UIKitMapHost
+
 fun installMapLibreCompose()
+
 val PI: Expression<FloatValue>
+
 fun mapState(): MapState
+
 val ViewportLocal = staticCompositionLocalOf<Viewport> { error("No viewport") }
-enum class QuickZoomDirection { UP_ZOOMS_IN, DOWN_ZOOMS_IN }
+
+enum class QuickZoomDirection {
+  UP_ZOOMS_IN,
+  DOWN_ZOOMS_IN,
+}
+
 val tilt: Double
+
 class OfflineManager
 // package org.maplibre.compose.layers
 // package org.maplibre.compose.util
@@ -162,11 +187,14 @@ class OfflineManager
 ```kotlin
 // Do
 camera.animateTo(position)
+
 camera.snapTo(position)
+
 require(maximumFps == null || maximumFps > 0) { "maximumFps must be positive, was $maximumFps" }
 
 // Don't
 camera.moveTo(position, true)
+
 require(maximumFps == null || maximumFps > 0)
 ```
 
@@ -210,7 +238,8 @@ shape later is a breaking change.
 ```kotlin
 // Open identity: can hold values with no named constant in this version
 @JvmInline
-public value class LineCap internal constructor(override val value: String) : EnumValue {
+public value class LineCap internal constructor(override val value: String) :
+  EnumValue {
   public companion object : EnumType<LineCap> {
     public val Butt: LineCap = LineCap("butt")
     public val Round: LineCap = LineCap("round")
@@ -219,10 +248,13 @@ public value class LineCap internal constructor(override val value: String) : En
   }
 }
 
-// Open structure: callers can't reference the internal subtype, so their `when` needs `else`
+// Open structure: callers can't reference the internal subtype, so their `when`
+// needs `else`
 public sealed interface MapEvent {
-  public class CameraMoved internal constructor(public val reason: CameraMoveReason) : MapEvent
+  public class CameraMoved
+  internal constructor(public val reason: CameraMoveReason) : MapEvent
 }
+
 internal object UnspecifiedMapEvent : MapEvent
 ```
 
@@ -266,19 +298,25 @@ changing the shape.
 
 ```kotlin
 @Immutable
-public data class RenderOptions private constructor(
+public data class RenderOptions
+private constructor(
   public val maximumFps: Int?,
   public val tileLod: TileLodOptions,
 ) {
-  private constructor(builder: Builder) : this(builder.maximumFps, builder.tileLod)
+  private constructor(
+    builder: Builder,
+  ) : this(builder.maximumFps, builder.tileLod)
 
-  public constructor(from: RenderOptions = Standard, block: Builder.() -> Unit) :
-    this(Builder(from).apply(block))
+  public constructor(
+    from: RenderOptions = Standard,
+    block: Builder.() -> Unit,
+  ) : this(Builder(from).apply(block))
 
   @MapOptionsDsl
   public class Builder internal constructor(from: RenderOptions?) {
     public var maximumFps: Int? = from?.maximumFps
-    public var tileLod: TileLodOptions = from?.tileLod ?: TileLodOptions.Standard
+    public var tileLod: TileLodOptions =
+      from?.tileLod ?: TileLodOptions.Standard
   }
 
   public companion object {
@@ -286,10 +324,11 @@ public data class RenderOptions private constructor(
   }
 }
 
-val options = RenderOptions(from = RenderOptions.Standard) {
-  maximumFps = 30
-  tileLod = TileLodOptions.Performance
-}
+val options =
+  RenderOptions(from = RenderOptions.Standard) {
+    maximumFps = 30
+    tileLod = TileLodOptions.Performance
+  }
 ```
 
 ## 6. Composables
@@ -342,10 +381,10 @@ val options = RenderOptions(from = RenderOptions.Standard) {
 ```kotlin
 @Composable
 public fun MapButton(
-  onClick: () -> Unit,                                  // required
-  modifier: Modifier = Modifier,                        // first optional
+  onClick: () -> Unit, // required
+  modifier: Modifier = Modifier, // first optional
   colors: MapButtonColors = MapButtonDefaults.colors(), // public default
-  content: @Composable () -> Unit,                      // trailing lambda
+  content: @Composable () -> Unit, // trailing lambda
 )
 
 LineLayer(id = "routes", source = routes) {
@@ -442,7 +481,8 @@ read by callers.
   [[4]](https://kotlinlang.org/docs/api-guidelines-predictability.html#avoid-exposing-mutable-state)
 
 ```kotlin
-public data class RenderStats internal constructor(
+public data class RenderStats
+internal constructor(
   public val frameCount: Long,
   public val drawCallCount: Long,
   public val droppedFrameCount: Long, // added later, so it goes last
@@ -480,6 +520,7 @@ public sealed interface MapSnapshotter
 ```kotlin
 // Do: package org.maplibre.compose.map
 public class AndroidMapPresentation
+
 public class WebMapPresentation
 
 // Don't: package org.maplibre.compose.browser
@@ -514,11 +555,11 @@ public class BrowserMapPresentation
 | Color                                 | Compose `Color`                                               |
 
 ```kotlin
-val animationDuration: Duration    // Do
-val animationDurationMillis: Long  // Don't, when Duration fits
-val tileZoom: Int                  // discrete
-val zoom: Double                   // continuous
-val uptimeMillis: Long             // plain number, unit in the name
+val animationDuration: Duration // Do
+val animationDurationMillis: Long // Don't, when Duration fits
+val tileZoom: Int // discrete
+val zoom: Double // continuous
+val uptimeMillis: Long // plain number, unit in the name
 ```
 
 ## 11. Documentation

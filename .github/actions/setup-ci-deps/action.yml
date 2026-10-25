@@ -129,7 +129,7 @@ runs:
         # tree extracted by an older one: bin paths and `.mise-bins` layout
         # differ, and `mise install --locked` then reports the version already
         # installed without rewriting those files.
-        mise_version="2026.10.12"
+        mise_version="2026.10.18"
         prefix="toolchains-v1-${{ runner.os }}-${{ runner.arch }}-${ImageOS:-unknown}-mise${mise_version}"
         echo "prefix=${prefix}" >> "$GITHUB_OUTPUT"
         echo "key=${prefix}-${{ hashFiles('mise.toml', 'mise.lock') }}" >> "$GITHUB_OUTPUT"
@@ -158,14 +158,14 @@ runs:
         xcodebuild -version
 
     - name: Install toolchains
-      uses: jdx/mise-action@9b200bcecbfd6303e69a4a261b2e09e3757440a7 # v5.2.0
+      uses: jdx/mise-action@8418fedb1110381a0d3ba51a7a415d7c1b884550 # v5.2.2
       env:
         # The postinstall hook installs Git hooks, which no CI job commits
         # through.
         MISE_NO_HOOKS: "1"
       with:
         # Keep in sync with mise_version in "Compute toolchain cache key".
-        version: 2026.10.12
+        version: 2026.10.18
         cache: false
 
     - name: Save toolchains
@@ -191,8 +191,8 @@ runs:
         restore-keys: |
           pkg-v1-${{ runner.os }}-${{ runner.arch }}-
 
-    # A cold run costs minutes: one ktfmt JVM per Kotlin file. A stale entry is
-    # safe, since dprint keys each result by file content and plugin config.
+    # Incremental cache. A stale entry is safe, since dprint keys each result
+    # by file content and plugin config.
     - name: Cache dprint results
       if: ${{ inputs.dprint-cache == 'true' }}
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -9,7 +9,7 @@ android-compileSdk = "37"
 android-buildTools = "36.0.0"
 # Build the JNI shim in lib/maplibre-compose-runtime-vulkan-android. Read by
 # .mise/bin/sync-android-packages too.
-android-ndk = "28.2.13676358"
+android-ndk = "30.0.16248370"
 android-cmake = "4.1.2"
 android-minSdk = "24"
 # Wear Compose requires API 25.
@@ -36,13 +36,13 @@ fflate = "0.8.3"
 jsJodaTimezone = "2.22.0"
 htmlConverterCompose = "1.1.1"
 hms-location = "6.12.0.300"
-nucleus = "3.0.0-dev-202610132318"
+nucleus = "3.0.0-dev-202610200221"
 kermit = "2.2.0"
 kotlin-wrappers = "2026.10.1"
 kotlinx-coroutines = "1.11.0"
 kotlinx-atomicfu = "0.33.0"
 kotlinx-io = "0.9.1"
-kotlinx-serialization = "1.11.0"
+kotlinx-serialization = "1.12.0"
 ktor = "3.6.0"
 lifecycleRuntimeCompose = "2.11.0"
 lwjgl = "3.4.2"
@@ -60,7 +60,7 @@ maplibre-nativeFfi = "0.202610.2"
 # @maplibre/maplibre-gl-style-spec dependency when bumping maplibre-js.
 maplibre-styleSpec = "26.4.4"
 maplibre-vtPbf = "4.3.2"
-mobilityData = "0.6.0"
+mobilityData = "0.7.2"
 playServices-location = "21.4.0"
 spatialk = "0.8.0"
 robolectric = "4.17"
@@ -73,7 +73,7 @@ gradle-mavenPublish = "0.37.0"
 
 # Libraries coupled to Compose: keep Compose up to date and set others accordingly.
 # https://www.jetbrains.com/help/kotlin-multiplatform-dev/compose-compatibility-and-versioning.html#jetpack-compose-artifacts-used
-gradle-compose = "1.12.1"
+gradle-compose = "1.12.2"
 androidx-compose = "1.12.0"
 jetbrains-compose-material3 = "1.12.0-alpha03"
 # 1.3.x is still beta.
