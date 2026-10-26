@@ -50,18 +50,6 @@ final enum class org.maplibre.compose.interaction/GestureAnchor : kotlin/Enum<or
     final fun values(): kotlin/Array<org.maplibre.compose.interaction/GestureAnchor> // org.maplibre.compose.interaction/GestureAnchor.values|values#static(){}[0]
 }
 
-final enum class org.maplibre.compose.interaction/HapticEmphasis : kotlin/Enum<org.maplibre.compose.interaction/HapticEmphasis> { // org.maplibre.compose.interaction/HapticEmphasis|null[0]
-    enum entry Emphasized // org.maplibre.compose.interaction/HapticEmphasis.Emphasized|null[0]
-    enum entry Standard // org.maplibre.compose.interaction/HapticEmphasis.Standard|null[0]
-    enum entry Subtle // org.maplibre.compose.interaction/HapticEmphasis.Subtle|null[0]
-
-    final val entries // org.maplibre.compose.interaction/HapticEmphasis.entries|#static{}entries[0]
-        final fun <get-entries>(): kotlin.enums/EnumEntries<org.maplibre.compose.interaction/HapticEmphasis> // org.maplibre.compose.interaction/HapticEmphasis.entries.<get-entries>|<get-entries>#static(){}[0]
-
-    final fun valueOf(kotlin/String): org.maplibre.compose.interaction/HapticEmphasis // org.maplibre.compose.interaction/HapticEmphasis.valueOf|valueOf#static(kotlin.String){}[0]
-    final fun values(): kotlin/Array<org.maplibre.compose.interaction/HapticEmphasis> // org.maplibre.compose.interaction/HapticEmphasis.values|values#static(){}[0]
-}
-
 final enum class org.maplibre.compose.interaction/QuickZoomDirection : kotlin/Enum<org.maplibre.compose.interaction/QuickZoomDirection> { // org.maplibre.compose.interaction/QuickZoomDirection|null[0]
     enum entry DownZoomsIn // org.maplibre.compose.interaction/QuickZoomDirection.DownZoomsIn|null[0]
     enum entry UpZoomsIn // org.maplibre.compose.interaction/QuickZoomDirection.UpZoomsIn|null[0]
@@ -1268,7 +1256,7 @@ final class org.maplibre.compose.expressions.dsl/Interpolation { // org.maplibre
 }
 
 final class org.maplibre.compose.interaction/BearingHapticsBuilder { // org.maplibre.compose.interaction/BearingHapticsBuilder|null[0]
-    final fun notch(org.maplibre.compose.interaction/BearingTargets, org.maplibre.compose.interaction/HapticEmphasis = ...) // org.maplibre.compose.interaction/BearingHapticsBuilder.notch|notch(org.maplibre.compose.interaction.BearingTargets;org.maplibre.compose.interaction.HapticEmphasis){}[0]
+    final fun notch(org.maplibre.compose.interaction/BearingTargets, androidx.compose.ui.hapticfeedback/HapticFeedbackType = ...) // org.maplibre.compose.interaction/BearingHapticsBuilder.notch|notch(org.maplibre.compose.interaction.BearingTargets;androidx.compose.ui.hapticfeedback.HapticFeedbackType){}[0]
 }
 
 final class org.maplibre.compose.interaction/BearingSnappingBuilder { // org.maplibre.compose.interaction/BearingSnappingBuilder|null[0]
@@ -4804,6 +4792,12 @@ sealed interface org.maplibre.compose.offline/DownloadProgress { // org.maplibre
         final fun toString(): kotlin/String // org.maplibre.compose.offline/DownloadProgress.TileLimitExceeded.toString|toString(){}[0]
     }
 
+    final object Deleted : org.maplibre.compose.offline/DownloadProgress { // org.maplibre.compose.offline/DownloadProgress.Deleted|null[0]
+        final fun equals(kotlin/Any?): kotlin/Boolean // org.maplibre.compose.offline/DownloadProgress.Deleted.equals|equals(kotlin.Any?){}[0]
+        final fun hashCode(): kotlin/Int // org.maplibre.compose.offline/DownloadProgress.Deleted.hashCode|hashCode(){}[0]
+        final fun toString(): kotlin/String // org.maplibre.compose.offline/DownloadProgress.Deleted.toString|toString(){}[0]
+    }
+
     final object NotReported : org.maplibre.compose.offline/DownloadProgress { // org.maplibre.compose.offline/DownloadProgress.NotReported|null[0]
         final fun equals(kotlin/Any?): kotlin/Boolean // org.maplibre.compose.offline/DownloadProgress.NotReported.equals|equals(kotlin.Any?){}[0]
         final fun hashCode(): kotlin/Int // org.maplibre.compose.offline/DownloadProgress.NotReported.hashCode|hashCode(){}[0]
@@ -5119,6 +5113,9 @@ final val org.maplibre.compose.offline/offlineStorage // org.maplibre.compose.of
     final fun (org.maplibre.compose.map/MapRuntime).<get-offlineStorage>(): org.maplibre.compose.offline/OfflineStorage // org.maplibre.compose.offline/offlineStorage.<get-offlineStorage>|<get-offlineStorage>@org.maplibre.compose.map.MapRuntime(){}[0]
 
 // Targets: [apple]
+final val org.maplibre.compose.offline/org_maplibre_compose_offline_DownloadProgress_Deleted$stableprop // org.maplibre.compose.offline/org_maplibre_compose_offline_DownloadProgress_Deleted$stableprop|#static{}org_maplibre_compose_offline_DownloadProgress_Deleted$stableprop[0]
+
+// Targets: [apple]
 final val org.maplibre.compose.offline/org_maplibre_compose_offline_DownloadProgress_Error$stableprop // org.maplibre.compose.offline/org_maplibre_compose_offline_DownloadProgress_Error$stableprop|#static{}org_maplibre_compose_offline_DownloadProgress_Error$stableprop[0]
 
 // Targets: [apple]
@@ -5222,6 +5219,9 @@ final fun org.maplibre.compose.mlnffi/org_maplibre_compose_mlnffi_MlnFfiMapFrame
 
 // Targets: [apple]
 final fun org.maplibre.compose.mlnffi/org_maplibre_compose_mlnffi_MlnFfiMapFrameAcquisition_NotReady$stableprop_getter(): kotlin/Int // org.maplibre.compose.mlnffi/org_maplibre_compose_mlnffi_MlnFfiMapFrameAcquisition_NotReady$stableprop_getter|org_maplibre_compose_mlnffi_MlnFfiMapFrameAcquisition_NotReady$stableprop_getter(){}[0]
+
+// Targets: [apple]
+final fun org.maplibre.compose.offline/org_maplibre_compose_offline_DownloadProgress_Deleted$stableprop_getter(): kotlin/Int // org.maplibre.compose.offline/org_maplibre_compose_offline_DownloadProgress_Deleted$stableprop_getter|org_maplibre_compose_offline_DownloadProgress_Deleted$stableprop_getter(){}[0]
 
 // Targets: [apple]
 final fun org.maplibre.compose.offline/org_maplibre_compose_offline_DownloadProgress_Error$stableprop_getter(): kotlin/Int // org.maplibre.compose.offline/org_maplibre_compose_offline_DownloadProgress_Error$stableprop_getter|org_maplibre_compose_offline_DownloadProgress_Error$stableprop_getter(){}[0]
