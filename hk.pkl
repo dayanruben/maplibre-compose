@@ -11,10 +11,7 @@ steps {
     // the default batch=false hits the cmd length limit on windows
     batch = true
   }
-  ["actionlint"] {
-    glob = List(".github/workflows/*.yml", ".github/workflows/*.yaml")
-    check = "actionlint {{files}}"
-  }
+  ["jactionlint"] = (Builtins.jactionlint) {}
   ["action-pins"] {
     glob =
       List(
@@ -30,7 +27,12 @@ steps {
     check = "ruff check {{files}}"
     fix = "ruff check --fix {{files}}"
   }
-  // actionlint covers the `run:` blocks in workflows.
+  // The docs context includes root tasks; check both configured environments.
+  ["mise-tasks"] {
+    glob = List("**/mise.toml", "mise.*.toml", "**/.mise/tasks/**")
+    check = "mise -C docs tasks validate && mise -C docs -E android tasks validate"
+  }
+  // jactionlint covers the `run:` blocks in workflows and composite actions.
   ["shellcheck"] {
     glob = List("**/*.sh", ".mise/bin/*")
     check = "shellcheck {{files}}"

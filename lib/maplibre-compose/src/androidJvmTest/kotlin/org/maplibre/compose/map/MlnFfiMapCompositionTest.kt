@@ -84,7 +84,6 @@ import org.maplibre.compose.overlay.include
 import org.maplibre.compose.sources.RasterTileSource
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.testing.RecordingList
-import org.maplibre.compose.testing.skipUnlessSnapshotsAvailable
 import org.maplibre.compose.util.MaplibreComposable
 import org.maplibre.spatialk.geojson.Position
 
@@ -464,7 +463,7 @@ class MlnFfiMapCompositionTest {
           assertEquals(start.zoom, camera.zoom, 1e-6)
           assertEquals(start.bearing, camera.bearing, 1e-6)
           assertEquals(start.pitch, camera.pitch, 1e-6)
-          return checkNotNull(state.screenLocationFromPosition(start.center)).y.value
+          return checkNotNull(state.viewport?.screenLocationFromPosition(start.center)).y.value
         }
 
         for (direction in listOf(-1f, 1f)) {
@@ -628,7 +627,6 @@ class MlnFfiMapCompositionTest {
   @Test
   fun one_style_composition_is_evaluated_independently_for_a_map_and_snapshotter() =
     runFfiComposeUiTest {
-      skipUnlessSnapshotsAvailable()
       withTestRuntime(runtimeOptions) { runtime ->
         val evaluatorIdentities = mutableSetOf<Any>()
         val content: @Composable @MaplibreComposable () -> Unit = {

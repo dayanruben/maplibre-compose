@@ -14,8 +14,6 @@ import org.maplibre.compose.mlnffi.MlnFfiMapDestination
 import org.maplibre.compose.mlnffi.MlnFfiMapFrameProjection
 import org.maplibre.compose.mlnffi.MlnFfiMapPresentationAnchor
 import org.maplibre.compose.util.DpPadding
-import org.maplibre.compose.util.VisibleBounds
-import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.compose.util.metersPerDpAtLatitude
 import org.maplibre.compose.util.toCameraOptions
 import org.maplibre.compose.util.toDpOffset
@@ -23,14 +21,13 @@ import org.maplibre.compose.util.toEdgeInsets
 import org.maplibre.compose.util.toLatLng
 import org.maplibre.compose.util.toPosition
 import org.maplibre.compose.util.toScreenPoint
-import org.maplibre.nativeffi.generated.CameraOptions
-import org.maplibre.nativeffi.generated.CameraUpdate
-import org.maplibre.nativeffi.generated.EdgeInsets
-import org.maplibre.nativeffi.generated.GeneratedApi
-import org.maplibre.nativeffi.generated.MapHandle
-import org.maplibre.nativeffi.generated.MapProjectionHandle
-import org.maplibre.nativeffi.generated.MapSnapshot
-import org.maplibre.nativeffi.generated.MapView
+import org.maplibre.nativeffi.CameraOptions
+import org.maplibre.nativeffi.CameraUpdate
+import org.maplibre.nativeffi.EdgeInsets
+import org.maplibre.nativeffi.MapHandle
+import org.maplibre.nativeffi.MapProjectionHandle
+import org.maplibre.nativeffi.MapSnapshot
+import org.maplibre.nativeffi.MapView
 import org.maplibre.spatialk.geojson.Position
 
 /** Main-thread snapshot cache, with a separate projection borrow for presented frames. */
@@ -50,7 +47,7 @@ internal class NativeViewport {
   private val projection: MapProjectionHandle?
     get() =
       cachedProjection
-        ?: snapshot?.view?.let(GeneratedApi::mapProjectionCreate)?.also { cachedProjection = it }
+        ?: snapshot?.view?.let(MapProjectionHandle::create)?.also { cachedProjection = it }
 
   private var extents: MapViewportExtents? = null
   private var cachedViewport: Viewport? = null
@@ -115,7 +112,7 @@ internal class NativeViewport {
   fun captureFrameProjection(
     view: MapView,
     extent: MapExtent,
-  ): MlnFfiMapFrameProjection = FrameProjection(extent, GeneratedApi.mapProjectionCreate(view))
+  ): MlnFfiMapFrameProjection = FrameProjection(extent, MapProjectionHandle.create(view))
 
   fun presentationAnchor(extent: MapExtent): MlnFfiMapPresentationAnchor {
     val padding = renderedCameraPadding
@@ -186,10 +183,6 @@ internal class NativeViewport {
         extents = it
       }
 
-  fun getVisibleBounds(): VisibleBounds = viewportExtents().bounds
-
-  fun getVisibleRegion(): VisibleRegion = viewportExtents().region
-
   fun getViewport(): Viewport? {
     if (!hasViewport || size == DpSize.Zero) return null
     cachedViewport?.let {
@@ -203,6 +196,7 @@ internal class NativeViewport {
         visibleRegion = extents.region,
         metersPerDpAtCenter = metersPerDpAtLatitude(camera.center.latitude),
       )
+      .withProjection(snapshot?.view?.let(::MapViewProjection))
       .also { cachedViewport = it }
   }
 
@@ -226,7 +220,7 @@ internal class NativeViewport {
     return screenLocationFromPosition(position)
   }
 
-  fun metersPerDpAtLatitude(latitude: Double): Double =
+  private fun metersPerDpAtLatitude(latitude: Double): Double =
     projection?.metersPerPixelAtLatitude(latitude.coerceIn(-90.0, 90.0))
       ?: metersPerDpAtLatitude(camera.zoom, latitude)
 }

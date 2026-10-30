@@ -26,11 +26,11 @@ import org.maplibre.compose.testing.skipMapTest
 import org.maplibre.compose.util.DpPadding
 import org.maplibre.compose.util.VisibleRegion
 import org.maplibre.compose.util.toPosition
-import org.maplibre.nativeffi.generated.EdgeInsets
-import org.maplibre.nativeffi.generated.GeneratedApi
-import org.maplibre.nativeffi.generated.MapHandle
-import org.maplibre.nativeffi.generated.ProjectionMode
-import org.maplibre.nativeffi.generated.ScreenPoint
+import org.maplibre.nativeffi.EdgeInsets
+import org.maplibre.nativeffi.MapHandle
+import org.maplibre.nativeffi.MapProjectionHandle
+import org.maplibre.nativeffi.ProjectionMode
+import org.maplibre.nativeffi.ScreenPoint
 import org.maplibre.spatialk.geojson.Position
 
 class MlnFfiViewportTest {
@@ -67,7 +67,7 @@ class MlnFfiViewportTest {
       val expected =
         assertNotNull(
           session.readMap { map ->
-            GeneratedApi.mapProjectionCreate(map.getSnapshot().view).use { projection ->
+            MapProjectionHandle.create(map.getSnapshot().view).use { projection ->
               listOf(viewport.cameraPosition.center.latitude, -90.0, 90.0)
                 .map(projection::metersPerPixelAtLatitude)
             }
@@ -76,10 +76,10 @@ class MlnFfiViewportTest {
       assertEquals(expected[0], assertNotNull(session.getViewport()).metersPerDpAtCenter)
       assertEquals(
         expected[0],
-        session.metersPerDpAtLatitude(viewport.cameraPosition.center.latitude),
+        viewport.metersPerDpAtLatitude(viewport.cameraPosition.center.latitude),
       )
-      assertEquals(expected[1], session.metersPerDpAtLatitude(-100.0))
-      assertEquals(expected[2], session.metersPerDpAtLatitude(100.0))
+      assertEquals(expected[1], viewport.metersPerDpAtLatitude(-100.0))
+      assertEquals(expected[2], viewport.metersPerDpAtLatitude(100.0))
     }
   }
 
@@ -119,7 +119,7 @@ class MlnFfiViewportTest {
       assertEquals(target.zoom, after.zoom, 0.0001)
       assertEquals(target.bearing, after.bearing, 0.0001)
       assertEquals(start.padding, after.padding)
-      assertEquals(36.0, fixture.session.readMap { it.camera().padding?.top })
+      assertEquals(36.0, fixture.session.readMap { it.camera().padding.top })
     }
   }
 
@@ -212,7 +212,7 @@ class MlnFfiViewportTest {
         fixture.session.getCameraPosition().zoom == camera.zoom &&
           fixture.session.getViewport() != null
       }
-      val before = fixture.session.getVisibleRegion()
+      val before = fixture.session.getViewport()?.visibleRegion
 
       // A projection mode change moves the viewport's corners without a camera event.
       state
@@ -224,7 +224,7 @@ class MlnFfiViewportTest {
       assertNotEquals(before, engineRegion, "the raw access must move the viewport")
 
       fixture.awaitUntil("the viewport to reflect the raw access", timeout = 10.seconds) {
-        fixture.session.getVisibleRegion() == engineRegion
+        fixture.session.getViewport()?.visibleRegion == engineRegion
       }
       assertEquals(engineRegion, fixture.session.getViewport()?.visibleRegion)
     }
@@ -235,7 +235,7 @@ class MlnFfiViewportTest {
     val width = extent.width.toDouble()
     val height = extent.height.toDouble()
     val corners =
-      GeneratedApi.mapProjectionCreate(getSnapshot().view).use { projection ->
+      MapProjectionHandle.create(getSnapshot().view).use { projection ->
         listOf(
             ScreenPoint(0.0, 0.0),
             ScreenPoint(width, 0.0),

@@ -190,8 +190,8 @@ class MapQueryTest {
         it.state.queryRenderedFeatures(rect = DpRect(0.dp, 0.dp, 512.dp, 512.dp)).isNotEmpty()
       }
 
-      val westAt = assertNotNull(it.state.screenLocationFromPosition(WestPoint))
-      val eastAt = assertNotNull(it.state.screenLocationFromPosition(EastPoint))
+      val westAt = assertNotNull(it.state.viewport?.screenLocationFromPosition(WestPoint))
+      val eastAt = assertNotNull(it.state.viewport?.screenLocationFromPosition(EastPoint))
       val westHits = it.state.queryRenderedFeatures(offset = westAt)
       val eastHits = it.state.queryRenderedFeatures(offset = eastAt)
 
@@ -222,7 +222,7 @@ class MapQueryTest {
         assertNotNull(it.state.currentMapAttachment)
           .queryRenderedFeaturesByLayer(
             Center,
-            mapOf("front-fill" to 0.dp, "back-fill" to 4.dp, "no-such-layer" to 0.dp),
+            mapOf("front-fill" to 0.dp, "back-fill" to 0.dp, "no-such-layer" to 0.dp),
           )
 
       assertEquals(setOf("front"), hits.getValue("front-fill").names())
