@@ -564,6 +564,7 @@ def measure(args):
                 if not installed.endswith("Success"):
                     device("uninstall", manifest["apks"][kind]["package"], check=False)
                     device("install", str(path))
+                device(*runner.android_compile_args(manifest["apks"][kind]["package"]))
             plan = [
                 e for e in manifest["plan"] if not args.case or e["case"] in args.case
             ]
@@ -650,7 +651,12 @@ def measure_one(device, config, output, log_file):
             report = capture(
                 device, json.dumps(config, separators=(",", ":")), output, log_file
             )
-        except (RuntimeError, ValueError, subprocess.CalledProcessError) as error:
+        except (
+            RuntimeError,
+            TimeoutError,
+            ValueError,
+            subprocess.CalledProcessError,
+        ) as error:
             print(f"[{device.serial}] failed: {error}", flush=True)
             continue
         status = device.thermal()
