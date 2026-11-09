@@ -55,7 +55,6 @@ import org.maplibre.compose.sources.ClusterIdProperty
 import org.maplibre.compose.sources.CustomGeometrySourceOptions
 import org.maplibre.compose.sources.CustomVectorTileSourceOptions
 import org.maplibre.compose.sources.GeoJsonData
-import org.maplibre.compose.sources.GeoJsonOptions
 import org.maplibre.compose.sources.GeometryTileProvider
 import org.maplibre.compose.sources.Source
 import org.maplibre.compose.sources.TileCoordinate
@@ -518,6 +517,10 @@ internal class GlJsStyleBinding(
     }
   }
 
+  override fun invalidateCustomVectorSourceBounds(sourceId: String, bounds: BoundingBox) {
+    reloadCustomSource(sourceId)
+  }
+
   override fun invalidateCustomVectorSourceTile(sourceId: String, tile: TileCoordinate) {
     reloadCustomSource(sourceId)
   }
@@ -587,11 +590,7 @@ internal class GlJsStyleBinding(
     }
   }
 
-  override fun submitGeoJsonData(
-    sourceId: String,
-    data: GeoJsonData,
-    fallbackOptions: GeoJsonOptions,
-  ) {
+  override fun submitGeoJsonData(sourceId: String, data: GeoJsonData) {
     requireCurrent()
     mutate("set data on source '$sourceId'") {
       val value =

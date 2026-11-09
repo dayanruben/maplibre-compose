@@ -44,6 +44,11 @@ internal class MlnFfiCameraTransitions(private val postToMain: (action: () -> Un
   private var nextId = 0uL
   private var anchor: Anchor? = null
 
+  /**
+   * A transition ID that no transition started here uses, for a camera change started elsewhere.
+   */
+  fun reserveId(): ULong = ++nextId
+
   fun start(
     map: MapHandle,
     animation: AnimationOptions,
@@ -93,6 +98,6 @@ internal class MlnFfiCameraTransitions(private val postToMain: (action: () -> Un
   fun cancelAnchor() {
     val current = anchor.also { anchor = null } ?: return
     current.transition.continuation.cancel(CancellationException("The anchor viewport changed"))
-    current.transition.map.discarding.cancelCameraTransition(current.transition.id)
+    current.transition.map.discarding.cancelCameraTransitionsWithId(current.transition.id)
   }
 }

@@ -12,7 +12,6 @@ import kotlin.coroutines.resume
 import kotlin.time.Duration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -30,7 +29,7 @@ import org.maplibre.compose.camera.internal.runCameraCommand
 import org.maplibre.compose.camera.resolveScreenPoint
 import org.maplibre.compose.expressions.ast.CompiledExpression
 import org.maplibre.compose.expressions.value.BooleanValue
-import org.maplibre.compose.interaction.BearingSnapping
+import org.maplibre.compose.interaction.internal.GestureMomentum
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.mlnffi.MapRenderBackend
 import org.maplibre.compose.mlnffi.MlnFfiFrameResult
@@ -40,8 +39,6 @@ import org.maplibre.compose.mlnffi.MlnFfiMapFrameProjection
 import org.maplibre.compose.mlnffi.MlnFfiMapHostSession
 import org.maplibre.compose.mlnffi.MlnFfiMapRenderer
 import org.maplibre.compose.mlnffi.MlnFfiRuntime
-import org.maplibre.compose.mlnffi.reportFailure
-import org.maplibre.compose.mlnffi.use
 import org.maplibre.compose.style.BaseStyle
 import org.maplibre.compose.style.LoadedStyleContents
 import org.maplibre.compose.style.MlnFfiRenderSessions
@@ -69,12 +66,16 @@ import org.maplibre.compose.util.toPosition
 import org.maplibre.compose.util.toScreenPoint
 import org.maplibre.nativeffi.AnimationOptions
 import org.maplibre.nativeffi.BoundOptions
+import org.maplibre.nativeffi.CameraChangeSource
 import org.maplibre.nativeffi.CameraDelta
 import org.maplibre.nativeffi.CameraFitOptions
 import org.maplibre.nativeffi.CameraOptions
+import org.maplibre.nativeffi.CameraTransitionEnd
+import org.maplibre.nativeffi.CameraTransitionHandler
+import org.maplibre.nativeffi.CameraTransitionOutcome
 import org.maplibre.nativeffi.CameraUpdate as FfiCameraUpdate
 import org.maplibre.nativeffi.CameraUpdateMode
-import org.maplibre.nativeffi.CommandCompletion
+import org.maplibre.nativeffi.Completion
 import org.maplibre.nativeffi.EdgeInsets
 import org.maplibre.nativeffi.GesturePhase
 import org.maplibre.nativeffi.LogicalExtent
@@ -84,12 +85,13 @@ import org.maplibre.nativeffi.MapOptions
 import org.maplibre.nativeffi.MapProjectionHandle
 import org.maplibre.nativeffi.MapTileOptions
 import org.maplibre.nativeffi.MaplibreException
-import org.maplibre.nativeffi.ProjectionMode
+import org.maplibre.nativeffi.ProjectionModeOptions
 import org.maplibre.nativeffi.RenderSessionHandle
 import org.maplibre.nativeffi.RenderedFeature
 import org.maplibre.nativeffi.RenderedQueryGeometry
 import org.maplibre.nativeffi.RuntimeEvent
 import org.maplibre.nativeffi.RuntimeEventFlag
+import org.maplibre.nativeffi.RuntimeEventPayload
 import org.maplibre.nativeffi.RuntimeEventType
 import org.maplibre.nativeffi.ScreenBox
 import org.maplibre.nativeffi.ScreenPoint
@@ -103,10 +105,8 @@ import org.maplibre.spatialk.geojson.toJson
 
 /** The events [MlnFfiMapSession.handleEvent] consumes. */
 private val HandledMapEvents: RuntimeEventFlag =
-  RuntimeEventFlag.MAP_STYLE_LOADED or
-    RuntimeEventFlag.MAP_IDLE or
+  RuntimeEventFlag.MAP_IDLE or
     RuntimeEventFlag.MAP_SOURCE_CHANGED or
-    RuntimeEventFlag.MAP_LOADING_FAILED or
     RuntimeEventFlag.MAP_CAMERA_WILL_CHANGE or
     RuntimeEventFlag.MAP_CAMERA_IS_CHANGING or
     RuntimeEventFlag.MAP_CAMERA_DID_CHANGE or
@@ -183,11 +183,16 @@ internal class MlnFfiMapSession(
   private var requestedStyle: BaseStyle? = null
   private val styleLoadTracker = StyleLoadTracker()
 
-  /** The current request and the completion carrying its native generation. Main only. */
-  private var styleCompletion: Deferred<CommandCompletion>? = null
+  /** The style request whose load command has not completed yet. Main only. */
+  private var loadingStyleRequest: StyleRequestId? = null
   private var styleCommandGroupOpen = false
   private var activeGestureToken: CameraInputToken? = null
   private var gestureBearing: Double? = null
+
+  /** The momentum that continues an ended gesture, until the core reports its end. Main only. */
+  private var glide: Glide? = null
+
+  private class Glide(val token: CameraInputToken, val transitionId: ULong, var bearing: Double)
 
   private var styleBinding: MlnFfiStyleBinding? = null
 
@@ -241,6 +246,8 @@ internal class MlnFfiMapSession(
     presentation.onSurfaceLost(session)
   }
 
+  override fun onTargetLost(session: MlnFfiMapHostSession) = presentation.releaseTarget(session)
+
   override fun render(
     host: MlnFfiMapHostSession,
     frame: MlnFfiMapFrame,
@@ -285,7 +292,7 @@ internal class MlnFfiMapSession(
         ?.let(failures::addCleanupFailure)
       runCatching { detachPresentation() }.exceptionOrNull()?.let(failures::addCleanupFailure)
       runCatching { stopMap() }.exceptionOrNull()?.let(failures::addCleanupFailure)
-      runCatching { map?.discarding?.cancelTransitions() }
+      runCatching { map?.discarding?.cancelCameraTransitions() }
         .exceptionOrNull()
         ?.let(failures::addCleanupFailure)
       runCatching { retireOwnerState() }.exceptionOrNull()?.let(failures::addCleanupFailure)
@@ -369,7 +376,7 @@ internal class MlnFfiMapSession(
         runCatching {
           previous?.await()?.getOrThrow()
           pendingAttach?.await()
-          map?.cancelTransitions()?.await()
+          map?.cancelCameraTransitions()?.await()
           viewport.detach()
           presentationActive = false
           presentation.release()
@@ -381,7 +388,7 @@ internal class MlnFfiMapSession(
 
   private suspend fun createMap() {
     val runtime = owner.awaitRuntime()
-    val (created, ready) =
+    val created =
       runtime.createMap(
         MapOptions(
           // Bootstrap extent until a render target applies its own. Scale is fixed for the map.
@@ -391,7 +398,7 @@ internal class MlnFfiMapSession(
       )
     try {
       check(owner.register(created, child)) { "The map runtime is closed" }
-      ready.await()
+      created.ready.await()
       this@MlnFfiMapSession.map = created
     } catch (error: Throwable) {
       this@MlnFfiMapSession.map = null
@@ -401,11 +408,11 @@ internal class MlnFfiMapSession(
       }
       throw error
     }
-    viewport.prepareCamera(requestedCamera)?.let { created.updateCamera(it).report("move") }
+    viewport.prepareCamera(requestedCamera)?.let { created.discarding.updateCamera(it) }
     cameraConstraints?.let { created.applyConstraints(it) }
     renderSettings?.let { created.applyRenderSettings(it, projectionChanged = true) }
     if (tileLodOptions != TileLodOptions.Standard)
-      created.setTileOptions(tileLodOptions.toFfi()).report("set the tile options")
+      created.discarding.setTileOptions(tileLodOptions.toFfi())
 
     requestedStyle?.let { applyRequestedStyle(created, it, styleLoadTracker.requestId) }
     presentation.requestRender()
@@ -420,6 +427,7 @@ internal class MlnFfiMapSession(
     styleBinding?.invalidate()
     styleBinding = null
     pendingMissingImages.clear()
+    loadingStyleRequest = null
     styleLoadTracker.engineBecameUnavailable()
     // A frame queued behind this release sees the session closing in ensureAttached.
     presentation.release(keepHost = keepHost)
@@ -451,6 +459,8 @@ internal class MlnFfiMapSession(
     activeGestureToken?.complete()
     activeGestureToken = null
     gestureBearing = null
+    glide?.token?.complete()
+    glide = null
   }
 
   // endregion
@@ -465,72 +475,16 @@ internal class MlnFfiMapSession(
       }
     }
 
-  /**
-   * Runs on main, as do the callbacks it makes.
-   *
-   * A style command queues its own events before its completion, so a style event waits for that
-   * completion's generation to tell the requested style from the one it replaced.
-   */
+  /** Runs on main, as do the callbacks it makes. */
   private fun handleEvent(map: MapHandle, event: RuntimeEvent) {
     val mapEvent = event.toMapEvent()
     when (event.type) {
-      RuntimeEventType.MAP_STYLE_LOADED -> {
-        val request = styleLoadTracker.requestId
-        val submitted = styleCompletion ?: return
-        owner.launchOnMain {
-          val completion =
-            try {
-              submitted.await()
-            } catch (_: MaplibreException) {
-              return@launchOnMain
-            }
-          if (!isCurrentStyleRequest(request) || event.generation < completion.generation)
-            return@launchOnMain
-          val binding = createStyleBinding(map)
-          if (
-            !isCurrentStyleRequest(request) || !styleLoadTracker.loaded(request, binding.identity)
-          ) {
-            binding.invalidate()
-            return@launchOnMain
-          }
-          styleBinding?.invalidate()
-          styleBinding = binding
-          callbacks.onStyleChanged(this, binding)
-          mapEvent?.let { callbacks.onEvent(this, it) }
-          val missing = pendingMissingImages.toList()
-          pendingMissingImages.clear()
-          for ((imageId, generation) in missing) {
-            if (styleBinding !== binding) break
-            if (generation >= completion.generation) callbacks.resolveMissingImage(this, imageId)
-          }
-        }
-      }
-
       RuntimeEventType.MAP_IDLE -> mapEvent?.let { callbacks.onEvent(this, it) }
 
-      RuntimeEventType.MAP_SOURCE_CHANGED ->
-        if (styleBinding?.isLoaded == true) callbacks.onStyleSourcesChanged(this, event.message)
-
-      RuntimeEventType.MAP_LOADING_FAILED -> {
-        val request = styleLoadTracker.requestId
-        val submitted = styleCompletion ?: return
-        owner.launchOnMain {
-          val completion =
-            try {
-              submitted.await()
-            } catch (_: MaplibreException) {
-              return@launchOnMain
-            }
-          if (!isCurrentStyleRequest(request) || event.generation < completion.generation)
-            return@launchOnMain
-          val reason = event.styleLoadFailureReason()
-          if (styleLoadTracker.failed(request)) {
-            finishStyleCommandGroup()
-            callbacks.onStyleFailed(this, reason)
-            logger?.e { "Map loading failed (code ${event.code}): $reason" }
-            mapEvent?.let { callbacks.onEvent(this, it) }
-          }
-        }
+      RuntimeEventType.MAP_SOURCE_CHANGED -> {
+        val changed = event.payload as? RuntimeEventPayload.SourceChanged ?: return
+        if (styleBinding?.isLoaded == true)
+          callbacks.onStyleSourcesChanged(this, changed.value.sourceId)
       }
 
       // A snapshot read after an event includes its transform change. Older events in the
@@ -546,6 +500,15 @@ internal class MlnFfiMapSession(
             if (viewport.hasViewport) notifyViewportChanged()
           }
         }
+        if (
+          (event.payload as? RuntimeEventPayload.CameraChange)?.value?.source ==
+            CameraChangeSource.MOMENTUM
+        )
+          glide?.let { current ->
+            val bearing = viewport.camera.bearing
+            current.token.reportRotation(current.bearing, bearing)
+            current.bearing = bearing
+          }
         if (presentationActive && mapEvent != null) callbacks.onEvent(this, mapEvent)
       }
 
@@ -557,12 +520,14 @@ internal class MlnFfiMapSession(
 
       // mbgl re-checks its image set at the next placement after setStyleImage, so a resolution
       // that finishes after this batch still reaches a later frame.
-      RuntimeEventType.MAP_STYLE_IMAGE_MISSING ->
+      RuntimeEventType.MAP_STYLE_IMAGE_MISSING -> {
+        val imageId = (event.payload as? RuntimeEventPayload.StyleImage)?.value?.imageId ?: return
         when {
-          styleBinding?.isLoaded == true -> callbacks.resolveMissingImage(this, event.message)
-          // The style loaded, but its binding waits for the load's completion.
-          styleCompletion != null -> pendingMissingImages.add(event.message to event.generation)
+          styleBinding?.isLoaded == true -> callbacks.resolveMissingImage(this, imageId)
+          // The style parsed, but its binding waits for the load's completion.
+          loadingStyleRequest != null -> pendingMissingImages.add(imageId to event.generation)
         }
+      }
 
       // Event types are open value classes, so an FFI upgrade can add one this build has never
       // seen. Types this session does not select are never queued.
@@ -572,7 +537,7 @@ internal class MlnFfiMapSession(
 
   private fun applyViewportInsets(map: MapHandle) {
     val update = viewport.applyInsets { cameraTransitions.cancelAnchor() } ?: return
-    map.updateCamera(update).report("apply insets")
+    map.discarding.updateCamera(update)
   }
 
   /** Publishes newly available or changed viewport geometry. */
@@ -635,10 +600,15 @@ internal class MlnFfiMapSession(
     }
   }
 
+  /**
+   * Loads [style] for [request]. The load command completes once the style document parses, after
+   * the events it raised, so its success creates the binding and its failure reports the style
+   * failed. A newer style load cancels it.
+   */
   private fun applyRequestedStyle(map: MapHandle, style: BaseStyle, request: StyleRequestId) {
     if (isClosing) return
-    styleCompletion = null
     pendingMissingImages.clear()
+    loadingStyleRequest = null
     val submitted =
       try {
         styleBinding?.invalidate()
@@ -648,26 +618,55 @@ internal class MlnFfiMapSession(
           UnspecifiedBaseStyle -> error("UnspecifiedBaseStyle is never created")
         }
       } catch (error: MaplibreException) {
-        styleRequestFailed(request, style, error.message ?: "Failed to apply the base style", error)
+        styleRequestFailed(request, style, error.styleFailureReason(), error)
         return
       }
-    styleCompletion = submitted
+    loadingStyleRequest = request
+    val loaded = owner.inEventOrder(submitted)
     owner.launchOnMain {
-      try {
-        submitted.await()
-      } catch (error: Throwable) {
-        if (error is CancellationException) throw error
-        if (isCurrentStyleRequest(request))
-          styleRequestFailed(
-            request,
-            style,
-            error.message ?: "Failed to apply the base style",
-            error,
-          )
+      val completion =
+        try {
+          loaded.await()
+        } catch (error: Throwable) {
+          if (error is CancellationException) throw error
+          if (loadingStyleRequest === request) loadingStyleRequest = null
+          // A cancelled load was superseded by a newer one, or ended with the map.
+          val cancelled = (error as? MaplibreException)?.status == Status.CANCELLED
+          if (!cancelled && isCurrentStyleRequest(request))
+            styleRequestFailed(request, style, error.styleFailureReason(), error)
+          return@launchOnMain
+        }
+      if (!isCurrentStyleRequest(request) || this.map !== map) {
+        if (loadingStyleRequest === request) loadingStyleRequest = null
         return@launchOnMain
+      }
+      // Reading the loaded style suspends, and the images it misses meanwhile still wait for the
+      // binding, so the load stays pending until the binding exists.
+      val binding = createStyleBinding(map)
+      if (loadingStyleRequest === request) loadingStyleRequest = null
+      if (!isCurrentStyleRequest(request) || !styleLoadTracker.loaded(request, binding.identity)) {
+        binding.invalidate()
+        return@launchOnMain
+      }
+      styleBinding?.invalidate()
+      styleBinding = binding
+      callbacks.onStyleChanged(this, binding)
+      callbacks.onEvent(this, MapEvent.StyleLoaded)
+      val missing = pendingMissingImages.toList()
+      pendingMissingImages.clear()
+      for ((imageId, generation) in missing) {
+        if (styleBinding !== binding) break
+        // An image the replaced style missed has an older generation than this load.
+        if (generation >= completion.generation) callbacks.resolveMissingImage(this, imageId)
       }
     }
   }
+
+  /** The engine's failure text, or a stated reason when the engine reports none. */
+  private fun Throwable.styleFailureReason(): String =
+    ((this as? MaplibreException)?.diagnostic ?: message).orEmpty().ifBlank {
+      "MapLibre failed to load the style"
+    }
 
   /** Reports a refused style request once; the failed request then rejects a late success. */
   private fun styleRequestFailed(
@@ -702,11 +701,9 @@ internal class MlnFfiMapSession(
     val map = map ?: return
     if (guard?.isValid() == false) return
     val applied = viewport.cameraForAssignment(cameraPosition)
-    map
-      .updateCamera(
-        FfiCameraUpdate(camera = applied.toCameraOptions(viewport.appliedViewportInsets)),
-      )
-      .report("move the camera")
+    map.discarding.updateCamera(
+      FfiCameraUpdate(camera = applied.toCameraOptions(viewport.appliedViewportInsets)),
+    )
   }
 
   override fun setViewportInsets(insets: PaddingValues) {
@@ -724,11 +721,11 @@ internal class MlnFfiMapSession(
     pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
-  ): CameraPosition {
+  ): CameraPosition? {
     val map = checkNotNull(map) { "The map became unavailable during the bounds query" }
     val insets = viewport.appliedViewportInsets
     return cameraForBounds(map, boundingBox, bearing, pitch, cameraPadding, fitPadding, insets)
-      .toCameraPosition(insets)
+      ?.toCameraPosition(insets)
   }
 
   override suspend fun cameraForGeometry(
@@ -737,14 +734,14 @@ internal class MlnFfiMapSession(
     pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
-  ): CameraPosition {
+  ): CameraPosition? {
     val map = checkNotNull(map) { "The map became unavailable during the geometry query" }
     val geoJson = geometry.toJson()
     val insets = viewport.appliedViewportInsets
     return fitCamera(map, bearing, pitch, cameraPadding, fitPadding, insets) {
-        map.cameraForGeometry(geoJson, it)
+        map.cameraForGeometry(geoJson, it).await()
       }
-      .toCameraPosition(insets)
+      ?.toCameraPosition(insets)
   }
 
   override suspend fun fitCameraToBounds(
@@ -761,7 +758,9 @@ internal class MlnFfiMapSession(
       "A bounds fit requires the current presentation viewport"
     }
     val map = checkNotNull(map) { "The map became unavailable during the bounds fit" }
-    val camera = cameraForBounds(map, boundingBox, bearing, pitch, cameraPadding, fitPadding)
+    val camera =
+      cameraForBounds(map, boundingBox, bearing, pitch, cameraPadding, fitPadding)
+        ?: return logNoFittingCamera()
     if (guard?.isValid() == false) return
     // Returns once main has handled the command's camera events.
     owner.inEventOrder(map.updateCamera(FfiCameraUpdate(camera = camera))).await()
@@ -775,9 +774,9 @@ internal class MlnFfiMapSession(
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
     insets: EdgeInsets = viewport.appliedViewportInsets,
-  ): CameraOptions =
+  ): CameraOptions? =
     fitCamera(map, bearing, pitch, cameraPadding, fitPadding, insets) {
-      map.cameraForLatLngBounds(bounds = boundingBox.toLatLngBounds(), fitOptions = it)
+      map.cameraForLatLngBounds(bounds = boundingBox.toLatLngBounds(), fitOptions = it).await()
     }
 
   internal suspend fun fitCamera(
@@ -787,17 +786,20 @@ internal class MlnFfiMapSession(
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
     insets: EdgeInsets = viewport.appliedViewportInsets,
-    fit: (CameraFitOptions) -> Deferred<CameraOptions>,
-  ): CameraOptions {
-    val (persistent, fitted) =
-      run {
-        val current = map.getSnapshot().view.camera.toCameraPosition(insets)
-        val destination = current.copy(padding = cameraPadding ?: current.padding)
-        val persistent = checkNotNull(destination.toCameraOptions(insets).padding)
-        val total = (persistent.toCameraPadding() + fitPadding).toEdgeInsets()
-        persistent to fit(CameraFitOptions(padding = total, bearing = bearing, pitch = pitch))
+    fit: suspend (CameraFitOptions) -> CameraOptions,
+  ): CameraOptions? {
+    val current = map.getSnapshot().view.camera.toCameraPosition(insets)
+    val destination = current.copy(padding = cameraPadding ?: current.padding)
+    val persistent = checkNotNull(destination.toCameraOptions(insets).padding)
+    val total = (persistent.toCameraPadding() + fitPadding).toEdgeInsets()
+    val camera =
+      try {
+        fit(CameraFitOptions(padding = total, bearing = bearing, pitch = pitch))
+      } catch (error: MaplibreException) {
+        // Padding that leaves no room for the fit.
+        if (error.status != Status.INVALID_ARGUMENT) throw error
+        return null
       }
-    val camera = fitted.await()
     if (this.map !== map || isClosing)
       throw CancellationException("The fitted map is no longer current")
 
@@ -828,7 +830,7 @@ internal class MlnFfiMapSession(
       animation.toAnimationOptions(),
       guard = guard,
       fields = update.fields(),
-    ) { map, options ->
+    ) { map, options, _ ->
       map.discarding.updateCamera(
         FfiCameraUpdate(
           mode = animation.updateMode,
@@ -857,14 +859,14 @@ internal class MlnFfiMapSession(
           if (bearing != null) add(TransitionField.Bearing)
           if (pitch != null) add(TransitionField.Pitch)
         },
-    ) { map, options ->
+    ) { map, options, _ ->
       val view = map.getSnapshot().view
       val size = view.extent
       val point =
         MapProjectionHandle.create(view).use { projection ->
           anchor.resolveScreenPoint(
             DpSize(size.width.toInt().dp, size.height.toInt().dp),
-            centerLongitude = checkNotNull(projection.getCamera().center).longitude,
+            centerLongitude = projection.getCamera().camera.center.longitude,
             project = { projection.pixelForLatLng(it.toLatLng()).toDpOffset() },
             unproject = { projection.latLngForPixelUnwrapped(it.toScreenPoint()).toPosition() },
           )
@@ -897,11 +899,15 @@ internal class MlnFfiMapSession(
     check(viewport.hasViewport) {
       "A bounds animation requires the current presentation viewport"
     }
+    val map = map
     val camera = map?.let {
       cameraForBounds(it, boundingBox, bearing, pitch, cameraPadding, fitPadding)
     }
-    startTransitionAwaitingRelease(animation.toAnimationOptions(), guard = guard) { target, options
-      ->
+    if (map != null && camera == null) return logNoFittingCamera()
+    startTransitionAwaitingRelease(animation.toAnimationOptions(), guard = guard) {
+      target,
+      options,
+      _ ->
       target.updateCamera(
         FfiCameraUpdate(
           mode = animation.updateMode,
@@ -910,6 +916,10 @@ internal class MlnFfiMapSession(
         ),
       )
     }
+  }
+
+  private fun logNoFittingCamera() {
+    logger?.w { "No camera fits the bounds in the current viewport; the camera stays where it is" }
   }
 
   private val CameraAnimation.updateMode: CameraUpdateMode
@@ -942,29 +952,29 @@ internal class MlnFfiMapSession(
     guard: CameraCommandGuard? = null,
     anchored: Boolean = false,
     fields: Set<TransitionField> = TransitionField.entries.toSet(),
-    start: (MapHandle, AnimationOptions) -> Unit,
+    /** Sends the transition, with the phase of [gestureToken]'s gesture or none. */
+    start: (MapHandle, AnimationOptions, GesturePhase) -> Unit,
   ): Unit = suspendCancellableCoroutine { continuation ->
     val release = { if (continuation.isActive) continuation.resume(Unit) }
     val map = map
     if (isClosing || map == null) {
       release()
     } else {
+      // A gesture's transition carries its phase, so the core counts what it changes for the
+      // gesture's snapping.
+      var phase = GesturePhase.NONE
       val started =
         continuation.isActive &&
           runCameraCommand(
             gestureToken,
             guard,
-            activate = {
-              gestureToken?.let {
-                // A transition carries no gesture phase of its own, so a gesture that begins
-                // with one marks itself with an empty update first.
-                if (activateGesture(map, it) == GesturePhase.BEGIN) {
-                  map.discarding.updateCamera(FfiCameraUpdate(gesturePhase = GesturePhase.BEGIN))
-                }
-              }
-            },
+            activate = { gestureToken?.let { phase = activateGesture(it) } },
           ) {
-            cameraTransitions.start(map, animation, continuation, anchored, fields, start)
+            cameraTransitions.start(map, animation, continuation, anchored, fields) {
+              target,
+              options ->
+              start(target, options, phase)
+            }
           }
       if (!started) release()
     }
@@ -981,19 +991,18 @@ internal class MlnFfiMapSession(
   }
 
   private fun MapHandle.applyConstraints(value: CameraConstraints) {
-    setBounds(
-        BoundOptions(
-          // Unbounded is not world bounds: world bounds clamp longitude to ±180 and stop the map
-          // panning across the antimeridian.
-          bounds = value.boundingBox?.toLatLngBounds(),
-          unbounded = value.boundingBox == null,
-          minZoom = value.minZoom,
-          maxZoom = value.maxZoom,
-          minPitch = value.minPitch,
-          maxPitch = value.maxPitch,
-        ),
-      )
-      .report("set the camera constraints")
+    discarding.setBounds(
+      BoundOptions(
+        // Unbounded is not world bounds: world bounds clamp longitude to ±180 and stop the map
+        // panning across the antimeridian.
+        bounds = value.boundingBox?.toLatLngBounds(),
+        unbounded = value.boundingBox == null,
+        minZoom = value.minZoom,
+        maxZoom = value.maxZoom,
+        minPitch = value.minPitch,
+        maxPitch = value.maxPitch,
+      ),
+    )
   }
 
   override fun setRenderSettings(value: RenderOptions) {
@@ -1014,13 +1023,17 @@ internal class MlnFfiMapSession(
     if (value.debug.tileTimestamps) options = options or MapDebugFlag.TIMESTAMPS
     if (value.debug.collisionBoxes) options = options or MapDebugFlag.COLLISION
     if (value.debug.tileParseStatus) options = options or MapDebugFlag.PARSE_STATUS
-    discarding.setDebugOptions(options)
+    discarding.setDebugFlags(options)
     if (projectionChanged) {
-      val mode = setProjectionMode(value.cameraProjection.toFfi()).report("set the projection mode")
       // The projection reshapes the viewport without a camera event.
-      owner.launchOnMain {
-        mode.await()
-        if (this@MlnFfiMapSession.map !== this@applyRenderSettings || isClosing) return@launchOnMain
+      owner.inEventOrder(setProjectionMode(value.cameraProjection.toFfi())).invokeOnCompletion {
+        error ->
+        if (error != null) {
+          logger?.w(error) { "Could not set the projection mode" }
+          return@invokeOnCompletion
+        }
+        if (this@MlnFfiMapSession.map !== this@applyRenderSettings || isClosing)
+          return@invokeOnCompletion
         viewport.refresh(this@applyRenderSettings)
         notifyViewportChanged()
       }
@@ -1031,7 +1044,7 @@ internal class MlnFfiMapSession(
     if (value == tileLodOptions) return
 
     tileLodOptions = value
-    map?.setTileOptions(value.toFfi())?.report("set the tile options")
+    map?.discarding?.setTileOptions(value.toFfi())
   }
 
   @OptIn(DelicateMaplibreComposeApi::class, ExperimentalMaplibreComposeApi::class)
@@ -1057,12 +1070,20 @@ internal class MlnFfiMapSession(
   ) {
     if (!acceptsGestures) return
     val map = map ?: return
-    val camera = cameraForBounds(map, fit.bounds, fit.bearing, fit.pitch, null, DpPadding.Zero)
+    // A box too small to fit within the viewport insets leaves the camera where it is.
+    val camera =
+      cameraForBounds(map, fit.bounds, fit.bearing, fit.pitch, null, DpPadding.Zero) ?: return
     startTransitionAwaitingRelease(duration.toAnimationOptions(), gestureToken = gestureToken) {
       target,
-      animation ->
+      animation,
+      phase ->
       target.updateCamera(
-        FfiCameraUpdate(mode = CameraUpdateMode.EASE, camera = camera, animation = animation),
+        FfiCameraUpdate(
+          mode = CameraUpdateMode.EASE,
+          camera = camera,
+          animation = animation,
+          gesturePhase = phase,
+        ),
       )
     }
   }
@@ -1135,7 +1156,7 @@ internal class MlnFfiMapSession(
     geometry: RenderedQueryGeometry,
     layerIds: Set<String>?,
     predicate: CompiledExpression<BooleanValue>?,
-  ): Deferred<List<RenderedFeature>>? =
+  ): Completion<List<RenderedFeature>>? =
     try {
       session.queryRenderedFeatures(geometry, renderedQueryOptions(layerIds, predicate))
     } catch (error: MaplibreException) {
@@ -1144,7 +1165,7 @@ internal class MlnFfiMapSession(
     }
 
   /** A session that detached before answering has nothing to report. */
-  private suspend fun Deferred<List<RenderedFeature>>.awaitQuery(): List<RenderedFeature> =
+  private suspend fun Completion<List<RenderedFeature>>.awaitQuery(): List<RenderedFeature> =
     try {
       await()
     } catch (error: MaplibreException) {
@@ -1153,6 +1174,8 @@ internal class MlnFfiMapSession(
     }
 
   override fun getViewport() = viewport.getViewport()
+
+  override fun isCameraMoving(): Boolean = viewport.cameraMoving
 
   override fun positionFromScreenLocation(offset: DpOffset) =
     viewport.positionFromScreenLocation(offset)
@@ -1190,15 +1213,88 @@ internal class MlnFfiMapSession(
       }
     }
 
-  override fun onGestureEnded(token: CameraInputToken) = lifecycleAuthority.postToMain {
-    finishGesture(token, cancelled = false)
-  }
+  override val runsMomentum: Boolean
+    get() = true
+
+  override fun onGestureEnded(token: CameraInputToken, momentum: GestureMomentum?) =
+    lifecycleAuthority.postToMain {
+      if (momentum == null) finishGesture(token, cancelled = false) else glide(token, momentum)
+    }
 
   override fun cancelGesture(token: CameraInputToken) = lifecycleAuthority.postToMain {
     finishGesture(token, cancelled = true)
   }
 
+  /**
+   * Ends [token]'s gesture with [momentum], which the core runs. The gesture lasts until the
+   * momentum ends: the snapshot keeps `gestureInProgress`, and [token] stays active, so the camera
+   * keeps reporting a gesture as its reason for moving.
+   */
+  private fun glide(token: CameraInputToken, momentum: GestureMomentum) {
+    token.finish(cancelled = false) {
+      val map = map
+      if (map == null || activeGestureToken !== token) {
+        token.complete()
+        return@finish
+      }
+      activeGestureToken = null
+      val current =
+        Glide(token, cameraTransitions.reserveId(), gestureBearing ?: viewport.camera.bearing)
+      gestureBearing = null
+      glide = current
+      try {
+        map.discarding.applyCameraDelta(
+          CameraDelta(
+            momentum = momentum.toFfi(),
+            animation =
+              AnimationOptions(
+                transitionId = current.transitionId,
+                // Completes the token even after the runtime closes, so its input can finish.
+                endHandler =
+                  CameraTransitionHandler { end ->
+                    owner.completeOnMain { glideEnded(current, end) }
+                  },
+              ),
+            gesturePhase = GesturePhase.END,
+          ),
+        )
+      } catch (error: Throwable) {
+        // A rejected command never runs its end handler.
+        glideEnded(current, null)
+        throw error
+      }
+    }
+  }
+
+  /**
+   * The core reports the end of [ended]'s momentum after its final camera events. A cancelled glide
+   * reports how fast it still moved, which the next release adds to its own.
+   */
+  private fun glideEnded(ended: Glide, end: CameraTransitionEnd?) {
+    try {
+      if (glide === ended) {
+        glide = null
+        // A momentum that moves nothing raises no camera event, so read the snapshot that shows
+        // the gesture ended.
+        map?.let { if (!isClosing) viewport.refresh(it) }
+        if (activeGestureToken == null) reportGestureActive(false)
+      }
+      if (end?.outcome == CameraTransitionOutcome.CANCELLED)
+        ended.token.glideCancelled(end.velocity.toGlideVelocity())
+    } finally {
+      ended.token.complete()
+    }
+  }
+
   private fun finishGesture(token: CameraInputToken, cancelled: Boolean) {
+    val gliding = glide
+    if (cancelled && gliding?.token === token) {
+      // Newer input or a camera command stops the momentum. Its end handler completes the token.
+      glide = null
+      map?.discarding?.cancelCameraTransitionsWithId(gliding.transitionId)
+      if (activeGestureToken == null) reportGestureActive(false)
+      return
+    }
     token.finish(cancelled) {
       val map = map
       if (map == null) {
@@ -1211,9 +1307,9 @@ internal class MlnFfiMapSession(
       }
       activeGestureToken = null
       gestureBearing = null
-      if (cancelled) map.discarding.cancelTransitions()
-      val last =
-        map.updateCamera(FfiCameraUpdate(gesturePhase = GesturePhase.END)).report("end a gesture")
+      // A cancelled gesture also stops the camera animations it left running.
+      val phase = if (cancelled) GesturePhase.CANCEL else GesturePhase.END
+      val last = map.updateCamera(FfiCameraUpdate(gesturePhase = phase))
       // Runs after the gesture's final camera events and before any later ones.
       owner.inEventOrder(last).invokeOnCompletion {
         try {
@@ -1226,14 +1322,13 @@ internal class MlnFfiMapSession(
   }
 
   /**
-   * Makes [token] the gesture that owns the camera, and returns the phase its command carries.
-   * Reports on every camera command, because a report made before presentation attachment is
-   * dropped.
+   * Makes [token] the gesture that owns the camera, and returns the phase its command carries. A
+   * command that begins a gesture cancels the running camera animations. Reports on every camera
+   * command, because a report made before presentation attachment is dropped.
    */
-  private fun activateGesture(map: MapHandle, token: CameraInputToken): GesturePhase {
+  private fun activateGesture(token: CameraInputToken): GesturePhase {
     val phase =
       if (activeGestureToken !== token) {
-        map.discarding.cancelTransitions()
         activeGestureToken = token
         gestureBearing = null
         GesturePhase.BEGIN
@@ -1267,7 +1362,7 @@ internal class MlnFfiMapSession(
     var phase = GesturePhase.NONE
     runCameraCommand(
       gestureToken,
-      activate = { gestureToken?.let { phase = activateGesture(map, it) } },
+      activate = { gestureToken?.let { phase = activateGesture(it) } },
     ) {
       map.command(phase)
     }
@@ -1292,9 +1387,13 @@ internal class MlnFfiMapSession(
       duration.toAnimationOptions(),
       gestureToken = gestureToken,
       fields = setOf(TransitionField.Center),
-    ) { map, animation ->
+    ) { map, animation, phase ->
       map.discarding.applyCameraDelta(
-        CameraDelta(offset = ScreenPoint(deltaX, deltaY), animation = animation),
+        CameraDelta(
+          offset = ScreenPoint(deltaX, deltaY),
+          animation = animation,
+          gesturePhase = phase,
+        ),
       )
     }
   }
@@ -1318,9 +1417,14 @@ internal class MlnFfiMapSession(
       duration.toAnimationOptions(),
       gestureToken = gestureToken,
       fields = setOf(TransitionField.Center, TransitionField.Zoom),
-    ) { map, animation ->
+    ) { map, animation, phase ->
       map.discarding.applyCameraDelta(
-        CameraDelta(scale = scale, anchor = anchor?.toScreenPoint(), animation = animation),
+        CameraDelta(
+          scale = scale,
+          anchor = anchor?.toScreenPoint(),
+          animation = animation,
+          gesturePhase = phase,
+        ),
       )
     }
   }
@@ -1341,15 +1445,12 @@ internal class MlnFfiMapSession(
     feedback: Boolean,
   ) {
     submitCameraInput(gestureToken) { phase ->
-      if (feedback && bearingDelta != 0.0 && gestureToken != null) {
-        val (from, to) =
-          run {
-            val from = gestureBearing ?: getSnapshot().view.camera.bearing
-            val to = from + bearingDelta
-            gestureBearing = to
-            from to to
-          }
-        gestureToken.reportRotation(from, to)
+      // Every rotation moves the bearing that haptics, here and through the momentum, start from.
+      if (bearingDelta != 0.0 && gestureToken != null) {
+        val from = gestureBearing ?: getSnapshot().view.camera.bearing
+        val to = from + bearingDelta
+        gestureBearing = to
+        if (feedback) gestureToken.reportRotation(from, to)
       }
       val bearing = bearingDelta.takeIf { it != 0.0 }
       val pitch = pitchDelta.takeIf { it != 0.0 }
@@ -1370,31 +1471,6 @@ internal class MlnFfiMapSession(
     }
   }
 
-  override suspend fun snapBearingAwaitingTransition(
-    snapping: BearingSnapping,
-    duration: Duration,
-    gestureToken: CameraInputToken,
-  ) {
-    if (!acceptsGestures) return
-    val map = map ?: return
-    // Snapshot reads can precede queued rotation. The ordered query observes every earlier delta.
-    val current = map.getCamera().await().camera.bearing
-    val bearing = current + (snapping.delta(current) ?: return)
-    startTransitionAwaitingRelease(
-      duration.toAnimationOptions(),
-      gestureToken = gestureToken,
-      fields = setOf(TransitionField.Bearing),
-    ) { map, animation ->
-      map.discarding.updateCamera(
-        FfiCameraUpdate(
-          mode = CameraUpdateMode.EASE,
-          camera = CameraOptions(bearing = bearing),
-          animation = animation,
-        ),
-      )
-    }
-  }
-
   override suspend fun rotateAndPitchByAwaitingTransition(
     bearingDelta: Double,
     pitchDelta: Double,
@@ -1407,13 +1483,14 @@ internal class MlnFfiMapSession(
       duration.toAnimationOptions(),
       gestureToken = gestureToken,
       fields = setOf(TransitionField.Center, TransitionField.Bearing, TransitionField.Pitch),
-    ) { map, animation ->
+    ) { map, animation, phase ->
       map.discarding.applyCameraDelta(
         CameraDelta(
           bearing = bearingDelta.takeIf { it != 0.0 },
           pitch = pitchDelta.takeIf { it != 0.0 },
           anchor = anchor?.toScreenPoint(),
           animation = animation,
+          gesturePhase = phase,
         ),
       )
     }
@@ -1425,10 +1502,8 @@ internal class MlnFfiMapSession(
 
   override fun stopCameraMovement(guard: CameraCommandGuard) {
     if (!guard.isValid()) return
-    map?.discarding?.cancelTransitions()
+    map?.discarding?.cancelCameraTransitions()
   }
-
-  private fun <T> Deferred<T>.report(what: String): Deferred<T> = reportFailure(logger, what)
 
   // endregion
 }
@@ -1447,9 +1522,9 @@ private fun CameraUpdate.fields(): Set<TransitionField> = buildSet {
 private fun TileLodOptions.toFfi(): MapTileOptions = algorithm.toFfi()
 
 @OptIn(ExperimentalMaplibreComposeApi::class)
-private fun CameraProjection.toFfi(): ProjectionMode =
+private fun CameraProjection.toFfi(): ProjectionModeOptions =
   when (this) {
-    CameraProjection.Perspective -> ProjectionMode(axonometric = false)
+    CameraProjection.Perspective -> ProjectionModeOptions(axonometric = false)
     is CameraProjection.Axonometric ->
-      ProjectionMode(axonometric = true, xSkew = xSkew, ySkew = ySkew)
+      ProjectionModeOptions(axonometric = true, xSkew = xSkew, ySkew = ySkew)
   }

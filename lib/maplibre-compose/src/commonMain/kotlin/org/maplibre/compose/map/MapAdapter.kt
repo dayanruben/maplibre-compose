@@ -86,7 +86,7 @@ internal interface MapAdapter {
     pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
-  ): CameraPosition
+  ): CameraPosition?
 
   /** [geometry] has at least one position; [MapState] rejects empty input before calling. */
   suspend fun cameraForGeometry(
@@ -95,7 +95,7 @@ internal interface MapAdapter {
     pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
-  ): CameraPosition
+  ): CameraPosition?
 
   suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
@@ -117,6 +117,13 @@ internal interface MapAdapter {
    * read made from [Callbacks.onViewportChanged] already describes a finished resize.
    */
   fun getViewport(): Viewport?
+
+  /**
+   * Whether the engine reports a camera change in progress, such as an animated transition or a
+   * gesture the engine holds. Answers from the same engine state as [getViewport], so a read made
+   * from a camera event describes the camera that event left.
+   */
+  fun isCameraMoving(): Boolean
 
   fun setRenderSettings(value: RenderOptions)
 

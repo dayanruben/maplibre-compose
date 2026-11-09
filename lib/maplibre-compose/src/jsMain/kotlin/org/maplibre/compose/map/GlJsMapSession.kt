@@ -58,7 +58,7 @@ import org.maplibre.compose.gljs.isPointOnMapSurface
 import org.maplibre.compose.gljs.queryBox
 import org.maplibre.compose.gljs.queryPoint
 import org.maplibre.compose.gljs.subscribe
-import org.maplibre.compose.interaction.BearingSnapping
+import org.maplibre.compose.interaction.internal.GestureMomentum
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.logging.MapLogLevel
 import org.maplibre.compose.logging.MapLogSource
@@ -207,15 +207,16 @@ internal class GlJsMapSession(
     if (this.surface !== surface) return
     // The map's context belongs to the surface, so it cannot outlive it.
     if (map != null) {
-      // The replacement keeps the presentation, and the destroyed map emits no `moveend`. A
-      // gesture that ends while the replacement is attaching cannot report, so its fact is
-      // withdrawn here; a gesture that continues re-reports on its next camera command.
+      // The replacement keeps the presentation, and the destroyed map emits no `moveend`, so the
+      // camera's motion is read again once it is gone. A gesture that ends while the replacement
+      // attaches can't report its end, so it is cleared here; a gesture that continues reports
+      // again on its next camera command.
       activeGestureToken = null
       reportGestureActive(false)
-      lifecycleAuthority.endCurrentPresentationCameraChange(this)
       this.surface = null
       invalidateStyleBinding()
       destroyMap()
+      lifecycleAuthority.synchronizeCurrentPresentationCameraMotion(this)
     } else {
       this.surface = null
     }
@@ -784,12 +785,8 @@ internal class GlJsMapSession(
     pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
-  ): CameraPosition =
-    checkNotNull(
-      map?.cameraPositionForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding),
-    ) {
-      "The map could not calculate a camera for the bounds"
-    }
+  ): CameraPosition? =
+    map?.cameraPositionForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)
 
   override suspend fun cameraForGeometry(
     geometry: Geometry,
@@ -797,7 +794,7 @@ internal class GlJsMapSession(
     pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
-  ): CameraPosition =
+  ): CameraPosition? =
     withMap(null as CameraPosition?) { map ->
       map.cameraPositionForPositions(
         geometry.positions(),
@@ -806,7 +803,7 @@ internal class GlJsMapSession(
         cameraPadding,
         fitPadding,
       )
-    } ?: throw IllegalStateException("The map could not calculate a camera for the geometry")
+    }
 
   override suspend fun fitCameraToBounds(
     boundingBox: BoundingBox,
@@ -818,11 +815,12 @@ internal class GlJsMapSession(
   ) {
     if (guard?.isValid() == false) return
     cameraTransitions.releasePending()
+    val camera =
+      cameraForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)
+        ?: return logNoFittingCamera()
     onMap { map ->
       if (guard?.isValid() == false) return@onMap
-      map.cameraPositionForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)?.let {
-        map.jumpTo(it.toJumpToOptions())
-      }
+      map.jumpTo(camera.toJumpToOptions())
     }
   }
 
@@ -880,11 +878,17 @@ internal class GlJsMapSession(
     animation: CameraAnimation,
     guard: CameraCommandGuard?,
   ) {
+    // The animation can wait for the first style, so fit the viewport it starts in.
     awaitCameraRelease(guard = guard) { map ->
-      map.cameraPositionForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)?.let {
-        map.animateTo(it.toCameraUpdate(), animation)
-      }
+      val camera =
+        map.cameraPositionForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)
+          ?: return@awaitCameraRelease logNoFittingCamera()
+      map.animateTo(camera.toCameraUpdate(), animation)
     }
+  }
+
+  private fun logNoFittingCamera() {
+    logger?.w { "No camera fits the bounds in the current viewport; the camera stays where it is" }
   }
 
   private fun MaplibreMap.animateTo(update: CameraUpdate, animation: CameraAnimation) {
@@ -929,6 +933,14 @@ internal class GlJsMapSession(
     val destination = current.copy(padding = cameraPadding ?: current.padding)
     val persistentPadding = destination.effectivePadding()
     val combinedPadding = (persistentPadding.toCameraPadding() + fitPadding).toPaddingOptions()
+    // GL JS rejects only padding wider or taller than the map; padding that fills it exactly
+    // leaves no room either.
+    val extent = appliedExtent
+    if (
+      combinedPadding.left + combinedPadding.right >= extent.width.toDouble() ||
+        combinedPadding.top + combinedPadding.bottom >= extent.height.toDouble()
+    )
+      return null
     val camera =
       cameraForBounds(
         boundingBox.toLngLatBounds(),
@@ -1041,6 +1053,8 @@ internal class GlJsMapSession(
       if (extent.isEmpty) return@withMap null
       map.readViewport(extent.width.toDouble(), extent.height.toDouble(), viewportInsets)
     }
+
+  override fun isCameraMoving(): Boolean = withMap(false) { it.isMoving() }
 
   override fun setRenderSettings(value: RenderOptions) {
     renderSettings = value
@@ -1246,7 +1260,9 @@ internal class GlJsMapSession(
       onGestureMap(token) {}
     }
 
-  override fun onGestureEnded(token: CameraInputToken) = finishGesture(token, cancelled = false)
+  /** GL JS can't take momentum, so the input layer runs it before the gesture ends. */
+  override fun onGestureEnded(token: CameraInputToken, momentum: GestureMomentum?) =
+    finishGesture(token, cancelled = false)
 
   override fun cancelGesture(token: CameraInputToken) = finishGesture(token, cancelled = true)
 
@@ -1363,24 +1379,6 @@ internal class GlJsMapSession(
       val before = map.getBearing()
       map.easeTo(rotateOptions(map, bearingDelta, pitchDelta, anchor, Duration.ZERO))
       if (feedback && bearingDelta != 0.0) gestureToken?.reportRotation(before, map.getBearing())
-    }
-  }
-
-  override suspend fun snapBearingAwaitingTransition(
-    snapping: BearingSnapping,
-    duration: Duration,
-    gestureToken: CameraInputToken,
-  ) {
-    awaitCameraRelease(gestureToken = gestureToken) { map ->
-      val current = map.getBearing()
-      snapping.delta(current)?.let { delta ->
-        map.easeTo(
-          unsafeJso<EaseToOptions> {
-            bearing = current + delta
-            this.duration = duration.inWholeMilliseconds.toDouble()
-          },
-        )
-      }
     }
   }
 

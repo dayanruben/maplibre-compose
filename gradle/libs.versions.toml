@@ -7,10 +7,6 @@ android-compileSdk = "37"
 # The Build-Tools release the current AGP consumes. Read by
 # .mise/bin/sync-android-packages, not by Gradle.
 android-buildTools = "36.0.0"
-# Build the JNI shim in lib/maplibre-compose-runtime-vulkan-android. Read by
-# .mise/bin/sync-android-packages too.
-android-ndk = "30.0.16248370"
-android-cmake = "4.1.2"
 android-minSdk = "24"
 # Wear Compose requires API 25.
 android-wearMinSdk = "25"
@@ -54,7 +50,7 @@ maplibre-geojsonVt = "6.1.1"
 maplibre-android = "13.7.1"
 maplibre-ios = "6.31.0"
 maplibre-js = "6.12.0"
-maplibre-nativeFfi = "0.202610.3"
+maplibre-nativeFfi = "0.202611.0"
 # The style-spec release the parity catalog reads; ci/style_spec_parity.py
 # fetches v8.json at this tag. Follow the maplibre-gl release's own
 # @maplibre/maplibre-gl-style-spec dependency when bumping maplibre-js.

@@ -7,7 +7,6 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.referentialEqualityPolicy
 import androidx.compose.runtime.remember
@@ -807,7 +806,7 @@ internal constructor(
   private var validState: Boolean by mutableStateOf(true)
   private var viewportState: Viewport? by mutableStateOf(null)
   private var gestureActiveState: Boolean by mutableStateOf(false)
-  private var activeCameraChanges: Int by mutableIntStateOf(0)
+  private var engineMovingState: Boolean by mutableStateOf(false)
   private var moveReasonState: CameraMoveReason by mutableStateOf(CameraMoveReason.None)
   private var engagedState: Boolean by mutableStateOf(false)
   val isValid: Boolean
@@ -824,7 +823,7 @@ internal constructor(
     get() = viewportState
 
   val isCameraMoving: Boolean
-    get() = gestureActiveState || activeCameraChanges > 0
+    get() = gestureActiveState || engineMovingState
 
   val cameraMoveReason: CameraMoveReason
     get() = moveReasonState
@@ -835,7 +834,7 @@ internal constructor(
     pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
-  ): CameraPosition = afterViewport {
+  ): CameraPosition? = afterViewport {
     adapter.cameraForBounds(boundingBox, bearing, pitch, cameraPadding, fitPadding)
   }
 
@@ -845,7 +844,7 @@ internal constructor(
     pitch: Double,
     cameraPadding: DpPadding?,
     fitPadding: DpPadding,
-  ): CameraPosition = afterViewport {
+  ): CameraPosition? = afterViewport {
     adapter.cameraForGeometry(geometry, bearing, pitch, cameraPadding, fitPadding)
   }
 
@@ -944,20 +943,13 @@ internal constructor(
     engagedState = engaged
   }
 
-  // TODO: read whether the camera is still changing from the native map snapshot, and drop this
-  // count, once https://github.com/maplibre/maplibre-native-ffi/issues/958 reports it.
-  internal fun cameraChangeStarted() {
-    activeCameraChanges++
-    if (!gestureActiveState) moveReasonState = CameraMoveReason.Programmatic
-  }
-
-  internal fun cameraChangeEnded() {
-    // Native ends each command separately. An inset update can end while a zoom is still moving.
-    activeCameraChanges = (activeCameraChanges - 1).coerceAtLeast(0)
-  }
-
-  internal fun abandonCameraChanges() {
-    activeCameraChanges = 0
+  /**
+   * Records whether the engine reports a camera change in progress. [started] marks the event that
+   * began a change, which belongs to the program unless a gesture holds the camera.
+   */
+  internal fun setEngineMoving(moving: Boolean, started: Boolean = false) {
+    engineMovingState = moving
+    if (started && !gestureActiveState) moveReasonState = CameraMoveReason.Programmatic
   }
 
   internal fun invalidate() {
@@ -966,7 +958,7 @@ internal constructor(
     validState = false
     viewportState = null
     gestureActiveState = false
-    activeCameraChanges = 0
+    engineMovingState = false
     engagedState = false
   }
 
@@ -1048,9 +1040,10 @@ internal constructor(
     get() = currentMapAttachment?.viewport
 
   /**
-   * Returns true while a gesture holds the camera or an engine camera change is in flight. During a
-   * drag the gesture stays active across every camera change the engine reports, so the value stays
-   * true for the whole drag.
+   * Returns true while a gesture holds the camera or the engine reports that the camera is still
+   * changing, such as during an animated transition or momentum. During a drag the gesture stays
+   * active across every camera change the engine reports, so the value stays true for the whole
+   * drag.
    */
   public val isCameraMoving: Boolean
     get() = currentMapAttachment?.isCameraMoving == true
@@ -1152,12 +1145,13 @@ internal constructor(
    * those change before applying it.
    *
    * @param fit Sets the camera orientation and padding used for the fit.
-   * @throws IllegalStateException if the backend cannot calculate a camera for the bounds.
+   * @return The camera, or null when no camera fits: when the padding and the viewport insets
+   *   together are as wide or as tall as the viewport.
    */
   public suspend fun cameraForBounds(
     boundingBox: BoundingBox,
     fit: CameraFit = CameraFit(),
-  ): CameraPosition =
+  ): CameraPosition? =
     attachmentAuthority
       .awaitAttachment()
       .cameraForBounds(boundingBox, fit.bearing, fit.pitch, fit.cameraPadding, fit.fitPadding)
@@ -1176,13 +1170,13 @@ internal constructor(
    *
    * See [cameraForBounds] for padding and viewport semantics.
    *
+   * @return The camera, or null when no camera fits, as for [cameraForBounds].
    * @throws IllegalArgumentException if [geometry] contains no positions.
-   * @throws IllegalStateException if the backend cannot calculate a camera for the geometry.
    */
   public suspend fun cameraForGeometry(
     geometry: Geometry,
     fit: CameraFit = CameraFit(),
-  ): CameraPosition {
+  ): CameraPosition? {
     require(geometry.positions().any()) { "The geometry contains no positions" }
     return attachmentAuthority
       .awaitAttachment()
@@ -1193,13 +1187,13 @@ internal constructor(
    * Waits for a viewport, then calculates a camera that fits every position in [coordinates]. See
    * [cameraForGeometry] for the fit, padding, and antimeridian semantics.
    *
+   * @return The camera, or null when no camera fits, as for [cameraForBounds].
    * @throws IllegalArgumentException if [coordinates] is empty.
-   * @throws IllegalStateException if the backend cannot calculate a camera for the coordinates.
    */
   public suspend fun cameraForCoordinates(
     coordinates: Collection<Position>,
     fit: CameraFit = CameraFit(),
-  ): CameraPosition {
+  ): CameraPosition? {
     require(coordinates.isNotEmpty()) { "The coordinates are empty" }
     return cameraForGeometry(MultiPoint(coordinates.toList()), fit)
   }
@@ -1207,6 +1201,9 @@ internal constructor(
   /**
    * Waits for a viewport, then fits [boundingBox] without animation. A newer camera command,
    * accepted input, or detaching cancels this call.
+   *
+   * When no camera fits, as described for [cameraForBounds], the camera stays where it is and a
+   * warning is logged.
    *
    * @param fit See [cameraForBounds].
    */
@@ -1312,6 +1309,9 @@ internal constructor(
    * On Android, the system animator duration scale multiplies the duration of [animation]. A scale
    * of zero jumps to fit [boundingBox].
    *
+   * When no camera fits, as described for [cameraForBounds], the camera stays where it is and a
+   * warning is logged.
+   *
    * @param fit See [cameraForBounds].
    */
   public suspend fun animateCameraToBounds(
@@ -1357,8 +1357,9 @@ internal constructor(
   }
 
   /**
-   * Continues a pan at [velocity], in logical pixels per second, until the momentum settles or
-   * newer input interrupts it. Velocities below the momentum threshold are ignored. See [panBy].
+   * Releases a pan at [velocity], in logical pixels per second: the map glides with the pan
+   * momentum in [org.maplibre.compose.interaction.MapInteractions] until it stops or newer input
+   * interrupts it. A release slower than the momentum's minimum speed does not move. See [panBy].
    */
   public fun fling(velocity: DpOffset) {
     recognizedInput?.fling(velocity)

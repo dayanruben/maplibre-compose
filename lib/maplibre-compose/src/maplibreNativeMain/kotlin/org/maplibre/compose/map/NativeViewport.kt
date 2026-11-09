@@ -58,6 +58,10 @@ internal class NativeViewport {
   val camera: CameraPosition
     get() = geometry.camera
 
+  /** Whether the snapshot reports an animated transition or a gesture, including its momentum. */
+  val cameraMoving: Boolean
+    get() = snapshot?.let { it.transitionInProgress || it.gestureInProgress } == true
+
   val size: DpSize
     get() = geometry.size
 
@@ -83,7 +87,7 @@ internal class NativeViewport {
   ) : MlnFfiMapFrameProjection {
     override val anchor: MlnFfiMapPresentationAnchor
       get() {
-        val padding = checkNotNull(projection.getCamera().padding)
+        val padding = projection.getCamera().camera.padding
         return MlnFfiMapPresentationAnchor(
           ((extent.physicalWidth + (padding.left - padding.right) * extent.scaleFactor) / 2)
             .toInt(),

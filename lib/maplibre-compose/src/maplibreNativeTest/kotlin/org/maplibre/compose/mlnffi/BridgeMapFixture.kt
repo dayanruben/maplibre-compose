@@ -116,7 +116,12 @@ private constructor(
       scheduleFrame()
     }
 
-  /** While true, frames the session asks for wait until [frame] or until rendering resumes. */
+  /**
+   * While true, frames the session asks for wait until [frame] or until rendering resumes. Written
+   * on the test's thread and read where frames render, so a resume that finds a frame already
+   * scheduled relies on that frame seeing it.
+   */
+  @Volatile
   var renderingPaused: Boolean = false
     set(value) {
       field = value
@@ -166,6 +171,7 @@ private constructor(
     object : MlnFfiMapHostSession {
       override val isClosed = false
       override val backends: RenderBackendPair = driver.backends
+      override val frameDemands = driver.frameDemands
 
       override fun requestFrame() {
         frameRequested.store(true)
@@ -287,7 +293,7 @@ private constructor(
       when (frame.target) {
         is OpenGlSurfaceTarget,
         is MetalSurfaceTarget,
-        is VulkanSurfaceTarget -> true
+        is PlatformWindowTarget -> true
         else -> false
       }
     return try {

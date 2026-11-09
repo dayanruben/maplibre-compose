@@ -152,7 +152,7 @@ internal constructor(
     get() = super.asMutable as? MutableGeoJsonSourceHandle
 
   internal fun setData(data: GeoJsonData) {
-    definitionOperation { style.submitGeoJsonData(id, data, options) }
+    definitionOperation { style.submitGeoJsonData(id, data) }
   }
 
   override fun isCluster(feature: Feature<*, JsonObject?>): Boolean =
@@ -257,6 +257,12 @@ internal constructor(
   CustomVectorTileSourceHandle {
   override val asMutable: MutableCustomVectorTileSourceHandle?
     get() = super.asMutable as? MutableCustomVectorTileSourceHandle
+
+  override fun invalidateBounds(bounds: BoundingBox) {
+    mutationOperation("a bounds invalidation") {
+      style.invalidateCustomVectorSourceBounds(id, bounds)
+    }
+  }
 
   override fun invalidateTile(tile: TileCoordinate) {
     mutationOperation("a tile invalidation") { style.invalidateCustomVectorSourceTile(id, tile) }

@@ -1173,32 +1173,8 @@ public abstract interface class org/maplibre/compose/expressions/value/VectorVal
 
 public final class org/maplibre/compose/interaction/BearingHapticsBuilder {
 	public static final field $stable I
-	public final fun notch-zg-ukT8 (Lorg/maplibre/compose/interaction/BearingTargets;I)V
-	public static synthetic fun notch-zg-ukT8$default (Lorg/maplibre/compose/interaction/BearingHapticsBuilder;Lorg/maplibre/compose/interaction/BearingTargets;IILjava/lang/Object;)V
-}
-
-public final class org/maplibre/compose/interaction/BearingSnappingBuilder {
-	public static final field $stable I
-	public final fun getEnabled ()Z
-	public final fun getTargets ()Lorg/maplibre/compose/interaction/BearingTargets;
-	public final fun getTolerance ()D
-	public final fun setEnabled (Z)V
-	public final fun setTargets (Lorg/maplibre/compose/interaction/BearingTargets;)V
-	public final fun setTolerance (D)V
-}
-
-public final class org/maplibre/compose/interaction/BearingTargets {
-	public static final field $stable I
-	public static final field Companion Lorg/maplibre/compose/interaction/BearingTargets$Companion;
-	public fun equals (Ljava/lang/Object;)Z
-	public fun hashCode ()I
-	public fun toString ()Ljava/lang/String;
-}
-
-public final class org/maplibre/compose/interaction/BearingTargets$Companion {
-	public final fun at ([D)Lorg/maplibre/compose/interaction/BearingTargets;
-	public final fun evenlySpaced (ID)Lorg/maplibre/compose/interaction/BearingTargets;
-	public static synthetic fun evenlySpaced$default (Lorg/maplibre/compose/interaction/BearingTargets$Companion;IDILjava/lang/Object;)Lorg/maplibre/compose/interaction/BearingTargets;
+	public final fun notch-Rh5PaNs (DDI)V
+	public static synthetic fun notch-Rh5PaNs$default (Lorg/maplibre/compose/interaction/BearingHapticsBuilder;DDIILjava/lang/Object;)V
 }
 
 public abstract interface class org/maplibre/compose/interaction/CameraAction {
@@ -1405,6 +1381,14 @@ public final class org/maplibre/compose/interaction/DragRotatePitchBuilder {
 	public final fun setStartSlop-0680j_4 (F)V
 }
 
+public final class org/maplibre/compose/interaction/EaseMomentumBuilder {
+	public static final field $stable I
+	public final fun getMaxDistance ()D
+	public final fun getMinSpeed ()D
+	public final fun setMaxDistance (D)V
+	public final fun setMinSpeed (D)V
+}
+
 public abstract interface class org/maplibre/compose/interaction/FocusAction {
 }
 
@@ -1430,6 +1414,20 @@ public final class org/maplibre/compose/interaction/FocusAction$Engage : org/map
 	public fun equals (Ljava/lang/Object;)Z
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class org/maplibre/compose/interaction/FrictionMomentumBuilder {
+	public static final field $stable I
+	public final fun getHalfLife-UwyO8pc ()J
+	public final fun getMaxDistance ()D
+	public final fun getMaxSpeed ()D
+	public final fun getMinSpeed ()D
+	public final fun getStopSpeed ()D
+	public final fun setHalfLife-LRDsOJo (J)V
+	public final fun setMaxDistance (D)V
+	public final fun setMaxSpeed (D)V
+	public final fun setMinSpeed (D)V
+	public final fun setStopSpeed (D)V
 }
 
 public final class org/maplibre/compose/interaction/GestureAnchor : java/lang/Enum {
@@ -1607,6 +1605,41 @@ public final class org/maplibre/compose/interaction/ModifierMatch$Exactly : org/
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class org/maplibre/compose/interaction/MomentumBuilder {
+	public static final field $stable I
+	public final fun ease (Lorg/maplibre/compose/interaction/MomentumPlanner;Lkotlin/jvm/functions/Function1;)V
+	public static synthetic fun ease$default (Lorg/maplibre/compose/interaction/MomentumBuilder;Lorg/maplibre/compose/interaction/MomentumPlanner;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
+	public final fun friction (Lkotlin/jvm/functions/Function1;)V
+	public static synthetic fun friction$default (Lorg/maplibre/compose/interaction/MomentumBuilder;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
+	public final fun getEnabled ()Z
+	public final fun setEnabled (Z)V
+}
+
+public final class org/maplibre/compose/interaction/MomentumGlide {
+	public static final field $stable I
+	public synthetic fun <init> (DJLorg/maplibre/compose/camera/CubicBezier;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()D
+	public final fun component2-UwyO8pc ()J
+	public final fun component3 ()Lorg/maplibre/compose/camera/CubicBezier;
+	public final fun copy-8Mi8wO0 (DJLorg/maplibre/compose/camera/CubicBezier;)Lorg/maplibre/compose/interaction/MomentumGlide;
+	public static synthetic fun copy-8Mi8wO0$default (Lorg/maplibre/compose/interaction/MomentumGlide;DJLorg/maplibre/compose/camera/CubicBezier;ILjava/lang/Object;)Lorg/maplibre/compose/interaction/MomentumGlide;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDistance ()D
+	public final fun getDuration-UwyO8pc ()J
+	public final fun getEasing ()Lorg/maplibre/compose/camera/CubicBezier;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class org/maplibre/compose/interaction/MomentumPlanner {
+	public static final field Companion Lorg/maplibre/compose/interaction/MomentumPlanner$Companion;
+	public abstract fun plan (D)Lorg/maplibre/compose/interaction/MomentumGlide;
+}
+
+public final class org/maplibre/compose/interaction/MomentumPlanner$Companion {
+	public final fun getAndroidFling ()Lorg/maplibre/compose/interaction/MomentumPlanner;
+}
+
 public final class org/maplibre/compose/interaction/PanCameraBuilder {
 	public static final field $stable I
 	public final fun getEnabled ()Z
@@ -1615,34 +1648,14 @@ public final class org/maplibre/compose/interaction/PanCameraBuilder {
 	public final fun setEnabled (Z)V
 }
 
-public final class org/maplibre/compose/interaction/PanMomentumBuilder {
-	public static final field $stable I
-	public final fun getBaseTime-UwyO8pc ()J
-	public final fun getDurationScale ()D
-	public final fun getEnabled ()Z
-	public final fun getMinimumSpeedDpPerSecond ()D
-	public final fun setBaseTime-LRDsOJo (J)V
-	public final fun setDurationScale (D)V
-	public final fun setEnabled (Z)V
-	public final fun setMinimumSpeedDpPerSecond (D)V
-}
-
 public final class org/maplibre/compose/interaction/PitchCameraBuilder {
 	public static final field $stable I
 	public final fun getEnabled ()Z
 	public final fun momentum (Lkotlin/jvm/functions/Function1;)V
 	public final fun onStart (Lkotlin/jvm/functions/Function0;)V
 	public final fun setEnabled (Z)V
-}
-
-public final class org/maplibre/compose/interaction/PitchMomentumBuilder {
-	public static final field $stable I
-	public final fun getDuration-UwyO8pc ()J
-	public final fun getEnabled ()Z
-	public final fun getMinimumSpeedDegreesPerSecond ()D
-	public final fun setDuration-LRDsOJo (J)V
-	public final fun setEnabled (Z)V
-	public final fun setMinimumSpeedDegreesPerSecond (D)V
+	public final fun snapping (Lkotlin/jvm/functions/Function1;)V
+	public static synthetic fun snapping$default (Lorg/maplibre/compose/interaction/PitchCameraBuilder;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
 }
 
 public abstract interface class org/maplibre/compose/interaction/PointerButton {
@@ -1740,6 +1753,20 @@ public final class org/maplibre/compose/interaction/ScrollMappingsBuilder {
 	public final fun on (Ljava/util/Set;Lorg/maplibre/compose/interaction/ModifierMatch;Lorg/maplibre/compose/interaction/ScrollAction;)V
 	public static synthetic fun on$default (Lorg/maplibre/compose/interaction/ScrollMappingsBuilder;Ljava/util/Set;Lorg/maplibre/compose/interaction/ModifierMatch;Lorg/maplibre/compose/interaction/ScrollAction;ILjava/lang/Object;)V
 	public final fun otherwise (Lorg/maplibre/compose/interaction/ScrollAction;)V
+}
+
+public final class org/maplibre/compose/interaction/SnappingBuilder {
+	public static final field $stable I
+	public final fun getDuration-UwyO8pc ()J
+	public final fun getEnabled ()Z
+	public final fun getOffset ()D
+	public final fun getSpacing ()D
+	public final fun getTolerance ()D
+	public final fun setDuration-LRDsOJo (J)V
+	public final fun setEnabled (Z)V
+	public final fun setOffset (D)V
+	public final fun setSpacing (D)V
+	public final fun setTolerance (D)V
 }
 
 public abstract interface class org/maplibre/compose/interaction/TapAction {
@@ -1851,22 +1878,14 @@ public final class org/maplibre/compose/interaction/TransformZoomBuilder {
 	public final fun setZoomScale (D)V
 }
 
-public final class org/maplibre/compose/interaction/VelocityCameraBuilder {
+public final class org/maplibre/compose/interaction/ZoomCameraBuilder {
 	public static final field $stable I
 	public final fun getEnabled ()Z
 	public final fun momentum (Lkotlin/jvm/functions/Function1;)V
 	public final fun onStart (Lkotlin/jvm/functions/Function0;)V
 	public final fun setEnabled (Z)V
-}
-
-public final class org/maplibre/compose/interaction/VelocityMomentumBuilder {
-	public static final field $stable I
-	public final fun getDurationScale ()D
-	public final fun getEnabled ()Z
-	public final fun getMaximumDuration-UwyO8pc ()J
-	public final fun setDurationScale (D)V
-	public final fun setEnabled (Z)V
-	public final fun setMaximumDuration-LRDsOJo (J)V
+	public final fun snapping (Lkotlin/jvm/functions/Function1;)V
+	public static synthetic fun snapping$default (Lorg/maplibre/compose/interaction/ZoomCameraBuilder;Lkotlin/jvm/functions/Function1;ILjava/lang/Object;)V
 }
 
 public abstract interface class org/maplibre/compose/layers/Anchor {
@@ -3560,6 +3579,47 @@ public final class org/maplibre/compose/resource/MapRequestInterceptor$DefaultIm
 	public static fun rewriteUrl (Lorg/maplibre/compose/resource/MapRequestInterceptor;Lorg/maplibre/compose/resource/MapResourceRequest;)Ljava/lang/String;
 }
 
+public final class org/maplibre/compose/resource/MapRequestRule {
+	public static final field $stable I
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/util/Set;
+	public final fun component3 ()Ljava/util/Map;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getKinds ()Ljava/util/Set;
+	public final fun getUrlPattern ()Ljava/lang/String;
+	public final fun getValues ()Ljava/util/Map;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class org/maplibre/compose/resource/MapRequestRules : org/maplibre/compose/resource/MapRequestInterceptor {
+	public static final field $stable I
+	public static final field Companion Lorg/maplibre/compose/resource/MapRequestRules$Companion;
+	public fun <init> (Lorg/maplibre/compose/resource/MapRequestRules;Lkotlin/jvm/functions/Function1;)V
+	public synthetic fun <init> (Lorg/maplibre/compose/resource/MapRequestRules;Lkotlin/jvm/functions/Function1;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Ljava/util/List;
+	public final fun component2 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHeaderRules ()Ljava/util/List;
+	public final fun getQueryParameterRules ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun headers (Lorg/maplibre/compose/resource/MapResourceRequest;)Ljava/util/Map;
+	public fun rewriteUrl (Lorg/maplibre/compose/resource/MapResourceRequest;)Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class org/maplibre/compose/resource/MapRequestRules$Builder {
+	public static final field $stable I
+	public final fun addHeaders (Ljava/lang/String;Ljava/util/Map;Ljava/util/Set;)V
+	public static synthetic fun addHeaders$default (Lorg/maplibre/compose/resource/MapRequestRules$Builder;Ljava/lang/String;Ljava/util/Map;Ljava/util/Set;ILjava/lang/Object;)V
+	public final fun addQueryParameters (Ljava/lang/String;Ljava/util/Map;Ljava/util/Set;)V
+	public static synthetic fun addQueryParameters$default (Lorg/maplibre/compose/resource/MapRequestRules$Builder;Ljava/lang/String;Ljava/util/Map;Ljava/util/Set;ILjava/lang/Object;)V
+}
+
+public final class org/maplibre/compose/resource/MapRequestRules$Companion {
+	public final fun getEmpty ()Lorg/maplibre/compose/resource/MapRequestRules;
+}
+
 public final class org/maplibre/compose/resource/MapResourceError {
 	public static final field Companion Lorg/maplibre/compose/resource/MapResourceError$Companion;
 	public static final synthetic fun box-impl (Ljava/lang/String;)Lorg/maplibre/compose/resource/MapResourceError;
@@ -3840,6 +3900,7 @@ public abstract interface class org/maplibre/compose/sources/CustomVectorTileSou
 	public abstract fun getAsMutable ()Lorg/maplibre/compose/sources/MutableCustomVectorTileSourceHandle;
 	public synthetic fun getAsMutable ()Lorg/maplibre/compose/sources/MutableSourceHandle;
 	public synthetic fun getAsMutable ()Lorg/maplibre/compose/sources/MutableVectorTileSourceHandle;
+	public abstract fun invalidateBounds (Lorg/maplibre/spatialk/geojson/BoundingBox;)V
 	public abstract fun invalidateTile (Lorg/maplibre/compose/sources/TileCoordinate;)V
 }
 
@@ -3916,6 +3977,7 @@ public final class org/maplibre/compose/sources/GeoJsonOptions {
 	public final fun component1 ()I
 	public final fun component10 ()Z
 	public final fun component11 ()Z
+	public final fun component13 ()Ljava/lang/String;
 	public final fun component2 ()I
 	public final fun component3 ()I
 	public final fun component4 ()F
@@ -3925,6 +3987,7 @@ public final class org/maplibre/compose/sources/GeoJsonOptions {
 	public final fun component8 ()I
 	public final fun component9 ()Ljava/util/Map;
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getAttributionHtml ()Ljava/lang/String;
 	public final fun getBuffer ()I
 	public final fun getCluster ()Z
 	public final fun getClusterMaxZoom ()I
@@ -3942,6 +4005,7 @@ public final class org/maplibre/compose/sources/GeoJsonOptions {
 
 public final class org/maplibre/compose/sources/GeoJsonOptions$Builder {
 	public static final field $stable I
+	public final fun getAttributionHtml ()Ljava/lang/String;
 	public final fun getBuffer ()I
 	public final fun getCluster ()Z
 	public final fun getClusterMaxZoom ()I
@@ -3953,6 +4017,7 @@ public final class org/maplibre/compose/sources/GeoJsonOptions$Builder {
 	public final fun getMinZoom ()I
 	public final fun getSynchronousTiling ()Z
 	public final fun getTolerance ()F
+	public final fun setAttributionHtml (Ljava/lang/String;)V
 	public final fun setBuffer (I)V
 	public final fun setCluster (Z)V
 	public final fun setClusterMaxZoom (I)V

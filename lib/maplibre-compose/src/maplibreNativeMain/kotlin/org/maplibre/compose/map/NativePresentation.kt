@@ -6,13 +6,13 @@ import kotlin.concurrent.Volatile
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import org.maplibre.compose.logging.MapLog
 import org.maplibre.compose.mlnffi.EglContextHandles
 import org.maplibre.compose.mlnffi.MapRenderBackend
 import org.maplibre.compose.mlnffi.MetalSurfaceTarget
 import org.maplibre.compose.mlnffi.MetalTextureTarget
+import org.maplibre.compose.mlnffi.MlnFfiFrameDemands
 import org.maplibre.compose.mlnffi.MlnFfiFrameResult
 import org.maplibre.compose.mlnffi.MlnFfiLock
 import org.maplibre.compose.mlnffi.MlnFfiMapFrame
@@ -23,32 +23,37 @@ import org.maplibre.compose.mlnffi.MlnFfiSignal
 import org.maplibre.compose.mlnffi.OpenGlContextHandles
 import org.maplibre.compose.mlnffi.OpenGlSurfaceTarget
 import org.maplibre.compose.mlnffi.OpenGlTextureTarget
+import org.maplibre.compose.mlnffi.PlatformWindowTarget
 import org.maplibre.compose.mlnffi.VulkanContextHandles
 import org.maplibre.compose.mlnffi.WglContextHandles
 import org.maplibre.compose.mlnffi.currentMlnFfiThreadName
 import org.maplibre.compose.mlnffi.withLock
+import org.maplibre.nativeffi.Completion
 import org.maplibre.nativeffi.EglContextDescriptor
 import org.maplibre.nativeffi.FrameDemand
 import org.maplibre.nativeffi.FrameDemandFlag
+import org.maplibre.nativeffi.FramePacerHandle
+import org.maplibre.nativeffi.GpuSync
 import org.maplibre.nativeffi.GpuSyncKind
-import org.maplibre.nativeffi.LogicalExtent
 import org.maplibre.nativeffi.MapHandle
+import org.maplibre.nativeffi.MapView
 import org.maplibre.nativeffi.MaplibreException
 import org.maplibre.nativeffi.NativePointer
-import org.maplibre.nativeffi.NewRenderSession
 import org.maplibre.nativeffi.OpenGlBorrowedTexture
 import org.maplibre.nativeffi.OpenGlBorrowedTextureDescriptor
+import org.maplibre.nativeffi.OpenGlBorrowedTextureReplacement
 import org.maplibre.nativeffi.OpenGlClientApi
 import org.maplibre.nativeffi.OpenGlContextDescriptor
 import org.maplibre.nativeffi.OpenGlContextDescriptorData
 import org.maplibre.nativeffi.OpenGlContextOwnership
 import org.maplibre.nativeffi.OpenGlSurfaceDescriptor
+import org.maplibre.nativeffi.OpenGlSurfaceReplacement
 import org.maplibre.nativeffi.RenderDriverKind
+import org.maplibre.nativeffi.RenderFrameResult
 import org.maplibre.nativeffi.RenderResult
 import org.maplibre.nativeffi.RenderSessionAttachOptions
 import org.maplibre.nativeffi.RenderSessionCapabilityFlag
 import org.maplibre.nativeffi.RenderSessionHandle
-import org.maplibre.nativeffi.RenderSessionState
 import org.maplibre.nativeffi.Status
 import org.maplibre.nativeffi.VulkanContextDescriptor
 import org.maplibre.nativeffi.Wake
@@ -57,9 +62,13 @@ import org.maplibre.nativeffi.WglContextDescriptor
 /**
  * One host attachment owns its render session and every borrow of its GPU target.
  *
- * Every target keeps a demand parked until the map changes. Hosts drain results and schedule the
- * next demand, including their frame-rate limit. Borrowed textures stay acquired until the host has
- * finished reading them.
+ * A frame pacer demands the session's frames, or the session's redraw wake asks the host for a
+ * frame pass, which demands one, as [MlnFfiFrameDemands] describes. Acquired frames stay acquired
+ * until the host has finished reading them.
+ *
+ * A host that presents to a [PlatformWindowTarget] or a [MetalSurfaceTarget] can keep its session
+ * when its window or layer goes away: [releaseTarget] lets go of it, and the next frame gives the
+ * session the host's next one.
  */
 internal class NativePresentation(
   var backend: MapRenderBackend,
@@ -83,6 +92,15 @@ internal class NativePresentation(
     @Volatile var ready = false
     @Volatile var target: MlnFfiRenderTarget? = null
     var demandPending = false
+    /** The frame pacer that demands the session's frames, when the host has one. */
+    var pacer: FramePacerHandle? = null
+    /** Whether the session let go of its window, and waits for the host's next one. */
+    var targetReleased = false
+    /**
+     * Set by the redraw wake, and for each new target, which has nothing on it until a demand. The
+     * next frame pass of a host without a pacer takes it and demands a frame.
+     */
+    val redrawRequested = AtomicBoolean(false)
     @Volatile var releaseRequested = false
     val released = CompletableDeferred<Result<Unit>>()
 
@@ -95,7 +113,7 @@ internal class NativePresentation(
     val callerDriven: Boolean
       get() = driver == RenderDriverKind.CALLER_GRAPHICS_THREAD
 
-    fun attachOptions(driver: RenderDriverKind) =
+    fun attachOptions(driver: RenderDriverKind, demands: MlnFfiFrameDemands) =
       RenderSessionAttachOptions(
         driver = driver,
         frameWake =
@@ -103,16 +121,20 @@ internal class NativePresentation(
             work.signal()
             if (!releaseRequested) host.requestFrame()
           },
+        // A paced session can't have a redraw wake.
+        redrawWake =
+          if (demands is MlnFfiFrameDemands.Paced) Wake()
+          else
+            Wake {
+              redrawRequested.store(true)
+              if (!releaseRequested) host.requestFrame()
+            },
         driverWorkWake =
           if (driver != RenderDriverKind.CALLER_GRAPHICS_THREAD) Wake()
           else
             Wake {
               work.signal()
-              if (host.servicesDriverWorkOnFrame) {
-                // Surface driver work includes parked demands. Service it at the display boundary
-                // too, so a wake during a UI write burst cannot draw a partial update immediately.
-                if (!releaseRequested) host.requestFrame()
-              } else if (serviceQueued.compareAndSet(false, true)) {
+              if (serviceQueued.compareAndSet(false, true)) {
                 try {
                   if (
                     !host.enqueueRenderer {
@@ -145,14 +167,21 @@ internal class NativePresentation(
     }
 
     /**
-     * Renderer thread. Waits for [work], driving the session meanwhile when it needs this thread.
+     * Renderer thread. Waits for [work], driving the session meanwhile when it needs this thread. A
+     * released session still needs its driver work serviced until the release completes.
      */
-    fun <T> await(session: RenderSessionHandle, work: Deferred<T>): T {
+    fun <T> await(session: RenderSessionHandle, completion: Completion<T>): T {
+      val work = completion.asDeferred()
       work.invokeOnCompletion { this.work.signal() }
       while (!work.isCompleted) {
-        if (callerDriven && !session.isClosed) {
+        if (callerDriven) {
           (target as? OpenGlTextureTarget)?.makeContextCurrent?.invoke()
-          session.serviceDriverWork()
+          try {
+            session.serviceDriverWork()
+          } catch (error: MaplibreException) {
+            // A release that finished meanwhile no longer takes service; its completion follows.
+            if (error.status != Status.INVALID_STATE) throw error
+          }
         }
         if (work.isCompleted) break
         this.work.await()
@@ -161,27 +190,44 @@ internal class NativePresentation(
       return work.getCompleted()
     }
 
-    /** Renderer thread. Finishes driver work before releasing the host's graphics objects. */
+    /**
+     * Renderer thread. Finishes driver work before releasing the host's graphics objects. The
+     * release detaches an attached session first, and abandons one that failed or was abandoned.
+     */
     fun closeSession() {
       val closing = session ?: return
       session = null
       ready = false
       demandPending = false
+      pacer = null
+      targetReleased = false
+      redrawRequested.store(false)
       try {
-        if (closing.getSnapshot().state != RenderSessionState.ABANDONED) {
-          try {
-            await(closing, closing.detach())
-          } catch (error: MaplibreException) {
-            if (error.status != Status.TARGET_LOST && error.status != Status.INVALID_STATE)
-              throw error
-          }
-        }
+        await(closing, closing.release())
       } finally {
-        try {
-          await(closing, closing.release())
-        } finally {
-          target = null
-        }
+        target = null
+      }
+    }
+
+    /**
+     * Renderer thread. Lets the session go of its target and keeps the session, its renderer, and
+     * its tiles for the host's next target. The host may destroy the target once this returns, so
+     * it waits until the session has stopped using it. That holds for a Metal layer, and for an
+     * Android window too: the session keeps its own reference to the window, but `SurfaceView`
+     * destroys the window's surface once `surfaceDestroyed` returns, and Android 8.0 crashes if the
+     * session still draws into it then. A session that can't let go of its target is released
+     * whole, and the next target attaches a new one.
+     */
+    fun releaseTarget() {
+      val current = session ?: return
+      if (targetReleased || releaseRequested) return
+      targetReleased = true
+      ready = false
+      try {
+        await(current, current.releaseTarget())
+      } catch (error: MaplibreException) {
+        logger?.d(error) { "The render session could not release its target; releasing it" }
+        closeSession()
       }
     }
 
@@ -230,6 +276,10 @@ internal class NativePresentation(
   internal var retargetCount: Int = 0
     private set
 
+  @Volatile
+  internal var resizeCount: Int = 0
+    private set
+
   /** Renderer-thread state, read by tests. */
   @Volatile
   internal var hasRenderedAFrame: Boolean = false
@@ -270,6 +320,21 @@ internal class NativePresentation(
       } finally {
         stateLock.withLock { if (rendererAttachment === attachment) rendererAttachment = null }
       }
+    }
+  }
+
+  /**
+   * The host [session] lost its target but stays. Its render session waits for the next target.
+   * Once this returns, the host may destroy the old target.
+   */
+  fun releaseTarget(session: MlnFfiMapHostSession) {
+    val attachment =
+      stateLock.withLock { rendererAttachment?.takeIf { it.host === session } } ?: return
+    try {
+      // A session releases its target only after every acquired frame.
+      attachment.host.completeConsumerAccess()
+    } finally {
+      attachment.host.withRendererAccess { attachment.releaseTarget() }
     }
   }
 
@@ -328,44 +393,68 @@ internal class NativePresentation(
     viewport.captureRenderPadding()
     if (!ensureAttached(attachment, map, frame)) return MlnFfiFrameResult.AwaitUpdate
     val session = attachment.session ?: return MlnFfiFrameResult.AwaitUpdate
-    if (host.servicesDriverWorkOnFrame) attachment.service()
-    val result =
+    val demands = host.frameDemands
+    if (demands is MlnFfiFrameDemands.Paced) {
+      return takePacedFrames(attachment, session, demands, frame, captureProjection)
+    }
+    val completed =
       try {
-        val completed = session.drainFrameResults().lastOrNull()
+        val results = session.drainFrameResults()
+        val completed =
+          results.firstOrNull { it.disposition == RenderResult.FAILED }
+            ?: results.lastOrNull { it.disposition == RenderResult.RENDERED }
+            ?: results.lastOrNull()
         if (completed != null) attachment.demandPending = false
-        // A display-paced driver drains and re-arms in one pass, using one callback per demand.
-        // Other hosts re-arm on their next pass, after any consumer has released its frame.
-        if (!attachment.demandPending && (completed == null || host.servicesDriverWorkOnFrame)) {
-          attachment.demandPending = true
-          session.requestFrame(
-            FrameDemand(
-              flags = FrameDemandFlag.WAIT_FOR_UPDATE or FrameDemandFlag.PRESENT,
-            ),
-          )
-        }
-        completed ?: return MlnFfiFrameResult.AwaitUpdate
+        completed
       } catch (error: MaplibreException) {
-        // A session whose target was lost rejects new demands; its state says so.
-        // TODO: report why once https://github.com/maplibre/maplibre-native-ffi/issues/984 keeps
-        // the reason a session lost its target.
-        val state = runCatching { session.getSnapshot().state }.getOrNull()
-        throw MlnFfiRecoverableFrameException(
-          "The MapLibre render session failed in state $state",
-          error,
-        )
+        // A failed session rejects new demands with its failure status.
+        throw sessionFailed(session, error)
       }
+    val outcome =
+      if (completed == null) MlnFfiFrameResult.AwaitUpdate
+      else presentResult(attachment, session, frame, completed, captureProjection)
+    // After the acquisition, so that a single borrowed texture keeps the completed frame until the
+    // host holds it.
+    demandAfterRedraw(attachment, session)
+    return outcome
+  }
+
+  /**
+   * Demands a frame once the session has asked for a redraw. One demand at a time keeps rendering
+   * at the pace of the host's frame passes.
+   */
+  private fun demandAfterRedraw(attachment: RendererAttachment, session: RenderSessionHandle) {
+    if (attachment.demandPending || !attachment.redrawRequested.exchange(false)) return
+    attachment.demandPending = true
+    try {
+      session.demandFrame(FrameDemand())
+    } catch (error: MaplibreException) {
+      throw sessionFailed(session, error)
+    }
+  }
+
+  private fun presentResult(
+    attachment: RendererAttachment,
+    session: RenderSessionHandle,
+    frame: MlnFfiMapFrame,
+    result: RenderFrameResult,
+    captureProjection: Boolean,
+  ): MlnFfiFrameResult {
     when (result.disposition) {
       RenderResult.RENDERED -> {
         // Replacement retires unacquired textures; a queued result can still describe the old one.
-        if (result.generation != session.getSnapshot().generation)
-          return MlnFfiFrameResult.RetryNextFrame
+        if (result.generation != session.getSnapshot().generation) return retry(attachment)
       }
-      else -> return MlnFfiFrameResult.RetryNextFrame
+      RenderResult.FAILED -> throw sessionFailed(session, null)
+      // The map had nothing new to draw, or a later demand took this one's place.
+      RenderResult.NO_UPDATE,
+      RenderResult.SUPERSEDED -> return MlnFfiFrameResult.AwaitUpdate
+      else -> return retry(attachment)
     }
     var presentedView = result.view
     try {
       if (attachment.acquiresFrames) {
-        val acquired = session.acquireFrame() ?: return MlnFfiFrameResult.RetryNextFrame
+        val acquired = session.acquireFrame() ?: return retry(attachment)
         try {
           presentedView = acquired.getResult().view
           acquired.withProducerSync { sync ->
@@ -374,7 +463,7 @@ internal class NativePresentation(
             }
           }
         } catch (error: Throwable) {
-          acquired.release(null)
+          acquired.release(GpuSync(GpuSyncKind.CPU_COMPLETE))
           throw error
         }
         frame.releaseAfterReads = { consumerCompleted ->
@@ -382,13 +471,61 @@ internal class NativePresentation(
             attachment.host.withRendererAccess {
               if (attachment.session === session) session.abandon()
             }
-          acquired.release(null)
+          // The host's reads have finished on the CPU timeline by now.
+          acquired.release(GpuSync(GpuSyncKind.CPU_COMPLETE))
         }
+        // The next pass lets the host release this frame once it has drawn it. A single borrowed
+        // texture renders nothing more until then.
         attachment.host.requestFrame()
       }
     } catch (error: MaplibreException) {
       throw MlnFfiRecoverableFrameException("The MapLibre render session failed", error)
     }
+    return presented(attachment, frame, presentedView, captureProjection)
+  }
+
+  /** Renderer thread. Takes the frames that the host's frame pacer demanded. */
+  private fun takePacedFrames(
+    attachment: RendererAttachment,
+    session: RenderSessionHandle,
+    demands: MlnFfiFrameDemands.Paced,
+    frame: MlnFfiMapFrame,
+    captureProjection: Boolean,
+  ): MlnFfiFrameResult {
+    val rendered =
+      try {
+        if (attachment.pacer !== demands.pacer) {
+          session.setFramePacer(demands.pacer)
+          attachment.pacer = demands.pacer
+        }
+        val results = session.drainFrameResults()
+        if (results.any { it.disposition == RenderResult.FAILED })
+          throw sessionFailed(session, null)
+        val latest =
+          results.lastOrNull { it.disposition == RenderResult.RENDERED }
+            ?: return MlnFfiFrameResult.AwaitUpdate
+        // A frame from before the session's last retarget showed the previous window.
+        if (latest.generation != session.getSnapshot().generation)
+          return MlnFfiFrameResult.AwaitUpdate
+        latest
+      } catch (error: MaplibreException) {
+        throw sessionFailed(session, error)
+      }
+    return presented(attachment, frame, rendered.view, captureProjection)
+  }
+
+  /** A frame to ask for again, which this pass demands. */
+  private fun retry(attachment: RendererAttachment): MlnFfiFrameResult {
+    attachment.redrawRequested.store(true)
+    return MlnFfiFrameResult.AwaitUpdate
+  }
+
+  private fun presented(
+    attachment: RendererAttachment,
+    frame: MlnFfiMapFrame,
+    presentedView: MapView,
+    captureProjection: Boolean,
+  ): MlnFfiFrameResult {
     attachment.ready = true
 
     if (!hasRenderedAFrame) {
@@ -417,19 +554,40 @@ internal class NativePresentation(
     if (!canRender() || attachment.releaseRequested) return false
     val attached = attachment.target
     val live = attachment.session
-    if (
-      attached?.generation == frame.target.generation && attached.extent == extent && live != null
-    )
-      return true
+    val sameTarget =
+      live != null && !attachment.targetReleased && attached?.generation == frame.target.generation
+    if (sameTarget && attached.extent == extent) return true
 
     attachment.ready = false
+    if (
+      sameTarget &&
+        attached.extent.scaleFactor == extent.scaleFactor &&
+        frame.target is MetalSurfaceTarget
+    ) {
+      // A Metal session resizes its layer itself, keeping the same layer.
+      try {
+        live.discarding.resize(extent.toLogicalSize())
+      } catch (error: MaplibreException) {
+        throw sessionFailed(live, error)
+      }
+      resizeCount++
+      attachment.target = frame.target
+      onAttached()
+      return true
+    }
     // A renderer compiles its shaders for one pixel ratio, so a scale-factor change needs a new
     // one.
     val retargeted =
       live != null &&
         attached != null &&
         attached.extent.scaleFactor == extent.scaleFactor &&
-        retarget(attachment, live, frame.target, extent)
+        retarget(
+          attachment,
+          live,
+          previous = attached.takeUnless { attachment.targetReleased },
+          target = frame.target,
+          extent = extent,
+        )
     if (retargeted) {
       retargetCount++
     } else {
@@ -444,6 +602,7 @@ internal class NativePresentation(
       attachCount++
     }
     attachment.target = frame.target
+    attachment.redrawRequested.store(true)
     onAttached()
     return true
   }
@@ -453,6 +612,8 @@ internal class NativePresentation(
       // Metal queues are thread-safe, so the session renders on its own worker.
       is MetalTextureTarget,
       is MetalSurfaceTarget -> RenderDriverKind.CORE_WORKER
+      // The session renders with the graphics context that it creates for the window.
+      is PlatformWindowTarget -> RenderDriverKind.CORE_WORKER
       // OpenGL requires the thread whose context the host made current. A Vulkan session shares
       // its queue with the host's own submissions on this thread.
       else -> RenderDriverKind.CALLER_GRAPHICS_THREAD
@@ -466,8 +627,9 @@ internal class NativePresentation(
   ) {
     val driver = driverFor(target)
     attachment.target = target
-    val options = attachment.attachOptions(driver)
-    val started: NewRenderSession =
+    val demands = attachment.host.frameDemands
+    val options = attachment.attachOptions(driver, demands)
+    val started: RenderSessionHandle =
       when (target) {
         is OpenGlTextureTarget -> {
           target.makeContextCurrent()
@@ -476,13 +638,17 @@ internal class NativePresentation(
         is OpenGlSurfaceTarget -> map.attachOpenGlSurface(target.toDescriptor(extent), options)
         else -> attachPlatformTarget(map, target, extent, options)
       }
-    attachment.session = started.session
+    attachment.session = started
     attachment.driver = driver
     attachment.target = target
     try {
-      attachment.await(started.session, started.ready)
+      if (demands is MlnFfiFrameDemands.Paced) {
+        started.setFramePacer(demands.pacer)
+        attachment.pacer = demands.pacer
+      }
+      attachment.await(started, started.ready)
       attachment.acquiresFrames =
-        RenderSessionCapabilityFlag.FRAME_ACQUISITION in started.session.getCapabilities().flags
+        RenderSessionCapabilityFlag.FRAME_ACQUISITION in started.getCapabilities().flags
     } catch (error: Throwable) {
       // A failed attachment still needs detach or abandon before the session can retire.
       runCatching { attachment.closeSession() }.exceptionOrNull()?.let(error::addSuppressed)
@@ -490,24 +656,38 @@ internal class NativePresentation(
     }
   }
 
-  /** Whether [session] took the replacement; a refusal leaves it rendering into its old target. */
+  /**
+   * Whether [session] took the replacement; a refusal leaves it rendering into its old target.
+   * [previous] is the target that the session renders into, or null after [releaseTarget].
+   */
   private fun retarget(
     attachment: RendererAttachment,
     session: RenderSessionHandle,
+    previous: MlnFfiRenderTarget?,
     target: MlnFfiRenderTarget,
     extent: MapExtent,
   ): Boolean {
     try {
-      val replacement: Deferred<*> =
+      val replacement: Completion<*>? =
         when (target) {
           is OpenGlTextureTarget -> {
             target.makeContextCurrent()
-            session.setOpenGlBorrowedTextureTarget(target.toDescriptor(extent))
+            session.setOpenGlBorrowedTextureTarget(target.toReplacement(extent))
           }
-          is OpenGlSurfaceTarget -> session.setOpenGlSurfaceTarget(target.toDescriptor(extent))
+          is OpenGlSurfaceTarget -> session.setOpenGlSurfaceTarget(target.toReplacement(extent))
+          is PlatformWindowTarget ->
+            if (previous is PlatformWindowTarget && previous.window === target.window) {
+              // The session resizes its window's surface and the map in order with its frames.
+              session.discarding.resize(extent.toLogicalSize())
+              // The resized window has no image yet, but a Vulkan session has nothing new to draw
+              // until the map changes, so a pacer would leave the window black.
+              session.demandFrame(FrameDemand(flags = FrameDemandFlag.FORCE))
+              null
+            } else replacePlatformTarget(session, target, extent)
           else -> replacePlatformTarget(session, target, extent)
         }
-      attachment.await(session, replacement)
+      replacement?.let { attachment.await(session, it) }
+      attachment.targetReleased = false
     } catch (error: MaplibreException) {
       // A replacement belonging to another device or in another pixel format.
       if (error.status != Status.INVALID_ARGUMENT && error.status != Status.UNSUPPORTED) throw error
@@ -523,17 +703,26 @@ internal class NativePresentation(
     return false
   }
 
-  /** MapLibre rejects a descriptor whose logical extent and physical size do not agree. */
-  private fun MapExtent.toFfiExtent() =
-    LogicalExtent(
-      width = width.coerceAtLeast(1).toUInt(),
-      height = height.coerceAtLeast(1).toUInt(),
-      scaleFactor = scaleFactor,
+  /**
+   * Why [session] failed, for the host's recovery. A session that failed for any reason accepts
+   * nothing but its release, so recovery attaches a new one, which the host bounds in attempts.
+   */
+  private fun sessionFailed(
+    session: RenderSessionHandle,
+    cause: MaplibreException?,
+  ): MlnFfiRecoverableFrameException {
+    val status = runCatching { session.getSnapshot().failureStatus }.getOrNull()
+    val reason = runCatching { session.getFailure() }.getOrNull()?.takeIf { it.isNotBlank() }
+    return MlnFfiRecoverableFrameException(
+      "The MapLibre render session failed (${status ?: cause?.status}): " +
+        (reason ?: cause?.message ?: "no reason given"),
+      cause,
     )
+  }
 
   private fun OpenGlTextureTarget.toDescriptor(extent: MapExtent) =
     OpenGlBorrowedTextureDescriptor(
-      extent = extent.toFfiExtent(),
+      logicalSize = extent.toLogicalSize(),
       physicalWidth = extent.physicalWidth.coerceAtLeast(1).toUInt(),
       physicalHeight = extent.physicalHeight.coerceAtLeast(1).toUInt(),
       context = context.toFfi(),
@@ -541,10 +730,24 @@ internal class NativePresentation(
       target = textureTarget.toUInt(),
     )
 
+  private fun OpenGlTextureTarget.toReplacement(extent: MapExtent) =
+    OpenGlBorrowedTextureReplacement(
+      logicalSize = extent.toLogicalSize(),
+      physicalWidth = extent.physicalWidth.coerceAtLeast(1).toUInt(),
+      physicalHeight = extent.physicalHeight.coerceAtLeast(1).toUInt(),
+      textures = listOf(OpenGlBorrowedTexture(textureName.toUInt())),
+    )
+
   private fun OpenGlSurfaceTarget.toDescriptor(extent: MapExtent) =
     OpenGlSurfaceDescriptor(
-      extent = extent.toFfiExtent(),
+      logicalSize = extent.toLogicalSize(),
       context = context.toFfi(),
+      surface = NativePointer.ofAddress(surface.address),
+    )
+
+  private fun OpenGlSurfaceTarget.toReplacement(extent: MapExtent) =
+    OpenGlSurfaceReplacement(
+      logicalSize = extent.toLogicalSize(),
       surface = NativePointer.ofAddress(surface.address),
     )
 }

@@ -134,10 +134,12 @@ public sealed interface GeoJsonData {
  *
  * @property lineMetrics Whether to calculate line distance metrics. This is required for
  *   [LineLayer][org.maplibre.compose.layers.LineLayer]s that specify a `gradient`.
- * @property synchronousTiling Whether native engines generate requested tiles during the update
- *   pass instead of scheduling separate tile work. This can make small, frequently updated sources
- *   appear sooner, at the cost of more work during the update. Source updates still return without
- *   waiting for native work. Android, iOS, and desktop honor this option. The browser ignores it.
+ * @property synchronousTiling Whether each data update shows in the next frame. Camera and style
+ *   changes made after the update wait for it, so large data delays them. Without it, the update
+ *   shows once it is ready and doesn't delay other changes. Small, frequently updated sources can
+ *   appear sooner with it. Source updates still return without waiting. Android, iOS, and desktop
+ *   honor this option. The browser ignores it.
+ * @property attributionHtml Attribution shown for this source, as HTML, or null for none.
  */
 @Immutable
 public data class GeoJsonOptions
@@ -154,6 +156,7 @@ private constructor(
   public val lineMetrics: Boolean,
   public val synchronousTiling: Boolean,
   private val clusterMaxZoomOverride: Int?,
+  public val attributionHtml: String?,
 ) {
   private constructor(
     builder: Builder,
@@ -170,6 +173,7 @@ private constructor(
     builder.lineMetrics,
     builder.synchronousTiling,
     builder.clusterMaxZoomOverride,
+    builder.attributionHtml,
   )
 
   /** Edits [from]; omitted settings inherit. */
@@ -192,6 +196,7 @@ private constructor(
       "clusterProperties" to clusterProperties,
       "lineMetrics" to lineMetrics,
       "synchronousTiling" to synchronousTiling,
+      "attributionHtml" to attributionHtml,
     )
 
   @MapOptionsDsl
@@ -224,6 +229,8 @@ private constructor(
     public var lineMetrics: Boolean = from?.lineMetrics ?: false
     /** See [GeoJsonOptions.synchronousTiling]. */
     public var synchronousTiling: Boolean = from?.synchronousTiling ?: false
+    /** See [GeoJsonOptions.attributionHtml]. */
+    public var attributionHtml: String? = from?.attributionHtml
 
     internal var clusterMaxZoomOverride: Int? = from?.clusterMaxZoomOverride
   }
